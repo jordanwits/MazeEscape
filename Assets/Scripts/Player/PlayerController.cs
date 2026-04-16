@@ -55,6 +55,8 @@ public class PlayerController : MonoBehaviour
     [SerializeField] float runSpeed = 4.8f;
     [SerializeField] float acceleration = 10f;
     [SerializeField] float deceleration = 14f;
+    [Tooltip("Extra braking used when movement is released or reversed. Higher values reduce the slippery feeling.")]
+    [SerializeField] float brakingDeceleration = 26f;
     [SerializeField] float turnSpeedDegrees = 720f;
     [SerializeField] float gravity = -20f;
     [SerializeField] float jumpHeight = 1.0f;
@@ -314,8 +316,8 @@ public class PlayerController : MonoBehaviour
         float targetSpeed = inputMagnitude > 0.01f
             ? inputMagnitude * (_isSprinting ? runSpeed : walkSpeed)
             : 0f;
-        float speedChangeRate = targetSpeed > _currentHorizontalSpeed ? acceleration : deceleration;
         Vector3 desiredHorizontalVelocity = move * targetSpeed;
+        float speedChangeRate = GetHorizontalSpeedChangeRate(desiredHorizontalVelocity, targetSpeed);
         _horizontalVelocity = Vector3.MoveTowards(
             _horizontalVelocity,
             desiredHorizontalVelocity,
@@ -385,6 +387,21 @@ public class PlayerController : MonoBehaviour
         _currentStamina = Mathf.Max(0f, _currentStamina - amount);
         _staminaRegenTimer = staminaRegenDelay;
         RefreshStaminaUI();
+    }
+
+    float GetHorizontalSpeedChangeRate(Vector3 desiredHorizontalVelocity, float targetSpeed)
+    {
+        if (targetSpeed <= 0.01f)
+            return brakingDeceleration;
+
+        if (_horizontalVelocity.sqrMagnitude > 1e-6f && desiredHorizontalVelocity.sqrMagnitude > 1e-6f)
+        {
+            float alignment = Vector3.Dot(_horizontalVelocity.normalized, desiredHorizontalVelocity.normalized);
+            if (alignment < 0.35f)
+                return brakingDeceleration;
+        }
+
+        return targetSpeed > _currentHorizontalSpeed ? acceleration : deceleration;
     }
 
     void RefreshStaminaUI()
