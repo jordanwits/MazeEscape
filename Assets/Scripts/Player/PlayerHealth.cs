@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
+using System;
 
 [DisallowMultipleComponent]
 public class PlayerHealth : MonoBehaviour
@@ -15,11 +16,15 @@ public class PlayerHealth : MonoBehaviour
     [SerializeField] bool autoCreateHealthBar = true;
 
     RectTransform _healthFillRect;
+    GameObject _healthBarRoot;
 
     public float MaxHealth => maxHealth;
     public float CurrentHealth { get; private set; }
     public bool IsDead { get; private set; }
     public float HealthNormalized => maxHealth > 0f ? CurrentHealth / maxHealth : 0f;
+    public event Action Damaged;
+    public event Action Died;
+    public event Action Restored;
 
     void Awake()
     {
@@ -39,12 +44,14 @@ public class PlayerHealth : MonoBehaviour
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         UpdateHealthBar();
         onDamaged?.Invoke();
+        Damaged?.Invoke();
 
         if (CurrentHealth > 0f)
             return;
 
         IsDead = true;
         onDied?.Invoke();
+        Died?.Invoke();
     }
 
     public void Heal(float amount)
@@ -60,6 +67,14 @@ public class PlayerHealth : MonoBehaviour
     {
         IsDead = false;
         CurrentHealth = Mathf.Max(1f, maxHealth);
+        UpdateHealthBar();
+        Restored?.Invoke();
+    }
+
+    public void ApplyReplicatedState(float currentHealth, bool isDead)
+    {
+        CurrentHealth = Mathf.Clamp(currentHealth, 0f, Mathf.Max(1f, maxHealth));
+        IsDead = isDead;
         UpdateHealthBar();
     }
 
@@ -96,6 +111,7 @@ public class PlayerHealth : MonoBehaviour
         bgRect.pivot = new Vector2(0.5f, 0f);
         bgRect.anchoredPosition = new Vector2(0f, 60f);
         bgRect.sizeDelta = new Vector2(304f, 24f);
+        _healthBarRoot = bg;
 
         GameObject fill = new GameObject("HealthBarFill");
         fill.transform.SetParent(bg.transform, false);
@@ -110,5 +126,13 @@ public class PlayerHealth : MonoBehaviour
         _healthFillRect = fillRect;
 
         return fillImage;
+    }
+
+    public void SetHudVisible(bool visible)
+    {
+        if (_healthBarRoot != null)
+            _healthBarRoot.SetActive(visible);
+        else if (healthBarImage != null)
+            healthBarImage.enabled = visible;
     }
 }

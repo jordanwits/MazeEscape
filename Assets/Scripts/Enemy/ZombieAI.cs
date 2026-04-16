@@ -1,4 +1,5 @@
 using System.Collections;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -135,6 +136,10 @@ public class ZombieAI : MonoBehaviour
 
     void Update()
     {
+        NetworkObject networkObject = GetComponent<NetworkObject>();
+        if (networkObject != null && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && !NetworkManager.Singleton.IsServer)
+            return;
+
         if (zombieHealth != null && zombieHealth.IsDead)
         {
             HandleDeath();

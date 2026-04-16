@@ -2,6 +2,7 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using Unity.Netcode;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -121,6 +122,7 @@ public class PlayerController : MonoBehaviour
     InputAction _dropAction;
     InputAction _flashlightAction;
     InputAction _attackAction;
+    InputActionAsset _runtimeInputActions;
 
     float _lookYawDegrees;
     float _lookPitchDegrees;
@@ -138,14 +140,20 @@ public class PlayerController : MonoBehaviour
     float _staminaRegenTimer;
     bool _isSprinting;
     RectTransform _staminaFillRect;
+    GameObject _staminaBarRoot;
     float _footstepTimer;
     bool _playFootstep1Next = true;
+    bool _hasLocalControl = true;
 
     float _nextMeleeTime;
     readonly Collider[] _meleeHits = new Collider[16];
     const string EnemyLayerName = "Enemy";
+    NetworkPlayerCombat _networkPlayerCombat;
+    NetworkPlayerAvatar _networkPlayerAvatar;
 
     public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
+    public bool HasLocalControl => _hasLocalControl;
+    public Transform LookPitchTransform => cameraTransform;
 
     void Awake()
     {
@@ -187,6 +195,8 @@ public class PlayerController : MonoBehaviour
             footstepAudioSource = gameObject.AddComponent<AudioSource>();
 
         ConfigureFootstepAudioSource();
+        _networkPlayerCombat = GetComponent<NetworkPlayerCombat>();
+        _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
 
         if (enemyMask == 0)
         {
@@ -212,58 +222,34 @@ public class PlayerController : MonoBehaviour
 
     void OnEnable()
     {
-        if (firstPersonLook && lockCursor)
-        {
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
-        }
-
-        if (inputActions == null)
-        {
-            Debug.LogWarning($"{nameof(PlayerController)}: Assign the Input Actions asset (e.g. InputSystem_Actions). Falling back to direct device input.", this);
-            return;
-        }
-
-        _playerMap = inputActions.FindActionMap("Player");
-        if (_playerMap == null)
-        {
-            Debug.LogWarning($"{nameof(PlayerController)}: No 'Player' action map on the assigned asset. Falling back to direct device input.", this);
-            return;
-        }
-
-        _moveAction = _playerMap.FindAction("Move");
-        _lookAction = _playerMap.FindAction("Look");
-        _jumpAction = _playerMap.FindAction("Jump");
-        _sprintAction = _playerMap.FindAction("Sprint");
-        _interactAction = _playerMap.FindAction("Interact");
-        _dropAction = _playerMap.FindAction("Drop");
-        _flashlightAction = _playerMap.FindAction("Flashlight");
-        _attackAction = _playerMap.FindAction("Attack");
-        _playerMap.Enable();
+        ApplyLocalControlState();
     }
 
     void OnDisable()
     {
-        _playerMap?.Disable();
-        _playerMap = null;
-        _moveAction = null;
-        _lookAction = null;
-        _jumpAction = null;
-        _sprintAction = null;
-        _interactAction = null;
-        _dropAction = null;
-        _flashlightAction = null;
-        _attackAction = null;
+        DisableInputActions();
+        ReleaseCursor();
+    }
 
-        if (firstPersonLook && lockCursor)
-        {
-            Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
-        }
+    void OnDestroy()
+    {
+        if (_runtimeInputActions != null)
+            Destroy(_runtimeInputActions);
     }
 
     void Update()
     {
+        if (!_hasLocalControl)
+            return;
+
+        if (MultiplayerMenuOverlay.BlocksGameplayInput)
+        {
+            _moveInput = Vector2.zero;
+            _horizontalVelocity = Vector3.zero;
+            SetPickupPromptVisible(false);
+            return;
+        }
+
         _moveInput = _moveAction != null ? _moveAction.ReadValue<Vector2>() : ReadMoveFallback();
         Vector2 lookInput = _lookAction != null ? _lookAction.ReadValue<Vector2>() : ReadLookFallback();
         bool jumpPressed = _jumpAction != null ? _jumpAction.WasPressedThisFrame() : WasJumpPressedFallback();
@@ -291,14 +277,17 @@ public class PlayerController : MonoBehaviour
         if (firstPersonLook)
             ApplyFirstPersonLook(lookInput);
 
+        if (firstPersonLook && UseNetworkedFlashlightFlow && _networkPlayerAvatar != null && _networkPlayerAvatar.IsOwner)
+            _networkPlayerAvatar.PublishFlashlightLookPitch(_lookPitchDegrees);
+
         if (interactPressed)
-            TryPickupFlashlight();
+            HandlePickupInput();
 
         if (dropPressed)
-            DropFlashlight();
+            HandleDropInput();
 
-        if (flashlightPressed && _heldFlashlight != null)
-            _heldFlashlight.ToggleLight();
+        if (flashlightPressed)
+            HandleFlashlightToggleInput();
 
         if (attackPressed && _currentStamina > 0f)
             TryMelee();
@@ -452,6 +441,100 @@ public class PlayerController : MonoBehaviour
         footstepAudioSource.dopplerLevel = 0f;
     }
 
+    public void SetLocalControl(bool hasLocalControl)
+    {
+        if (_hasLocalControl == hasLocalControl)
+            return;
+
+        _hasLocalControl = hasLocalControl;
+        ApplyLocalControlState();
+    }
+
+    public void SetHudVisible(bool visible)
+    {
+        if (_staminaBarRoot != null)
+            _staminaBarRoot.SetActive(visible);
+        else if (staminaBarImage != null)
+            staminaBarImage.enabled = visible;
+
+        if (!visible)
+            SetPickupPromptVisible(false);
+    }
+
+    void ApplyLocalControlState()
+    {
+        if (_hasLocalControl)
+        {
+            AcquireInputActions();
+            ApplyCursorLock();
+        }
+        else
+        {
+            DisableInputActions();
+            ReleaseCursor();
+            _moveInput = Vector2.zero;
+            _horizontalVelocity = Vector3.zero;
+            _verticalVelocity = Vector3.zero;
+            SetPickupPromptVisible(false);
+        }
+
+        SetHudVisible(_hasLocalControl);
+    }
+
+    void AcquireInputActions()
+    {
+        if (inputActions == null)
+        {
+            Debug.LogWarning($"{nameof(PlayerController)}: Assign the Input Actions asset (e.g. InputSystem_Actions). Falling back to direct device input.", this);
+            return;
+        }
+
+        if (_runtimeInputActions == null)
+            _runtimeInputActions = Instantiate(inputActions);
+
+        _playerMap ??= _runtimeInputActions.FindActionMap("Player");
+        if (_playerMap == null)
+        {
+            Debug.LogWarning($"{nameof(PlayerController)}: No 'Player' action map on the assigned asset. Falling back to direct device input.", this);
+            return;
+        }
+
+        _moveAction ??= _playerMap.FindAction("Move");
+        _lookAction ??= _playerMap.FindAction("Look");
+        _jumpAction ??= _playerMap.FindAction("Jump");
+        _sprintAction ??= _playerMap.FindAction("Sprint");
+        _interactAction ??= _playerMap.FindAction("Interact");
+        _dropAction ??= _playerMap.FindAction("Drop");
+        _flashlightAction ??= _playerMap.FindAction("Flashlight");
+        _attackAction ??= _playerMap.FindAction("Attack");
+
+        if (!_playerMap.enabled)
+            _playerMap.Enable();
+    }
+
+    void DisableInputActions()
+    {
+        _playerMap?.Disable();
+    }
+
+    void ApplyCursorLock()
+    {
+        if (!firstPersonLook || !lockCursor || MultiplayerMenuOverlay.BlocksGameplayInput)
+            return;
+
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+    }
+
+    void ReleaseCursor()
+    {
+        if (!firstPersonLook || !lockCursor)
+            return;
+
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
 #if UNITY_EDITOR
     void AutoAssignFootstepClipsInEditor()
     {
@@ -487,6 +570,7 @@ public class PlayerController : MonoBehaviour
         bgRect.pivot = new Vector2(0.5f, 0f);
         bgRect.anchoredPosition = new Vector2(0f, 30f);
         bgRect.sizeDelta = new Vector2(304f, 24f);
+        _staminaBarRoot = bg;
 
         GameObject fill = new GameObject("StaminaBarFill");
         fill.transform.SetParent(bg.transform, false);
@@ -505,6 +589,9 @@ public class PlayerController : MonoBehaviour
 
     void LateUpdate()
     {
+        if (!_hasLocalControl)
+            return;
+
         if (firstPersonLook)
             return;
 
@@ -524,6 +611,10 @@ public class PlayerController : MonoBehaviour
     }
 
     Transform CameraTransformForFacing => cameraTransform != null ? cameraTransform : Camera.main != null ? Camera.main.transform : null;
+    bool UseNetworkedFlashlightFlow => NetworkManager.Singleton != null
+        && NetworkManager.Singleton.IsListening
+        && _networkPlayerAvatar != null
+        && _networkPlayerAvatar.IsSpawned;
 
     SphereCollider FindUpperBodyWallTrigger()
     {
@@ -723,21 +814,81 @@ public class PlayerController : MonoBehaviour
         return x;
     }
 
+    public bool TryGetFlashlightAttachmentTargets(out Transform holdPoint, out Transform followTransform)
+    {
+        holdPoint = flashlightHoldPoint;
+        followTransform = flashlightHoldPoint;
+
+        if (flashlightHoldPoint == null)
+            return false;
+
+        Transform cam = CameraTransformForFacing;
+        // Local owner applies pitch on this transform; remote peers get the same pitch via NetworkPlayerAvatar.
+        bool useCameraPitch = flashlightFollowsCameraPitch && cam != null;
+        followTransform = useCameraPitch ? cam : flashlightHoldPoint;
+        return true;
+    }
+
+    void HandlePickupInput()
+    {
+        if (UseNetworkedFlashlightFlow)
+        {
+            TryPickupNetworkFlashlight();
+            return;
+        }
+
+        TryPickupFlashlight();
+    }
+
+    void HandleDropInput()
+    {
+        if (UseNetworkedFlashlightFlow)
+        {
+            TryDropNetworkFlashlight();
+            return;
+        }
+
+        DropFlashlight();
+    }
+
+    void HandleFlashlightToggleInput()
+    {
+        if (UseNetworkedFlashlightFlow)
+        {
+            _networkPlayerAvatar?.TryToggleHeldFlashlight();
+            return;
+        }
+
+        if (_heldFlashlight != null)
+            _heldFlashlight.ToggleLight();
+    }
+
+    void TryPickupNetworkFlashlight()
+    {
+        if (_networkPlayerAvatar == null || !TryFindInteractableFlashlight(out FlashlightItem flashlight))
+            return;
+
+        _networkPlayerAvatar.TryPickupFlashlight(flashlight);
+    }
+
+    void TryDropNetworkFlashlight()
+    {
+        if (_networkPlayerAvatar == null || !_networkPlayerAvatar.HasHeldFlashlight)
+            return;
+
+        Transform cam = CameraTransformForFacing;
+        Vector3 forward = cam != null ? cam.forward : transform.forward;
+        Vector3 dropPosition = flashlightHoldPoint != null ? flashlightHoldPoint.position : transform.position + forward * 0.75f;
+        Quaternion dropRotation = flashlightHoldPoint != null ? flashlightHoldPoint.rotation : transform.rotation;
+        _networkPlayerAvatar.TryDropHeldFlashlight(dropPosition, dropRotation, forward);
+    }
+
     void TryPickupFlashlight()
     {
         if (_heldFlashlight != null || flashlightHoldPoint == null)
             return;
 
-        Transform cam = CameraTransformForFacing;
-        if (cam == null)
-            return;
-
-        int mask = interactMask.value == 0 ? Physics.DefaultRaycastLayers : interactMask.value;
-        if (!TryInteractCast(cam, mask, out RaycastHit hit))
-            return;
-
-        FlashlightItem flashlight = hit.collider.GetComponentInParent<FlashlightItem>();
-        if (flashlight == null || flashlight.IsHeld)
+        if (!TryFindInteractableFlashlight(out FlashlightItem flashlight))
             return;
 
         _heldFlashlight = flashlight;
@@ -768,8 +919,18 @@ public class PlayerController : MonoBehaviour
 
     bool ShouldShowPickupPrompt()
     {
-        if (_heldFlashlight != null || flashlightHoldPoint == null)
+        if ((UseNetworkedFlashlightFlow ? _networkPlayerAvatar != null && _networkPlayerAvatar.HasHeldFlashlight : _heldFlashlight != null)
+            || flashlightHoldPoint == null)
+        {
             return false;
+        }
+
+        return TryFindInteractableFlashlight(out _);
+    }
+
+    bool TryFindInteractableFlashlight(out FlashlightItem flashlight)
+    {
+        flashlight = null;
 
         Transform cam = CameraTransformForFacing;
         if (cam == null)
@@ -779,8 +940,14 @@ public class PlayerController : MonoBehaviour
         if (!TryInteractCast(cam, mask, out RaycastHit hit))
             return false;
 
-        FlashlightItem flashlight = hit.collider.GetComponentInParent<FlashlightItem>();
-        return flashlight != null && !flashlight.IsHeld;
+        flashlight = hit.collider.GetComponentInParent<FlashlightItem>();
+        if (flashlight == null)
+            return false;
+
+        if (UseNetworkedFlashlightFlow)
+            return _networkPlayerAvatar != null && _networkPlayerAvatar.CanPickupFlashlight(flashlight);
+
+        return !flashlight.IsHeld;
     }
 
     bool TryInteractCast(Transform cam, int mask, out RaycastHit hit)
@@ -951,7 +1118,9 @@ public class PlayerController : MonoBehaviour
         _nextMeleeTime = Time.time + meleeCooldown;
         SpendStamina(punchStaminaCost);
 
-        if (animator != null)
+        if (_networkPlayerAvatar != null)
+            _networkPlayerAvatar.TriggerAnimation(meleeTrigger);
+        else if (animator != null)
             animator.SetTrigger(meleeTrigger);
 
         StartCoroutine(ApplyMeleeDamageAfterDelay());
@@ -967,8 +1136,24 @@ public class PlayerController : MonoBehaviour
 
     void ApplyMeleeDamage()
     {
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && _networkPlayerCombat != null)
+        {
+            _networkPlayerCombat.RequestMeleeAttack();
+            return;
+        }
+
+        ApplyMeleeDamageLocally();
+    }
+
+    public void ApplyServerAuthoritativeMeleeDamage()
+    {
+        ApplyMeleeDamageLocally();
+    }
+
+    void ApplyMeleeDamageLocally()
+    {
         Vector3 origin = transform.position;
-        Vector3 forward = cameraTransform != null ? cameraTransform.forward : transform.forward;
+        Vector3 forward = transform.forward;
 
         int mask = enemyMask.value == 0 ? Physics.DefaultRaycastLayers : enemyMask.value;
         int hitCount = Physics.OverlapSphereNonAlloc(origin, meleeRange, _meleeHits, mask, QueryTriggerInteraction.Ignore);

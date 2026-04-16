@@ -1,4 +1,5 @@
 using System.Collections;
+using Unity.Netcode;
 using UnityEngine;
 
 [DisallowMultipleComponent]
@@ -17,6 +18,8 @@ public class ZombieHealth : MonoBehaviour
     [SerializeField] string isDeadParameter = "IsDead";
     [SerializeField] string deathIndexParameter = "DeathIndex";
 
+    NetworkObject _networkObject;
+
     public float MaxHealth => maxHealth;
     public float CurrentHealth { get; private set; }
     public bool IsDead { get; private set; }
@@ -29,11 +32,15 @@ public class ZombieHealth : MonoBehaviour
     void Awake()
     {
         CacheReferences();
+        _networkObject = GetComponent<NetworkObject>();
         CurrentHealth = Mathf.Max(1f, maxHealth);
     }
 
     public void TakeDamage(float amount)
     {
+        if (_networkObject != null && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && !NetworkManager.Singleton.IsServer)
+            return;
+
         if (IsDead || amount <= 0f)
             return;
 
@@ -50,6 +57,9 @@ public class ZombieHealth : MonoBehaviour
 
     public void Die()
     {
+        if (_networkObject != null && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && !NetworkManager.Singleton.IsServer)
+            return;
+
         if (IsDead)
             return;
 
@@ -109,6 +119,13 @@ public class ZombieHealth : MonoBehaviour
 
         if (destroyDelay > 0f)
             yield return new WaitForSeconds(destroyDelay);
+
+        if (_networkObject != null && _networkObject.IsSpawned)
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
+                _networkObject.Despawn(true);
+            yield break;
+        }
 
         Destroy(gameObject);
     }
