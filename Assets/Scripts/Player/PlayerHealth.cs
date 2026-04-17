@@ -1,3 +1,4 @@
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
@@ -17,6 +18,7 @@ public class PlayerHealth : MonoBehaviour
 
     RectTransform _healthFillRect;
     GameObject _healthBarRoot;
+    NetworkObject _networkObject;
 
     public float MaxHealth => maxHealth;
     public float CurrentHealth { get; private set; }
@@ -28,6 +30,7 @@ public class PlayerHealth : MonoBehaviour
 
     void Awake()
     {
+        _networkObject = GetComponent<NetworkObject>();
         CurrentHealth = Mathf.Max(1f, maxHealth);
 
         if (healthBarImage == null && autoCreateHealthBar)
@@ -38,6 +41,9 @@ public class PlayerHealth : MonoBehaviour
 
     public void TakeDamage(float amount)
     {
+        if (_networkObject != null && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && !NetworkManager.Singleton.IsServer)
+            return;
+
         if (IsDead || amount <= 0f)
             return;
 

@@ -279,7 +279,6 @@ GameObject:
   - component: {fileID: 19978112}
   - component: {fileID: 9142856566228710040}
   - component: {fileID: 5083163922341304752}
-  - component: {fileID: 2698070399222819833}
   m_Layer: 0
   m_Name: Flame
   m_TagString: Untagged
@@ -5205,27 +5204,6 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
---- !u!114 &2698070399222819833
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 137290}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 706b8fedf367d7d428b423cd8d725643, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::FlickLight
-  lig: {fileID: 0}
-  colorLight: {r: 1, g: 0.7411765, b: 0.4509804, a: 1}
-  min: 0.5
-  max: 3.2
-  timer: 8
-  smooth: 0.08
-  moveShadow: 0
-  speedMoveShadow: 1
-  speedSmoothShadow: 50
 --- !u!1 &153802
 GameObject:
   m_ObjectHideFlags: 0
@@ -5584,7 +5562,6 @@ GameObject:
   - component: {fileID: 2530060046754891957}
   - component: {fileID: 7929111351746627489}
   - component: {fileID: 7393382834235347074}
-  - component: {fileID: 3737629145004436786}
   m_Layer: 0
   m_Name: Flame (2)
   m_TagString: Untagged
@@ -10510,27 +10487,6 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
---- !u!114 &3737629145004436786
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1840171215808298273}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 706b8fedf367d7d428b423cd8d725643, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::FlickLight
-  lig: {fileID: 0}
-  colorLight: {r: 1, g: 0.7411765, b: 0.4509804, a: 1}
-  min: 0.5
-  max: 3.2
-  timer: 8
-  smooth: 0.08
-  moveShadow: 0
-  speedMoveShadow: 1
-  speedSmoothShadow: 50
 --- !u!1 &2355872956988047367
 GameObject:
   m_ObjectHideFlags: 0
@@ -10544,7 +10500,6 @@ GameObject:
   - component: {fileID: 1168943408720534904}
   - component: {fileID: 2600189669895837187}
   - component: {fileID: 2448028930409301389}
-  - component: {fileID: 406659599084210297}
   m_Layer: 0
   m_Name: Flame (1)
   m_TagString: Untagged
@@ -15470,27 +15425,6 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
---- !u!114 &406659599084210297
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2355872956988047367}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 706b8fedf367d7d428b423cd8d725643, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::FlickLight
-  lig: {fileID: 0}
-  colorLight: {r: 1, g: 0.7411765, b: 0.4509804, a: 1}
-  min: 0.5
-  max: 3.2
-  timer: 8
-  smooth: 0.08
-  moveShadow: 0
-  speedMoveShadow: 1
-  speedSmoothShadow: 50
 --- !u!1 &6996377838628979840
 GameObject:
   m_ObjectHideFlags: 0
@@ -15504,7 +15438,6 @@ GameObject:
   - component: {fileID: 6519058737841483836}
   - component: {fileID: 2272684309678864184}
   - component: {fileID: 4443013963369477489}
-  - component: {fileID: 1507145608726326176}
   m_Layer: 0
   m_Name: Flame (3)
   m_TagString: Untagged
@@ -20430,27 +20363,6 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
---- !u!114 &1507145608726326176
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6996377838628979840}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 706b8fedf367d7d428b423cd8d725643, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::FlickLight
-  lig: {fileID: 0}
-  colorLight: {r: 1, g: 0.7411765, b: 0.4509804, a: 1}
-  min: 0.5
-  max: 3.2
-  timer: 8
-  smooth: 0.08
-  moveShadow: 0
-  speedMoveShadow: 1
-  speedSmoothShadow: 50
 --- !u!1 &8803965592983342587
 GameObject:
   m_ObjectHideFlags: 0
@@ -20464,7 +20376,6 @@ GameObject:
   - component: {fileID: 4820974901455235360}
   - component: {fileID: 1486484193166661381}
   - component: {fileID: 553561886640997734}
-  - component: {fileID: 4807787358850339020}
   m_Layer: 0
   m_Name: Flame (4)
   m_TagString: Untagged
@@ -25390,24 +25301,3 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
---- !u!114 &4807787358850339020
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8803965592983342587}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 706b8fedf367d7d428b423cd8d725643, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::FlickLight
-  lig: {fileID: 0}
-  colorLight: {r: 1, g: 0.7411765, b: 0.4509804, a: 1}
-  min: 0.5
-  max: 3.2
-  timer: 8
-  smooth: 0.08
-  moveShadow: 0
-  speedMoveShadow: 1
-  speedSmoothShadow: 50

@@ -102,7 +102,6 @@ GameObject:
   - component: {fileID: 6666108258386813662}
   - component: {fileID: 4838560949230372561}
   - component: {fileID: 7101720233192505951}
-  - component: {fileID: 62633834010726921}
   - component: {fileID: 8123070001120602172}
   - component: {fileID: 4065815802270681758}
   m_Layer: 0
@@ -208,27 +207,6 @@ Animator:
   m_AllowConstantClipSamplingOptimization: 1
   m_KeepAnimatorStateOnDisable: 0
   m_WriteDefaultValuesOnDisable: 0
---- !u!114 &62633834010726921
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 9009870381997680034}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 706b8fedf367d7d428b423cd8d725643, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::FlickLight
-  lig: {fileID: 0}
-  colorLight: {r: 1, g: 0.7411765, b: 0.4509804, a: 1}
-  min: 0.5
-  max: 3.2
-  timer: 8
-  smooth: 0.08
-  moveShadow: 0
-  speedMoveShadow: 1
-  speedSmoothShadow: 50
 --- !u!108 &8123070001120602172
 Light:
   m_ObjectHideFlags: 0

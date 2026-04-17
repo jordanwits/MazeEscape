@@ -51,6 +51,13 @@ public class PitKillZone : MonoBehaviour
         if (other == null)
             return;
 
+        PlayerHealth playerHealth = other.GetComponentInParent<PlayerHealth>();
+        if (playerHealth != null)
+        {
+            playerHealth.TakeDamage(playerHealth.MaxHealth);
+            return;
+        }
+
         ZombieHealth zombieHealth = other.GetComponentInParent<ZombieHealth>();
         if (zombieHealth != null)
         {
