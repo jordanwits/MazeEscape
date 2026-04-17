@@ -12,4 +12,9 @@ public class MultiplayerSpawnPoint : MonoBehaviour
     public int Priority => priority;
     public Vector3 WorldPosition => transform.position;
     public Quaternion WorldRotation => transform.rotation;
+
+    public void SetPriority(int value)
+    {
+        priority = value;
+    }
 }

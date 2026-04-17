@@ -34,11 +34,14 @@ public class MultiplayerBootstrap : MonoBehaviour
         if (!TryGetComponent(out MultiplayerSessionController _))
             gameObject.AddComponent<MultiplayerSessionController>();
 
+        if (!TryGetComponent(out MultiplayerSceneFlow _))
+            gameObject.AddComponent<MultiplayerSceneFlow>();
+
         if (!TryGetComponent(out MultiplayerMenuOverlay _))
             gameObject.AddComponent<MultiplayerMenuOverlay>();
 
-        if (!TryGetComponent(out MultiplayerSceneFlow _))
-            gameObject.AddComponent<MultiplayerSceneFlow>();
+        if (!TryGetComponent(out ProceduralMazeCoordinator _))
+            gameObject.AddComponent<ProceduralMazeCoordinator>();
     }
 
     void EnsureNetworkConfig(NetworkManager networkManager, UnityTransport transport)

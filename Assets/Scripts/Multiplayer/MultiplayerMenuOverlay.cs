@@ -16,12 +16,11 @@ public class MultiplayerMenuOverlay : MonoBehaviour
     Rect _windowRect = new(20f, 20f, WindowWidth, WindowHeight);
     string _addressInput;
     string _portInput;
-    bool _isVisible = true;
+    bool _isVisible = false;
 
     void Awake()
     {
         _session = GetComponent<MultiplayerSessionController>();
-        TryGetComponent(out _flow);
         _addressInput = _session != null ? _session.DefaultAddress : "127.0.0.1";
         _portInput = _session != null ? _session.DefaultPort.ToString() : "7777";
         ApplyOverlayInputState();
@@ -29,6 +28,9 @@ public class MultiplayerMenuOverlay : MonoBehaviour
 
     void OnEnable()
     {
+        if (_flow == null)
+            TryGetComponent(out _flow);
+
         SceneManager.sceneLoaded += OnSceneLoaded;
     }
 
@@ -40,9 +42,7 @@ public class MultiplayerMenuOverlay : MonoBehaviour
 
     void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        if (scene.name == MultiplayerSceneFlow.MenuSceneName)
-            SetVisible(true);
-        else if (scene.name == MultiplayerSceneFlow.GameSceneName)
+        if (scene.name == MultiplayerSceneFlow.GameSceneName)
             SetVisible(false);
     }
 

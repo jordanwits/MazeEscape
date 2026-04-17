@@ -12,7 +12,7 @@ using UnityEngine.SceneManagement;
 public class MultiplayerSceneFlow : MonoBehaviour
 {
     public const string MenuSceneName = "Menu";
-    public const string GameSceneName = "Main";
+    public const string GameSceneName = "MazeGenerator";
 
     [SerializeField] MultiplayerSessionController session;
 
@@ -93,6 +93,14 @@ public class MultiplayerSceneFlow : MonoBehaviour
         try
         {
             yield return LoadGameSceneIfNeeded();
+            if (!IsActiveSceneGameScene())
+            {
+                Debug.LogError(
+                    $"[Multiplayer] Still not in \"{GameSceneName}\" after load — host not started. " +
+                    $"Check File → Build Settings lists that scene and the name matches exactly.");
+                yield break;
+            }
+
             session.StartHost(port);
         }
         finally
@@ -107,12 +115,26 @@ public class MultiplayerSceneFlow : MonoBehaviour
         try
         {
             yield return LoadGameSceneIfNeeded();
+            if (!IsActiveSceneGameScene())
+            {
+                Debug.LogError(
+                    $"[Multiplayer] Still not in \"{GameSceneName}\" after load — client not started. " +
+                    $"Check File → Build Settings lists that scene and the name matches exactly.");
+                yield break;
+            }
+
             session.StartClient(address, port);
         }
         finally
         {
             _sceneOpInProgress = false;
         }
+    }
+
+    static bool IsActiveSceneGameScene()
+    {
+        Scene active = SceneManager.GetActiveScene();
+        return active.IsValid() && active.name == GameSceneName;
     }
 
     IEnumerator LoadGameSceneIfNeeded()
