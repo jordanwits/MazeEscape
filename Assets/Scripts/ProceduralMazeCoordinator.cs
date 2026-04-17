@@ -1,9 +1,11 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Unity.AI.Navigation;
 using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.AI;
 using UnityEngine.SceneManagement;
 
 [DisallowMultipleComponent]
@@ -66,6 +68,18 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         new(-1, 0, MazeFaceMask.West)
     };
 
+    [Header("Config")]
+    [Tooltip("If set, used instead of Resources/ProceduralMazeConfig. Use per-scene or per-mode maze + enemy settings.")]
+    [SerializeField] ProceduralMazeConfig configOverride;
+    [Tooltip("If set, used instead of Maze Enemy Prefab on the config (same maze asset, different enemy per scene).")]
+    [SerializeField] GameObject mazeEnemyPrefabOverride;
+
+    [Header("Navigation (runtime)")]
+    [Tooltip("After the maze is built, bake a NavMesh from geometry under the maze root so NavMeshAgents (e.g. zombies) can path. Uses NavMeshSurface from the AI Navigation package.")]
+    [SerializeField] bool rebuildNavMeshAfterMaze = true;
+    [Tooltip("Physics = MeshCollider/BoxCollider on floor pieces. Render Meshes = Renderer geometry (use if walkable meshes have no colliders).")]
+    [SerializeField] NavMeshCollectGeometry navMeshBakeGeometry = NavMeshCollectGeometry.PhysicsColliders;
+
     ProceduralMazeConfig _config;
     NetworkManager _networkManager;
     bool _handlersRegistered;
@@ -73,14 +87,18 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     int _currentSeed;
     Coroutine _sceneRoutine;
     readonly HashSet<string> _loggedMazeWarnings = new();
+    string _lastServerMazeBuildSceneName;
+    int _lastServerMazeBuildSeed = int.MinValue;
 
     void Awake()
     {
-        _config = Resources.Load<ProceduralMazeConfig>(ConfigResourceName);
+        _config = configOverride != null
+            ? configOverride
+            : Resources.Load<ProceduralMazeConfig>(ConfigResourceName);
         _networkManager = GetComponent<NetworkManager>();
 
         if (_config == null)
-            Debug.LogWarning("[Maze] ProceduralMazeConfig could not be loaded from Resources.", this);
+            Debug.LogWarning("[Maze] Assign config Override on ProceduralMazeCoordinator or add ProceduralMazeConfig to Resources.", this);
         else if (!_config.HasMinimumStarterSet)
             Debug.LogWarning("[Maze] ProceduralMazeConfig needs cross, straight, dead-end, corner, and tee prefabs assigned.", this);
     }
@@ -313,8 +331,25 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         if (!ShouldManageScene(scene))
             return;
 
+        if (IsDuplicateServerMazeBuild(scene, seed))
+        {
+            Debug.Log(
+                $"[Maze] Skipping duplicate maze build for scene \"{scene.name}\" seed {seed}. " +
+                "(Host/server already built this maze; avoids doubling enemies and stacked spawns.)",
+                this);
+            return;
+        }
+
+        if (IsServerListening())
+        {
+            _lastServerMazeBuildSceneName = scene.name;
+            _lastServerMazeBuildSeed = seed;
+        }
+
         _loggedMazeWarnings.Clear();
         ValidateConfiguredPieceSetup();
+
+        DespawnAllSpawnedZombieEnemies();
 
         GameObject root = GetOrCreateRoot(scene);
         ClearRoot(root.transform);
@@ -350,7 +385,47 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         CreateSpawnPoints(root.transform, start, cellSize);
         MultiplayerSpawnRegistry.Instance?.RefreshSpawnPoints();
+        TryRebuildRuntimeNavMesh(root);
+        TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);
+    }
+
+    bool IsDuplicateServerMazeBuild(Scene scene, int seed)
+    {
+        if (!IsServerListening())
+            return false;
+
+        return _lastServerMazeBuildSeed == seed
+            && !string.IsNullOrEmpty(_lastServerMazeBuildSceneName)
+            && string.Equals(_lastServerMazeBuildSceneName, scene.name, StringComparison.Ordinal);
+    }
+
+    void DespawnAllSpawnedZombieEnemies()
+    {
+        if (_networkManager == null || !_networkManager.IsListening || !_networkManager.IsServer)
+            return;
+
+        var spawnManager = _networkManager.SpawnManager;
+        if (spawnManager == null || spawnManager.SpawnedObjects == null)
+            return;
+
+        List<NetworkObject> toDespawn = new();
+        foreach (KeyValuePair<ulong, NetworkObject> pair in spawnManager.SpawnedObjects)
+        {
+            NetworkObject networkObject = pair.Value;
+            if (networkObject == null || !networkObject.IsSpawned)
+                continue;
+
+            if (networkObject.gameObject.GetComponent<NetworkZombieAvatar>() != null)
+                toDespawn.Add(networkObject);
+        }
+
+        for (int i = 0; i < toDespawn.Count; i++)
+        {
+            NetworkObject networkObject = toDespawn[i];
+            if (networkObject != null && networkObject.IsSpawned)
+                networkObject.Despawn(true);
+        }
     }
 
     GameObject GetOrCreateRoot(Scene scene)
@@ -372,9 +447,26 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         {
             Transform child = root.GetChild(i);
             if (Application.isPlaying)
+            {
+                DespawnNetworkObjectsUnder(child.gameObject);
                 Destroy(child.gameObject);
+            }
             else
                 DestroyImmediate(child.gameObject);
+        }
+    }
+
+    static void DespawnNetworkObjectsUnder(GameObject root)
+    {
+        if (root == null)
+            return;
+
+        NetworkObject[] networkObjects = root.GetComponentsInChildren<NetworkObject>(true);
+        for (int i = 0; i < networkObjects.Length; i++)
+        {
+            NetworkObject networkObject = networkObjects[i];
+            if (networkObject != null && networkObject.IsSpawned)
+                networkObject.Despawn(true);
         }
     }
 
@@ -884,5 +976,305 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             4 => new Vector3(0f, 0f, -spacing),
             _ => new Vector3((index - 2) * spacing * 0.5f, 0f, 0f)
         };
+    }
+
+    void TryRebuildRuntimeNavMesh(GameObject mazeRoot)
+    {
+        if (!rebuildNavMeshAfterMaze || mazeRoot == null || !Application.isPlaying)
+            return;
+
+        if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
+            return;
+
+        NavMeshSurface surface = mazeRoot.GetComponent<NavMeshSurface>();
+        if (surface == null)
+            surface = mazeRoot.AddComponent<NavMeshSurface>();
+
+        surface.collectObjects = CollectObjects.Children;
+        surface.useGeometry = navMeshBakeGeometry;
+        surface.layerMask = ~0;
+
+        surface.BuildNavMesh();
+    }
+
+    void TrySpawnMazeEnemies(Transform mazeRoot, MazeCell[,] grid, Vector2Int start, Vector2Int exit, int seed, float cellSize)
+    {
+        GameObject prefab = mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab;
+        int count = _config.MazeEnemyCount;
+        if (prefab == null || count <= 0)
+            return;
+
+        if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
+            return;
+
+        int?[,] distances = ComputeMazeCellDistances(grid, start);
+        int width = grid.GetLength(0);
+        int height = grid.GetLength(1);
+        List<Vector2Int> candidates = new();
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                if (grid[x, y].Openings == MazeFaceMask.None)
+                    continue;
+
+                if (x == start.x && y == start.y)
+                    continue;
+
+                if (_config.MazeEnemyExcludeExitCell && x == exit.x && y == exit.y)
+                    continue;
+
+                int? d = distances[x, y];
+                if (!d.HasValue || d.Value < _config.MazeEnemyMinCellsFromStart)
+                    continue;
+
+                candidates.Add(new Vector2Int(x, y));
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            LogMazeWarningOnce("enemies-no-cells", "[Maze] No valid cells for maze enemies (check min distance / maze size).", this);
+            return;
+        }
+
+        if (count > candidates.Count)
+        {
+            LogMazeWarningOnce(
+                "enemies-trimmed",
+                $"[Maze] Requested {_config.MazeEnemyCount} maze enemies but only {candidates.Count} cells match rules; spawning {candidates.Count}.",
+                this);
+            count = candidates.Count;
+        }
+
+        ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0x39FEA0B9))));
+
+        Debug.Log(
+            $"[Maze] Spawning {count} maze enemy/enemies from config asset \"{_config.name}\" " +
+            $"(Maze Enemy Count field = {_config.MazeEnemyCount}). Prefab: \"{(prefab != null ? prefab.name : "null")}\". " +
+            $"{(mazeEnemyPrefabOverride != null ? $"Prefab override on coordinator: \"{mazeEnemyPrefabOverride.name}\"." : "No enemy prefab override on coordinator (using config prefab).")}",
+            this);
+
+        Transform enemiesRoot = CreateChild(mazeRoot, "GeneratedEnemies");
+        float yOffset = _config.MazeEnemySpawnHeight;
+        bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
+
+        List<Vector3> placedEnemyPositions = new(count);
+        float minSeparationXZ = ResolveMazeEnemyMinSeparationXZ(cellSize);
+
+        for (int i = 0; i < count; i++)
+        {
+            Vector2Int cell = candidates[i];
+            Vector3 position = ResolveSpawnPositionWithSeparation(
+                cell,
+                cellSize,
+                yOffset,
+                seed,
+                i,
+                placedEnemyPositions,
+                minSeparationXZ);
+
+            placedEnemyPositions.Add(position);
+            GameObject instance = Instantiate(prefab, position, Quaternion.identity, enemiesRoot);
+
+            if (!spawnWithNetcode)
+                continue;
+
+            NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+            if (networkObject != null)
+                networkObject.Spawn();
+        }
+    }
+
+    float ResolveMazeEnemyMinSeparationXZ(float cellSize)
+    {
+        if (_config.MazeEnemyMinSeparation > 0f)
+            return Mathf.Max(0.25f, _config.MazeEnemyMinSeparation);
+
+        return Mathf.Clamp(cellSize * 0.2f, 1.15f, 2.6f);
+    }
+
+    Vector3 ResolveSpawnPositionWithSeparation(
+        Vector2Int cell,
+        float cellSize,
+        float yOffset,
+        int mazeSeed,
+        int spawnIndex,
+        List<Vector3> placed,
+        float minSeparationXZ)
+    {
+        const int maxAttempts = 18;
+        float minSqr = minSeparationXZ * minSeparationXZ;
+        Vector3 best = GetMazeEnemySpawnWorldPosition(cell, cellSize, yOffset, mazeSeed, spawnIndex, 0);
+        float bestScore = -1f;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            Vector3 candidate = GetMazeEnemySpawnWorldPosition(cell, cellSize, yOffset, mazeSeed, spawnIndex, attempt);
+            if (IsFarEnoughXZ(candidate, placed, minSqr))
+                return candidate;
+
+            float score = MinHorizontalSqrDistanceToAny(candidate, placed);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+
+        return best;
+    }
+
+    static bool IsFarEnoughXZ(Vector3 candidate, List<Vector3> placed, float minSqr)
+    {
+        for (int i = 0; i < placed.Count; i++)
+        {
+            float dx = candidate.x - placed[i].x;
+            float dz = candidate.z - placed[i].z;
+            if (dx * dx + dz * dz < minSqr)
+                return false;
+        }
+
+        return true;
+    }
+
+    static float MinHorizontalSqrDistanceToAny(Vector3 candidate, List<Vector3> placed)
+    {
+        if (placed.Count == 0)
+            return float.MaxValue;
+
+        float best = float.MaxValue;
+        for (int i = 0; i < placed.Count; i++)
+        {
+            float dx = candidate.x - placed[i].x;
+            float dz = candidate.z - placed[i].z;
+            float sqr = dx * dx + dz * dz;
+            if (sqr < best)
+                best = sqr;
+        }
+
+        return best;
+    }
+
+    Vector3 GetMazeEnemySpawnWorldPosition(
+        Vector2Int cell,
+        float cellSize,
+        float yOffset,
+        int mazeSeed,
+        int spawnIndex,
+        int placementAttempt)
+    {
+        Vector3 cellCenter = CellToWorld(cell.x, cell.y, cellSize);
+        int jitterSeed = MixSeed(mazeSeed, MixSeed(spawnIndex, MixSeed(placementAttempt, unchecked((int)0x51A4EED5))));
+        System.Random jitterRng = new(jitterSeed);
+        float jitterRadius = Mathf.Min(cellSize * 0.48f, cellSize * 0.35f * (1f + placementAttempt * 0.14f));
+        float jx = (float)(jitterRng.NextDouble() * 2d - 1d) * jitterRadius;
+        float jz = (float)(jitterRng.NextDouble() * 2d - 1d) * jitterRadius;
+        Vector3 xzOnGrid = cellCenter + new Vector3(jx, 0f, jz);
+
+        if (!TryFindLowestWalkableSurfaceBelow(xzOnGrid, cellSize, out Vector3 floorPoint))
+            floorPoint = xzOnGrid;
+
+        float snapRadius = Mathf.Clamp(cellSize * 0.22f, 0.75f, 3f);
+        Vector3 sampleFrom = floorPoint + Vector3.up * 0.35f;
+        if (NavMesh.SamplePosition(sampleFrom, out NavMeshHit navHit, snapRadius, NavMesh.AllAreas))
+        {
+            if (navHit.position.y <= floorPoint.y + 2.5f)
+                return navHit.position + Vector3.up * yOffset;
+        }
+
+        return floorPoint + Vector3.up * yOffset;
+    }
+
+    static bool TryFindLowestWalkableSurfaceBelow(Vector3 xzOnGrid, float cellSize, out Vector3 floorPoint)
+    {
+        floorPoint = default;
+        float rayStartY = xzOnGrid.y + Mathf.Max(24f, cellSize * 2f);
+        Vector3 origin = new(xzOnGrid.x, rayStartY, xzOnGrid.z);
+        float rayLength = Mathf.Max(80f, cellSize * 5f);
+
+        RaycastHit[] hits = Physics.RaycastAll(
+            origin,
+            Vector3.down,
+            rayLength,
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore);
+
+        if (hits == null || hits.Length == 0)
+            return false;
+
+        const float minFloorNormalY = 0.55f;
+        float bestY = float.MaxValue;
+        bool found = false;
+
+        for (int i = 0; i < hits.Length; i++)
+        {
+            RaycastHit hit = hits[i];
+            if (hit.normal.y < minFloorNormalY)
+                continue;
+
+            if (hit.point.y < bestY)
+            {
+                bestY = hit.point.y;
+                floorPoint = hit.point;
+                found = true;
+            }
+        }
+
+        return found;
+    }
+
+    int?[,] ComputeMazeCellDistances(MazeCell[,] cells, Vector2Int start)
+    {
+        int width = cells.GetLength(0);
+        int height = cells.GetLength(1);
+        int?[,] distances = new int?[width, height];
+
+        if (cells[start.x, start.y].Openings == MazeFaceMask.None)
+            return distances;
+
+        Queue<Vector2Int> queue = new();
+        distances[start.x, start.y] = 0;
+        queue.Enqueue(start);
+
+        while (queue.Count > 0)
+        {
+            Vector2Int current = queue.Dequeue();
+            int nextDistance = distances[current.x, current.y]!.Value + 1;
+
+            for (int i = 0; i < Steps.Length; i++)
+            {
+                DirectionStep step = Steps[i];
+                if ((cells[current.x, current.y].Openings & step.Direction) == 0)
+                    continue;
+
+                int nextX = current.x + step.Dx;
+                int nextY = current.y + step.Dy;
+                if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height)
+                    continue;
+
+                if (cells[nextX, nextY].Openings == MazeFaceMask.None)
+                    continue;
+
+                if (distances[nextX, nextY].HasValue)
+                    continue;
+
+                distances[nextX, nextY] = nextDistance;
+                queue.Enqueue(new Vector2Int(nextX, nextY));
+            }
+        }
+
+        return distances;
+    }
+
+    static void ShuffleList<T>(IList<T> list, System.Random random)
+    {
+        for (int i = list.Count - 1; i > 0; i--)
+        {
+            int j = random.Next(i + 1);
+            T temp = list[i];
+            list[i] = list[j];
+            list[j] = temp;
+        }
     }
 }

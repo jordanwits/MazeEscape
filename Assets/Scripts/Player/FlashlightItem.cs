@@ -245,10 +245,10 @@ public class FlashlightItem : MonoBehaviour
         if (itemRigidbody == null)
             return;
 
-        itemRigidbody.isKinematic = true;
-        itemRigidbody.useGravity = false;
         itemRigidbody.linearVelocity = Vector3.zero;
         itemRigidbody.angularVelocity = Vector3.zero;
+        itemRigidbody.isKinematic = true;
+        itemRigidbody.useGravity = false;
     }
 
     void EndHeldState(bool enableWorldPhysics = true)
@@ -262,10 +262,13 @@ public class FlashlightItem : MonoBehaviour
         if (itemRigidbody == null)
             return;
 
-        itemRigidbody.linearVelocity = Vector3.zero;
-        itemRigidbody.angularVelocity = Vector3.zero;
         itemRigidbody.isKinematic = !enableWorldPhysics;
         itemRigidbody.useGravity = enableWorldPhysics;
+        if (!itemRigidbody.isKinematic)
+        {
+            itemRigidbody.linearVelocity = Vector3.zero;
+            itemRigidbody.angularVelocity = Vector3.zero;
+        }
     }
 
     void AttachToHoldPoint(Transform holdPoint, Transform followTransform)

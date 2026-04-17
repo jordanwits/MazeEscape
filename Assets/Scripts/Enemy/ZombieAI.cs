@@ -649,9 +649,14 @@ public class ZombieAI : MonoBehaviour
         {
             ResetAllTriggers();
             if (allowMoveWhileAttacking && upperBodyLayerIndex > 0)
-                animator.CrossFadeInFixedTime(attackTrigger, attackCrossfadeDuration, upperBodyLayerIndex, 0f);
+            {
+                animator.SetLayerWeight(upperBodyLayerIndex, 1f);
+                animator.CrossFadeInFixedTime("Attack", attackCrossfadeDuration, upperBodyLayerIndex, 0f);
+            }
             else
-                animator.CrossFadeInFixedTime(attackTrigger, attackCrossfadeDuration, 0, 0f);
+            {
+                animator.CrossFadeInFixedTime("Attack", attackCrossfadeDuration, 0, 0f);
+            }
         }
 
         if (attackHitDelay > 0f)
@@ -669,6 +674,11 @@ public class ZombieAI : MonoBehaviour
         float recoveryTime = Mathf.Max(0f, attackRate - attackHitDelay);
         if (recoveryTime > 0f)
             yield return new WaitForSeconds(recoveryTime);
+
+        if (animator != null && allowMoveWhileAttacking && upperBodyLayerIndex > 0)
+        {
+            animator.CrossFadeInFixedTime("Empty", 0.1f, upperBodyLayerIndex, 0f);
+        }
 
         _attackRoutine = null;
 

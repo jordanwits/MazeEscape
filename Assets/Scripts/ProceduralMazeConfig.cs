@@ -64,6 +64,19 @@ public class ProceduralMazeConfig : ScriptableObject
     [SerializeField] float spawnSpacing = 1.5f;
     [SerializeField] int spawnPointCount = 4;
 
+    [Header("Maze enemies (optional)")]
+    [Tooltip("Prefab spawned after the maze is built (e.g. zombie with NetworkObject). Leave empty to skip.")]
+    [SerializeField] GameObject mazeEnemyPrefab;
+    [SerializeField] int mazeEnemyCount;
+    [Tooltip("Extra Y offset added on top of the cell center when spawning enemies.")]
+    [SerializeField] float mazeEnemySpawnHeight;
+    [Tooltip("Minimum graph distance from the start cell along open passages. Start cell is never used.")]
+    [SerializeField] int mazeEnemyMinCellsFromStart = 2;
+    [Tooltip("If true, the farthest (exit) cell is not used for enemy spawns.")]
+    [SerializeField] bool mazeEnemyExcludeExitCell = true;
+    [Tooltip("Minimum horizontal distance between enemies spawned in the same batch. Use 0 for auto (from cell size).")]
+    [SerializeField] float mazeEnemyMinSeparation;
+
     public bool EnableGeneration => enableGeneration;
     public string TargetSceneName => targetSceneName;
     public bool BuildOfflineInPlayMode => buildOfflineInPlayMode;
@@ -104,6 +117,12 @@ public class ProceduralMazeConfig : ScriptableObject
     public float SpawnHeight => spawnHeight;
     public float SpawnSpacing => Mathf.Max(0.5f, spawnSpacing);
     public int SpawnPointCount => Mathf.Max(0, spawnPointCount);
+    public GameObject MazeEnemyPrefab => mazeEnemyPrefab;
+    public int MazeEnemyCount => Mathf.Max(0, mazeEnemyCount);
+    public float MazeEnemySpawnHeight => mazeEnemySpawnHeight;
+    public int MazeEnemyMinCellsFromStart => Mathf.Max(0, mazeEnemyMinCellsFromStart);
+    public bool MazeEnemyExcludeExitCell => mazeEnemyExcludeExitCell;
+    public float MazeEnemyMinSeparation => mazeEnemyMinSeparation;
 
     public bool HasMinimumStarterSet => HasAssignedForCategory(MazePieceCategory.Cross)
         && HasAssignedForCategory(MazePieceCategory.Straight)

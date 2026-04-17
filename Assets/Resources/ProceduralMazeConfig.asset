@@ -39,6 +39,7 @@ MonoBehaviour:
   - {fileID: 5792838455480424029, guid: 1e1c15c38983ab9439b0a0d60a7eeb45, type: 3}
   - {fileID: 6350128951640645128, guid: 48e41cc6344954541b859a7f8a4cb0c6, type: 3}
   - {fileID: 9215304624020539271, guid: bdd518c15c5cefc49a7521ea2b3a2b25, type: 3}
+  - {fileID: 5114175203983525120, guid: 63abf21e66d9c2945acf19bf5d668a2f, type: 3}
   cornerPrefabs:
   - {fileID: 439739833298870958, guid: 192ffd866a087a54282e818f28315f1f, type: 3}
   - {fileID: 4908712555214993215, guid: e65e0650180c0c24d930c7012dcd3928, type: 3}
@@ -49,7 +50,8 @@ MonoBehaviour:
   - {fileID: 7329128159845000926, guid: e4644eb61fef6604eb93debde795add3, type: 3}
   crossPrefabs:
   - {fileID: 7531800331161147241, guid: 8fae984f5c07a4543ab82f2a23bb99eb, type: 3}
-  specialPrefabs: []
+  specialPrefabs:
+  - {fileID: 1554635876598814236, guid: 9c4f005e857f4374980ec7fb19e1099b, type: 3}
   forcedStartPiecePrefab: {fileID: 1176081053692235811, guid: dad76bfe80f10e54da0e38297e2782d0, type: 3}
   forceStartCellSingleOpening: 1
   crossPrefab: {fileID: 7531800331161147241, guid: 8fae984f5c07a4543ab82f2a23bb99eb, type: 3}
@@ -67,3 +69,9 @@ MonoBehaviour:
   spawnHeight: 1
   spawnSpacing: 1.5
   spawnPointCount: 0
+  mazeEnemyPrefab: {fileID: 8324813916893631794, guid: bb8ce64463a351b44b8282256b5ae913, type: 3}
+  mazeEnemyCount: 8
+  mazeEnemySpawnHeight: 1
+  mazeEnemyMinCellsFromStart: 2
+  mazeEnemyExcludeExitCell: 1
+  mazeEnemyMinSeparation: 0
