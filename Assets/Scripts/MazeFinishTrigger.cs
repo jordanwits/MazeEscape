@@ -195,6 +195,6 @@ public class MazeFinishTrigger : MonoBehaviour
     void CacheSceneFlow()
     {
         if (_sceneFlow == null)
-            _sceneFlow = FindObjectOfType<MultiplayerSceneFlow>();
+            _sceneFlow = FindAnyObjectByType<MultiplayerSceneFlow>();
     }
 }

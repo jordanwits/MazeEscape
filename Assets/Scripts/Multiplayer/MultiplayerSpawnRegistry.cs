@@ -40,9 +40,7 @@ public class MultiplayerSpawnRegistry : MonoBehaviour
     /// <summary>Rebuilds the cached list from the current scene (including inactive objects).</summary>
     public void RefreshSpawnPoints()
     {
-        MultiplayerSpawnPoint[] found = FindObjectsByType<MultiplayerSpawnPoint>(
-            FindObjectsInactive.Include,
-            FindObjectsSortMode.None);
+        MultiplayerSpawnPoint[] found = FindObjectsByType<MultiplayerSpawnPoint>(FindObjectsInactive.Include);
 
         Array.Sort(found, (a, b) => a.Priority.CompareTo(b.Priority));
         _points = found;

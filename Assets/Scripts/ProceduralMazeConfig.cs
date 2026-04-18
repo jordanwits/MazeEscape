@@ -39,6 +39,16 @@ public class ProceduralMazeConfig : ScriptableObject
     [SerializeField] GameObject[] crossPrefabs = EmptyPrefabs;
     [SerializeField] GameObject[] specialPrefabs = EmptyPrefabs;
 
+    [Header("Interior rooms (throughout maze)")]
+    [Tooltip("Prefabs with MazePieceDefinition: open faces must match the **outer** openings of the room block (see Interior Room Grid Footprint). Placed on non-start, non-exit cells only.")]
+    [SerializeField] GameObject[] interiorRoomPrefabs = EmptyPrefabs;
+    [Tooltip("Default grid size for an interior room (cells in X and Z). Example: (2,2) with cellSize 6 →12×12 world floor. Per-prefab override: MazePieceDefinition.interiorGridFootprint.")]
+    [SerializeField] Vector2Int interiorRoomGridFootprint = new(1, 1);
+    [Tooltip("How many interior rooms to try to place each build. Uses maze seed; skips cells where no prefab matches.")]
+    [SerializeField] int interiorRoomCount;
+    [Tooltip("Minimum Chebyshev grid distance between two interior rooms (e.g. 3 means at least a 2-cell gap on diagonals). Use 1 to only avoid same-cell overlap.")]
+    [SerializeField] int interiorRoomMinChebyshevSeparation = 3;
+
     [Header("Start Cell")]
     [Tooltip("When set, the maze start cell always uses this prefab. For a one-opening (end-cap) piece, enable Force Start Cell Single Opening too, or use open faces that cover every start pattern (e.g. a cross).")]
     [SerializeField] GameObject forcedStartPiecePrefab;
@@ -100,6 +110,12 @@ public class ProceduralMazeConfig : ScriptableObject
     public GameObject[] TeePrefabs => teePrefabs ?? EmptyPrefabs;
     public GameObject[] CrossPrefabs => crossPrefabs ?? EmptyPrefabs;
     public GameObject[] SpecialPrefabs => specialPrefabs ?? EmptyPrefabs;
+    public GameObject[] InteriorRoomPrefabs => interiorRoomPrefabs ?? EmptyPrefabs;
+    public Vector2Int InteriorRoomGridFootprint => new(
+        Mathf.Max(1, interiorRoomGridFootprint.x),
+        Mathf.Max(1, interiorRoomGridFootprint.y));
+    public int InteriorRoomCount => Mathf.Max(0, interiorRoomCount);
+    public int InteriorRoomMinChebyshevSeparation => Mathf.Max(1, interiorRoomMinChebyshevSeparation);
     public GameObject ForcedStartPiecePrefab => forcedStartPiecePrefab;
     public bool ForceStartCellSingleOpening => forceStartCellSingleOpening;
     public GameObject CrossPrefab => crossPrefab;

@@ -56,6 +56,32 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         public MazeFaceMask Direction { get; }
     }
 
+    readonly struct InteriorRoomPlacementEntry
+    {
+        public InteriorRoomPlacementEntry(MazePieceMatch match, Vector2Int footprint)
+        {
+            Match = match;
+            Footprint = footprint;
+        }
+
+        public MazePieceMatch Match { get; }
+        public Vector2Int Footprint { get; }
+    }
+
+    readonly struct InteriorRoomBuildPlan
+    {
+        public InteriorRoomBuildPlan(
+            Dictionary<Vector2Int, InteriorRoomPlacementEntry> anchors,
+            HashSet<Vector2Int> skipCells)
+        {
+            Anchors = anchors;
+            SkipCells = skipCells;
+        }
+
+        public Dictionary<Vector2Int, InteriorRoomPlacementEntry> Anchors { get; }
+        public HashSet<Vector2Int> SkipCells { get; }
+    }
+
     const string ConfigResourceName = "ProceduralMazeConfig";
     const string SeedRequestMessageName = "maze-seed-request";
     const string SeedResponseMessageName = "maze-seed-response";
@@ -360,12 +386,13 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         MazeCell[,] grid = layout.Cells;
         Vector2Int start = layout.Start;
         Vector2Int exit = FindFarthestCell(grid, start);
+        int width = grid.GetLength(0);
+        int height = grid.GetLength(1);
+        InteriorRoomBuildPlan interiorPlan = SelectInteriorRoomPlacements(grid, start, exit, seed, width, height);
 
         Transform cellsRoot = CreateChild(root.transform, "Cells");
         float cellSize = _config.CellSize;
         float blockerOffset = _config.BlockerOffset > 0f ? _config.BlockerOffset : cellSize * 0.5f;
-        int width = grid.GetLength(0);
-        int height = grid.GetLength(1);
 
         for (int y = 0; y < height; y++)
         {
@@ -374,12 +401,28 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 if (grid[x, y].Openings == MazeFaceMask.None)
                     continue;
 
+                if (interiorPlan.SkipCells.Contains(new Vector2Int(x, y)))
+                    continue;
+
                 Transform cellRoot = CreateChild(cellsRoot, $"Cell_{x}_{y}");
-                cellRoot.position = CellToWorld(x, y, cellSize);
+                Vector2Int cell = new(x, y);
+                bool isInteriorAnchor = interiorPlan.Anchors.TryGetValue(cell, out InteriorRoomPlacementEntry interiorEntry);
+                cellRoot.position = isInteriorAnchor
+                    ? CellRectCenterWorld(x, y, interiorEntry.Footprint.x, interiorEntry.Footprint.y, cellSize)
+                    : CellToWorld(x, y, cellSize);
 
                 bool isStart = x == start.x && y == start.y;
                 bool isExit = x == exit.x && y == exit.y;
-                BuildCell(cellRoot, grid[x, y].Openings, blockerOffset, isStart, isExit, seed, new Vector2Int(x, y));
+                BuildCell(
+                    cellRoot,
+                    grid[x, y].Openings,
+                    blockerOffset,
+                    isStart,
+                    isExit,
+                    seed,
+                    cell,
+                    isInteriorAnchor,
+                    interiorEntry);
             }
         }
 
@@ -480,6 +523,13 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     Vector3 CellToWorld(int x, int y, float cellSize)
     {
         return _config.Origin + new Vector3(x * cellSize, 0f, y * cellSize);
+    }
+
+    Vector3 CellRectCenterWorld(int minGridX, int minGridY, int footprintCellsX, int footprintCellsZ, float cellSize)
+    {
+        float cx = minGridX + (footprintCellsX - 1) * 0.5f;
+        float cz = minGridY + (footprintCellsZ - 1) * 0.5f;
+        return _config.Origin + new Vector3(cx * cellSize, 0f, cz * cellSize);
     }
 
     MazeLayout GenerateMazeLayout(int seed, int width, int height)
@@ -788,15 +838,812 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         return farthest;
     }
 
-    void BuildCell(Transform parent, MazeFaceMask openings, float blockerOffset, bool isStart, bool isExit, int seed, Vector2Int cellCoordinates)
+    InteriorRoomBuildPlan SelectInteriorRoomPlacements(
+        MazeCell[,] grid,
+        Vector2Int start,
+        Vector2Int exit,
+        int seed,
+        int width,
+        int height)
     {
-        if (openings == MazeFaceMask.None)
-            return;
+        Dictionary<Vector2Int, InteriorRoomPlacementEntry> anchors = new();
+        HashSet<Vector2Int> skipCells = new();
+        GameObject[] pool = _config.InteriorRoomPrefabs;
+        int want = _config.InteriorRoomCount;
+        int minApart = _config.InteriorRoomMinChebyshevSeparation;
+        Vector2Int configFootprint = _config.InteriorRoomGridFootprint;
 
-        if (!MazePieceResolver.TryResolve(_config, openings, isStart, isExit, seed, cellCoordinates, out MazePieceMatch match, out string failureReason))
+        if (want <= 0 || pool == null)
+            return new InteriorRoomBuildPlan(anchors, skipCells);
+
+        bool hasAnyPrefab = false;
+        for (int i = 0; i < pool.Length; i++)
+        {
+            if (pool[i] != null)
+            {
+                hasAnyPrefab = true;
+                break;
+            }
+        }
+
+        if (!hasAnyPrefab)
+            return new InteriorRoomBuildPlan(anchors, skipCells);
+
+        List<Vector2Int> candidateAnchors = new();
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                if (grid[x, y].Openings == MazeFaceMask.None)
+                    continue;
+
+                if (x == start.x && y == start.y)
+                    continue;
+
+                if (x == exit.x && y == exit.y)
+                    continue;
+
+                if (!HasAnchorWithFittingPrefab(grid, start, exit, x, y, pool, configFootprint, width, height))
+                    continue;
+
+                candidateAnchors.Add(new Vector2Int(x, y));
+            }
+        }
+
+        if (candidateAnchors.Count == 0)
         {
             LogMazeWarningOnce(
-                $"resolve:{openings}",
+                "interior-room-no-candidates",
+                "[Maze] No candidate anchors found for interior rooms. " +
+                "Every potential anchor either overlapped the start/exit cell or could not fit any prefab footprint inside the maze bounds.",
+                this);
+            return new InteriorRoomBuildPlan(anchors, skipCells);
+        }
+
+        ShuffleList(candidateAnchors, new System.Random(MixSeed(seed, unchecked((int)0x4C7552D3))));
+
+        List<(Vector2Int min, Vector2Int size)> placedRects = new();
+
+        // Iteratively pick the anchor with the fewest orphaned cells from the remaining
+        // candidates. Re-scoring after each placement is necessary because placing a room
+        // mutates the grid (severs/prunes other corridors) and changes how every other
+        // anchor would orphan cells.
+        while (anchors.Count < want)
+        {
+            Vector2Int? bestAnchor = null;
+            InteriorRoomPlacementEntry bestEntry = default;
+            Vector2Int bestFootprint = default;
+            Dictionary<Vector2Int, MazeFaceMask> bestGridChanges = null;
+            int bestOrphans = int.MaxValue;
+
+            foreach (Vector2Int anchor in candidateAnchors)
+            {
+                if (anchors.ContainsKey(anchor))
+                    continue;
+
+                bool tooCloseEarly = false;
+                for (int i = 0; i < placedRects.Count; i++)
+                {
+                    (Vector2Int pMin, Vector2Int pSize) = placedRects[i];
+                    if (MinChebyshevBetweenAxisAlignedRects(anchor, configFootprint, pMin, pSize) < minApart)
+                    {
+                        tooCloseEarly = true;
+                        break;
+                    }
+                }
+
+                if (tooCloseEarly)
+                    continue;
+
+                if (!TryStampInteriorRoomAtAnchor(
+                        grid,
+                        start,
+                        exit,
+                        anchor,
+                        pool,
+                        configFootprint,
+                        seed,
+                        width,
+                        height,
+                        out InteriorRoomPlacementEntry entry,
+                        out Vector2Int footprint,
+                        out Dictionary<Vector2Int, MazeFaceMask> gridChanges,
+                        out int orphans,
+                        out _))
+                    continue;
+
+                bool tooClose = false;
+                for (int i = 0; i < placedRects.Count; i++)
+                {
+                    (Vector2Int pMin, Vector2Int pSize) = placedRects[i];
+                    if (MinChebyshevBetweenAxisAlignedRects(anchor, footprint, pMin, pSize) < minApart)
+                    {
+                        tooClose = true;
+                        break;
+                    }
+                }
+
+                if (tooClose)
+                    continue;
+
+                if (orphans < bestOrphans)
+                {
+                    bestOrphans = orphans;
+                    bestAnchor = anchor;
+                    bestEntry = entry;
+                    bestFootprint = footprint;
+                    bestGridChanges = gridChanges;
+
+                    if (bestOrphans == 0)
+                        break;
+                }
+            }
+
+            if (bestAnchor == null)
+                break;
+
+            Vector2Int chosen = bestAnchor.Value;
+            foreach (KeyValuePair<Vector2Int, MazeFaceMask> kvp in bestGridChanges)
+                grid[kvp.Key.x, kvp.Key.y].Openings = kvp.Value;
+
+            for (int ly = 0; ly < bestFootprint.y; ly++)
+            {
+                for (int lx = 0; lx < bestFootprint.x; lx++)
+                {
+                    if (lx == 0 && ly == 0)
+                        continue;
+
+                    skipCells.Add(new Vector2Int(chosen.x + lx, chosen.y + ly));
+                }
+            }
+
+            anchors[chosen] = bestEntry;
+            placedRects.Add((chosen, bestFootprint));
+        }
+
+        if (anchors.Count < want)
+        {
+            LogMazeWarningOnce(
+                $"interior-room-undershoot:{want}:{anchors.Count}",
+                $"[Maze] Requested {want} interior room(s) but only placed {anchors.Count}. " +
+                $"Tried {candidateAnchors.Count} candidate anchor(s). " +
+                "Consider adding more doorway markers, lowering Interior Room Count, or lowering Min Chebyshev Separation.",
+                this);
+        }
+
+        if (anchors.Count > 0)
+        {
+            string anchorList = string.Join(", ", anchors.Keys);
+            Debug.Log($"[Maze] Interior rooms placed: {anchors.Count}/{want} at anchors [{anchorList}].", this);
+        }
+
+        return new InteriorRoomBuildPlan(anchors, skipCells);
+    }
+
+    bool HasAnchorWithFittingPrefab(
+        MazeCell[,] grid,
+        Vector2Int start,
+        Vector2Int exit,
+        int anchorX,
+        int anchorY,
+        GameObject[] pool,
+        Vector2Int configFootprint,
+        int width,
+        int height)
+    {
+        for (int i = 0; i < pool.Length; i++)
+        {
+            GameObject prefab = pool[i];
+            if (prefab == null)
+                continue;
+
+            if (!MazePieceDefinition.TryGetDefinitionForResolution(prefab, out MazePieceDefinition definition))
+                continue;
+
+            Vector2Int fp = definition.ResolveInteriorGridFootprint(configFootprint);
+            if (IsRectangleStampable(grid, anchorX, anchorY, fp.x, fp.y, width, height, start, exit))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// A rectangle is stampable if every cell is in bounds and the footprint does not overlap
+    /// the start or exit cell. Holes (Openings == None) inside the footprint are allowed:
+    /// <see cref="TryStampInteriorRoomAtAnchor"/> carves the room on top of them and the
+    /// connectivity check guarantees the start↔exit path still works (orphaned cells are pruned).
+    /// </summary>
+    static bool IsRectangleStampable(
+        MazeCell[,] grid,
+        int minX,
+        int minY,
+        int fw,
+        int fh,
+        int width,
+        int height,
+        Vector2Int start,
+        Vector2Int exit)
+    {
+        if (fw < 1 || fh < 1 || minX < 0 || minY < 0 || minX + fw > width || minY + fh > height)
+            return false;
+
+        for (int ly = 0; ly < fh; ly++)
+        {
+            for (int lx = 0; lx < fw; lx++)
+            {
+                int x = minX + lx;
+                int y = minY + ly;
+
+                if (x == start.x && y == start.y)
+                    return false;
+
+                if (x == exit.x && y == exit.y)
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Picks the first prefab/rotation that can be stamped at <paramref name="anchor"/> while
+    /// keeping every visited cell reachable from <paramref name="start"/>. Returns the proposed
+    /// grid changes in <paramref name="gridChanges"/> so the caller can apply them after the
+    /// neighbor-separation check passes.
+    /// </summary>
+    bool TryStampInteriorRoomAtAnchor(
+        MazeCell[,] grid,
+        Vector2Int start,
+        Vector2Int exit,
+        Vector2Int anchor,
+        GameObject[] pool,
+        Vector2Int configFootprint,
+        int seed,
+        int width,
+        int height,
+        out InteriorRoomPlacementEntry entry,
+        out Vector2Int footprintUsed,
+        out Dictionary<Vector2Int, MazeFaceMask> gridChanges,
+        out int orphanedCells,
+        out string rejectionReason)
+    {
+        entry = default;
+        footprintUsed = default;
+        gridChanges = null;
+        orphanedCells = int.MaxValue;
+        rejectionReason = "no interior room prefabs were considered";
+
+        List<int> order = new(pool.Length);
+        for (int i = 0; i < pool.Length; i++)
+            order.Add(i);
+
+        ShuffleList(order, new System.Random(MixSeed(seed, MixSeed(anchor.x, anchor.y))));
+
+        for (int o = 0; o < order.Count; o++)
+        {
+            GameObject prefab = pool[order[o]];
+            if (prefab == null)
+                continue;
+
+            if (!MazePieceDefinition.TryGetDefinitionForResolution(prefab, out MazePieceDefinition definition))
+            {
+                rejectionReason = $"prefab \"{prefab.name}\" has no MazePieceDefinition";
+                continue;
+            }
+
+            if (!definition.AllowsContext(false, false))
+            {
+                rejectionReason = $"prefab \"{prefab.name}\" is Start Only or Exit Only and cannot be used as an interior room";
+                continue;
+            }
+
+            Vector2Int fp = definition.ResolveInteriorGridFootprint(configFootprint);
+            if (!IsRectangleStampable(grid, anchor.x, anchor.y, fp.x, fp.y, width, height, start, exit))
+            {
+                rejectionReason = $"footprint {fp.x}x{fp.y} for prefab \"{prefab.name}\" runs out of bounds or overlaps the start/exit cell";
+                continue;
+            }
+
+            if (TryStampInteriorRoomWithPrefab(
+                    grid,
+                    start,
+                    exit,
+                    anchor,
+                    fp,
+                    prefab,
+                    definition,
+                    width,
+                    height,
+                    out entry,
+                    out gridChanges,
+                    out orphanedCells,
+                    out string prefabReason))
+            {
+                footprintUsed = fp;
+                rejectionReason = null;
+                return true;
+            }
+
+            rejectionReason = $"prefab \"{prefab.name}\" rejected: {prefabReason}";
+        }
+
+        return false;
+    }
+
+    static bool TryStampInteriorRoomWithPrefab(
+        MazeCell[,] grid,
+        Vector2Int start,
+        Vector2Int exit,
+        Vector2Int anchor,
+        Vector2Int footprint,
+        GameObject prefab,
+        MazePieceDefinition definition,
+        int width,
+        int height,
+        out InteriorRoomPlacementEntry entry,
+        out Dictionary<Vector2Int, MazeFaceMask> gridChanges,
+        out int orphanedCells,
+        out string rejectionReason)
+    {
+        entry = default;
+        gridChanges = null;
+        orphanedCells = int.MaxValue;
+        rejectionReason = "prefab could not rotate to fit the maze";
+
+        bool hasAuthoredDoorways = MazePieceDefinition.TryGetExactInteriorDoorwaySpecs(
+            prefab,
+            footprint,
+            definition.FootprintSize,
+            out List<InteriorDoorwaySpec> authoredDoorwaySpecs);
+
+        int turnCount = definition.CanRotate ? 4 : 1;
+        bool anyDoorwaysConsidered = false;
+        bool anyConnectivityChecked = false;
+
+        Dictionary<Vector2Int, MazeFaceMask> bestProposed = null;
+        MazeFaceMask bestExteriorMask = MazeFaceMask.None;
+        int bestQuarterTurns = 0;
+        int bestOrphanCount = int.MaxValue;
+
+        for (int quarterTurns = 0; quarterTurns < turnCount; quarterTurns++)
+        {
+            HashSet<InteriorDoorwaySpec> rotatedDoorways;
+            if (hasAuthoredDoorways)
+            {
+                if (!TryRotateDoorwaySpecs(authoredDoorwaySpecs, footprint, quarterTurns, out rotatedDoorways))
+                    continue;
+            }
+            else
+            {
+                rotatedDoorways = ComputeFallbackDoorwaysFromMaze(grid, anchor, footprint, width, height);
+                if (rotatedDoorways.Count == 0)
+                    continue;
+            }
+
+            anyDoorwaysConsidered = true;
+            anyConnectivityChecked = true;
+
+            if (!TryComputeStampPlan(
+                    grid,
+                    start,
+                    exit,
+                    anchor,
+                    footprint,
+                    rotatedDoorways,
+                    width,
+                    height,
+                    out Dictionary<Vector2Int, MazeFaceMask> proposed,
+                    out MazeFaceMask exteriorMask,
+                    out int rotationOrphans))
+                continue;
+
+            if (rotationOrphans < bestOrphanCount)
+            {
+                bestOrphanCount = rotationOrphans;
+                bestProposed = proposed;
+                bestExteriorMask = exteriorMask;
+                bestQuarterTurns = quarterTurns;
+
+                if (bestOrphanCount == 0)
+                    break;
+            }
+        }
+
+        if (bestProposed != null)
+        {
+            Quaternion rotation = Quaternion.Euler(0f, bestQuarterTurns * 90f + definition.YawOffset, 0f);
+            entry = new InteriorRoomPlacementEntry(
+                new MazePieceMatch(prefab, definition, rotation, bestExteriorMask, definition.UseClosedFaceCaps),
+                footprint);
+            gridChanges = bestProposed;
+            orphanedCells = bestOrphanCount;
+            rejectionReason = null;
+            return true;
+        }
+
+        if (!anyDoorwaysConsidered)
+        {
+            rejectionReason = hasAuthoredDoorways
+                ? "no rotation produced a doorway pattern that fit the footprint"
+                : "no maze openings border this footprint to derive a doorway pattern from";
+        }
+        else if (anyConnectivityChecked)
+        {
+            rejectionReason = "every rotation either pointed a doorway into a maze hole or " +
+                "would have severed the start↔exit path";
+        }
+
+        return false;
+    }
+
+    static HashSet<InteriorDoorwaySpec> ComputeFallbackDoorwaysFromMaze(
+        MazeCell[,] grid,
+        Vector2Int anchor,
+        Vector2Int footprint,
+        int width,
+        int height)
+    {
+        HashSet<InteriorDoorwaySpec> doorways = new();
+        for (int ly = 0; ly < footprint.y; ly++)
+        {
+            for (int lx = 0; lx < footprint.x; lx++)
+            {
+                int x = anchor.x + lx;
+                int y = anchor.y + ly;
+                MazeFaceMask m = grid[x, y].Openings;
+
+                for (int s = 0; s < Steps.Length; s++)
+                {
+                    DirectionStep step = Steps[s];
+                    int nx = x + step.Dx;
+                    int ny = y + step.Dy;
+                    bool inside = nx >= anchor.x && nx < anchor.x + footprint.x && ny >= anchor.y && ny < anchor.y + footprint.y;
+                    if (inside)
+                        continue;
+
+                    if ((m & step.Direction) == 0)
+                        continue;
+
+                    if (nx < 0 || nx >= width || ny < 0 || ny >= height)
+                        continue;
+
+                    if (grid[nx, ny].Openings == MazeFaceMask.None)
+                        continue;
+
+                    doorways.Add(new InteriorDoorwaySpec(new Vector2Int(lx, ly), step.Direction));
+                }
+            }
+        }
+
+        return doorways;
+    }
+
+    static bool TryComputeStampPlan(
+        MazeCell[,] grid,
+        Vector2Int start,
+        Vector2Int exit,
+        Vector2Int anchor,
+        Vector2Int footprint,
+        HashSet<InteriorDoorwaySpec> doorways,
+        int width,
+        int height,
+        out Dictionary<Vector2Int, MazeFaceMask> proposed,
+        out MazeFaceMask exteriorMask,
+        out int orphanedCells)
+    {
+        orphanedCells = 0;
+        proposed = new Dictionary<Vector2Int, MazeFaceMask>();
+        exteriorMask = MazeFaceMask.None;
+
+        for (int ly = 0; ly < footprint.y; ly++)
+        {
+            for (int lx = 0; lx < footprint.x; lx++)
+            {
+                Vector2Int cell = new(anchor.x + lx, anchor.y + ly);
+                MazeFaceMask m = MazeFaceMask.None;
+
+                if (lx > 0)
+                    m |= MazeFaceMask.West;
+                if (lx + 1 < footprint.x)
+                    m |= MazeFaceMask.East;
+                if (ly > 0)
+                    m |= MazeFaceMask.South;
+                if (ly + 1 < footprint.y)
+                    m |= MazeFaceMask.North;
+
+                if (lx == 0 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.West)))
+                    m |= MazeFaceMask.West;
+                if (lx == footprint.x - 1 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.East)))
+                    m |= MazeFaceMask.East;
+                if (ly == 0 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.South)))
+                    m |= MazeFaceMask.South;
+                if (ly == footprint.y - 1 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.North)))
+                    m |= MazeFaceMask.North;
+
+                proposed[cell] = m;
+                exteriorMask |= m & GetExteriorFaceMask(lx, ly, footprint);
+            }
+        }
+
+        for (int ly = 0; ly < footprint.y; ly++)
+        {
+            for (int lx = 0; lx < footprint.x; lx++)
+            {
+                Vector2Int cell = new(anchor.x + lx, anchor.y + ly);
+                MazeFaceMask roomOpenings = proposed[cell];
+
+                for (int s = 0; s < Steps.Length; s++)
+                {
+                    DirectionStep step = Steps[s];
+                    int nx = cell.x + step.Dx;
+                    int ny = cell.y + step.Dy;
+                    bool inside = nx >= anchor.x && nx < anchor.x + footprint.x && ny >= anchor.y && ny < anchor.y + footprint.y;
+                    if (inside)
+                        continue;
+
+                    if (nx < 0 || nx >= width || ny < 0 || ny >= height)
+                        continue;
+
+                    Vector2Int neighbor = new(nx, ny);
+                    MazeFaceMask currentNeighborOpenings = proposed.TryGetValue(neighbor, out MazeFaceMask cached)
+                        ? cached
+                        : grid[nx, ny].Openings;
+
+                    MazeFaceMask oppositeDir = MazeFaceMaskUtility.Opposite(step.Direction);
+                    bool roomWantsOpen = (roomOpenings & step.Direction) != 0;
+                    bool neighborOpens = (currentNeighborOpenings & oppositeDir) != 0;
+
+                    if (roomWantsOpen && !neighborOpens)
+                    {
+                        if (currentNeighborOpenings == MazeFaceMask.None)
+                            return false;
+
+                        proposed[neighbor] = currentNeighborOpenings | oppositeDir;
+                    }
+                    else if (!roomWantsOpen && neighborOpens)
+                    {
+                        proposed[neighbor] = currentNeighborOpenings & ~oppositeDir;
+                    }
+                }
+            }
+        }
+
+        return IsConnectivityPreservedAfterStamp(grid, proposed, start, exit, width, height, out orphanedCells);
+    }
+
+    static MazeFaceMask GetExteriorFaceMask(int lx, int ly, Vector2Int footprint)
+    {
+        MazeFaceMask mask = MazeFaceMask.None;
+        if (lx == 0)
+            mask |= MazeFaceMask.West;
+        if (lx == footprint.x - 1)
+            mask |= MazeFaceMask.East;
+        if (ly == 0)
+            mask |= MazeFaceMask.South;
+        if (ly == footprint.y - 1)
+            mask |= MazeFaceMask.North;
+
+        return mask;
+    }
+
+    /// <summary>
+    /// Returns true if the proposed stamp keeps <paramref name="start"/> and <paramref name="exit"/>
+    /// connected, then prunes any maze cells the stamp orphaned (sets them to <see cref="MazeFaceMask.None"/>
+    /// in <paramref name="proposed"/> and clears the matching face on neighbors). Reports the
+    /// orphan count via <paramref name="orphanedCells"/> so the caller can rank candidate placements.
+    /// </summary>
+    static bool IsConnectivityPreservedAfterStamp(
+        MazeCell[,] grid,
+        Dictionary<Vector2Int, MazeFaceMask> proposed,
+        Vector2Int start,
+        Vector2Int exit,
+        int width,
+        int height,
+        out int orphanedCells)
+    {
+        orphanedCells = 0;
+
+        MazeFaceMask EffectiveOpenings(int x, int y)
+        {
+            return proposed.TryGetValue(new Vector2Int(x, y), out MazeFaceMask m) ? m : grid[x, y].Openings;
+        }
+
+        if (EffectiveOpenings(start.x, start.y) == MazeFaceMask.None)
+            return false;
+        if (EffectiveOpenings(exit.x, exit.y) == MazeFaceMask.None)
+            return false;
+
+        bool[,] visited = new bool[width, height];
+        Queue<Vector2Int> queue = new();
+        queue.Enqueue(start);
+        visited[start.x, start.y] = true;
+        bool exitReached = start == exit;
+
+        while (queue.Count > 0)
+        {
+            Vector2Int current = queue.Dequeue();
+            MazeFaceMask m = EffectiveOpenings(current.x, current.y);
+
+            for (int s = 0; s < Steps.Length; s++)
+            {
+                DirectionStep step = Steps[s];
+                if ((m & step.Direction) == 0)
+                    continue;
+
+                int nx = current.x + step.Dx;
+                int ny = current.y + step.Dy;
+                if (nx < 0 || nx >= width || ny < 0 || ny >= height)
+                    continue;
+
+                if (visited[nx, ny])
+                    continue;
+
+                MazeFaceMask nm = EffectiveOpenings(nx, ny);
+                if ((nm & MazeFaceMaskUtility.Opposite(step.Direction)) == 0)
+                    continue;
+
+                visited[nx, ny] = true;
+                if (nx == exit.x && ny == exit.y)
+                    exitReached = true;
+                queue.Enqueue(new Vector2Int(nx, ny));
+            }
+        }
+
+        if (!exitReached)
+            return false;
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                if (visited[x, y])
+                    continue;
+                if (EffectiveOpenings(x, y) == MazeFaceMask.None)
+                    continue;
+
+                Vector2Int cell = new Vector2Int(x, y);
+                proposed[cell] = MazeFaceMask.None;
+                orphanedCells++;
+
+                for (int s = 0; s < Steps.Length; s++)
+                {
+                    DirectionStep step = Steps[s];
+                    int nx = x + step.Dx;
+                    int ny = y + step.Dy;
+                    if (nx < 0 || nx >= width || ny < 0 || ny >= height)
+                        continue;
+
+                    Vector2Int neighbor = new Vector2Int(nx, ny);
+                    MazeFaceMask neighborOpenings = proposed.TryGetValue(neighbor, out MazeFaceMask existing)
+                        ? existing
+                        : grid[nx, ny].Openings;
+                    MazeFaceMask opposite = MazeFaceMaskUtility.Opposite(step.Direction);
+                    if ((neighborOpenings & opposite) != 0)
+                        proposed[neighbor] = neighborOpenings & ~opposite;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    static bool TryRotateDoorwaySpecs(
+        List<InteriorDoorwaySpec> source,
+        Vector2Int footprint,
+        int quarterTurns,
+        out HashSet<InteriorDoorwaySpec> rotated)
+    {
+        rotated = new HashSet<InteriorDoorwaySpec>();
+        if (source == null)
+            return true;
+
+        quarterTurns = ((quarterTurns % 4) + 4) % 4;
+        int width = footprint.x;
+        int height = footprint.y;
+        int finalWidth = quarterTurns % 2 == 0 ? footprint.x : footprint.y;
+        int finalHeight = quarterTurns % 2 == 0 ? footprint.y : footprint.x;
+        if (finalWidth != footprint.x || finalHeight != footprint.y)
+            return false;
+
+        for (int i = 0; i < source.Count; i++)
+        {
+            Vector2Int cell = source[i].Cell;
+            MazeFaceMask direction = source[i].Direction;
+            int currentWidth = width;
+            int currentHeight = height;
+
+            for (int turn = 0; turn < quarterTurns; turn++)
+            {
+                cell = new Vector2Int(currentHeight - 1 - cell.y, cell.x);
+                direction = MazeFaceMaskUtility.Rotate(direction, 1);
+                int nextWidth = currentHeight;
+                currentHeight = currentWidth;
+                currentWidth = nextWidth;
+            }
+
+            rotated.Add(new InteriorDoorwaySpec(cell, direction));
+        }
+
+        return true;
+    }
+
+    static int MinChebyshevBetweenAxisAlignedRects(Vector2Int aMin, Vector2Int aSize, Vector2Int bMin, Vector2Int bSize)
+    {
+        int ax0 = aMin.x;
+        int ax1 = aMin.x + aSize.x - 1;
+        int ay0 = aMin.y;
+        int ay1 = aMin.y + aSize.y - 1;
+        int bx0 = bMin.x;
+        int bx1 = bMin.x + bSize.x - 1;
+        int by0 = bMin.y;
+        int by1 = bMin.y + bSize.y - 1;
+
+        int best = int.MaxValue;
+        for (int ay = ay0; ay <= ay1; ay++)
+        {
+            for (int ax = ax0; ax <= ax1; ax++)
+            {
+                for (int by = by0; by <= by1; by++)
+                {
+                    for (int bx = bx0; bx <= bx1; bx++)
+                    {
+                        int d = ChebyshevDistance(new Vector2Int(ax, ay), new Vector2Int(bx, by));
+                        if (d < best)
+                            best = d;
+                    }
+                }
+            }
+        }
+
+        return best;
+    }
+
+    static int ChebyshevDistance(Vector2Int a, Vector2Int b)
+    {
+        return Math.Max(Math.Abs(a.x - b.x), Math.Abs(a.y - b.y));
+    }
+
+    void BuildCell(
+        Transform parent,
+        MazeFaceMask gridCellOpenings,
+        float blockerOffset,
+        bool isStart,
+        bool isExit,
+        int seed,
+        Vector2Int cellCoordinates,
+        bool hasInteriorRoomEntry,
+        InteriorRoomPlacementEntry interiorRoomEntry)
+    {
+        if (gridCellOpenings == MazeFaceMask.None)
+            return;
+
+        if (hasInteriorRoomEntry)
+        {
+            MazePieceMatch forcedMatch = interiorRoomEntry.Match;
+            Instantiate(forcedMatch.Prefab, parent.position, forcedMatch.Rotation, parent);
+
+            if (!forcedMatch.UseClosedFaceCaps || _config.EndCapPrefab == null)
+                return;
+
+            foreach (DirectionStep step in Steps)
+            {
+                if ((forcedMatch.FinalOpenFaces & step.Direction) != 0)
+                    continue;
+
+                Vector3 localOffset = MazeFaceMaskUtility.ToVector3(step.Direction) * blockerOffset;
+                Quaternion endCapRotation = Quaternion.LookRotation(MazeFaceMaskUtility.ToVector3(step.Direction), Vector3.up)
+                    * Quaternion.Euler(0f, _config.EndCapYawOffset, 0f);
+                Instantiate(_config.EndCapPrefab, parent.position + localOffset, endCapRotation, parent);
+            }
+
+            return;
+        }
+
+        if (!MazePieceResolver.TryResolve(_config, gridCellOpenings, isStart, isExit, seed, cellCoordinates, out MazePieceMatch match, out string failureReason))
+        {
+            LogMazeWarningOnce(
+                $"resolve:{gridCellOpenings}",
                 $"[Maze] {failureReason} Cell ({cellCoordinates.x}, {cellCoordinates.y}) could not be built.",
                 this);
             return;
@@ -821,12 +1668,41 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
     void ValidateConfiguredPieceSetup()
     {
-        ValidatePiecePool("dead-end", MazePieceCategory.DeadEnd, _config.EnumerateConfiguredPrefabs(MazePieceCategory.DeadEnd), true);
-        ValidatePiecePool("straight", MazePieceCategory.Straight, _config.EnumerateConfiguredPrefabs(MazePieceCategory.Straight), true);
-        ValidatePiecePool("corner", MazePieceCategory.Corner, _config.EnumerateConfiguredPrefabs(MazePieceCategory.Corner), true);
-        ValidatePiecePool("tee", MazePieceCategory.Tee, _config.EnumerateConfiguredPrefabs(MazePieceCategory.Tee), true);
-        ValidatePiecePool("cross", MazePieceCategory.Cross, _config.EnumerateConfiguredPrefabs(MazePieceCategory.Cross), true);
+        ValidatePiecePool("dead-end", MazePieceCategory.DeadEnd, _config.EnumerateTopologyPrefabs(MazePieceCategory.DeadEnd), true);
+        ValidatePiecePool("straight", MazePieceCategory.Straight, _config.EnumerateTopologyPrefabs(MazePieceCategory.Straight), true);
+        ValidatePiecePool("corner", MazePieceCategory.Corner, _config.EnumerateTopologyPrefabs(MazePieceCategory.Corner), true);
+        ValidatePiecePool("tee", MazePieceCategory.Tee, _config.EnumerateTopologyPrefabs(MazePieceCategory.Tee), true);
+        ValidatePiecePool("cross", MazePieceCategory.Cross, _config.EnumerateTopologyPrefabs(MazePieceCategory.Cross), true);
         ValidatePiecePool("special", null, _config.SpecialPrefabs, false);
+        ValidatePiecePool("interior room", null, _config.InteriorRoomPrefabs, false);
+
+        if (_config.InteriorRoomCount > 0)
+        {
+            bool anyInteriorPrefab = false;
+            foreach (GameObject prefab in _config.InteriorRoomPrefabs)
+            {
+                if (prefab == null)
+                    continue;
+
+                anyInteriorPrefab = true;
+                if (MazePieceDefinition.TryGetDefinitionForResolution(prefab, out MazePieceDefinition definition)
+                    && (definition.StartOnly || definition.ExitOnly))
+                {
+                    LogMazeWarningOnce(
+                        $"interior-room-start-exit-only:{prefab.name}",
+                        $"[Maze] Interior room prefab \"{prefab.name}\" is Start Only or Exit Only; interior placement skips start/exit cells, so it will never spawn as an interior room.",
+                        this);
+                }
+            }
+
+            if (!anyInteriorPrefab)
+            {
+                LogMazeWarningOnce(
+                    "interior-room-count-no-prefabs",
+                    "[Maze] Interior Room Count is greater than zero but Interior Room Prefabs has no assigned prefabs.",
+                    this);
+            }
+        }
 
         if (_config.ForcedStartPiecePrefab != null)
         {
@@ -887,17 +1763,22 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 continue;
             }
 
-            MazePieceDefinition definition = prefab.GetComponent<MazePieceDefinition>();
-            if (definition == null)
+            if (!MazePieceDefinition.TryGetDefinitionForResolution(prefab, out MazePieceDefinition definition))
             {
                 LogMazeWarningOnce(
                     $"missing-definition:{poolName}:{prefab.name}",
-                    $"[Maze] Prefab \"{prefab.name}\" in the {poolName} pool is missing a MazePieceDefinition component.",
+                    $"[Maze] Prefab \"{prefab.name}\" in the {poolName} pool is missing a MazePieceDefinition (root or child).",
                     this);
                 continue;
             }
 
-            if (definition.OpenFaces == MazeFaceMask.None)
+            bool hasExactInteriorDoorways = MazePieceDefinition.TryGetExactInteriorDoorwaySpecs(
+                prefab,
+                definition.ResolveInteriorGridFootprint(_config.InteriorRoomGridFootprint),
+                definition.FootprintSize,
+                out _);
+
+            if (definition.OpenFaces == MazeFaceMask.None && !hasExactInteriorDoorways)
             {
                 LogMazeWarningOnce(
                     $"no-open-faces:{poolName}:{prefab.name}",
@@ -1175,10 +2056,18 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         if (!TryFindLowestWalkableSurfaceBelow(xzOnGrid, cellSize, out Vector3 floorPoint))
             floorPoint = xzOnGrid;
 
-        float snapRadius = Mathf.Clamp(cellSize * 0.22f, 0.75f, 3f);
         Vector3 sampleFrom = floorPoint + Vector3.up * 0.35f;
-        if (NavMesh.SamplePosition(sampleFrom, out NavMeshHit navHit, snapRadius, NavMesh.AllAreas))
+        float[] snapRadii =
         {
+            Mathf.Clamp(cellSize * 0.22f, 0.75f, 3f),
+            Mathf.Clamp(cellSize * 0.5f, 2.5f, 8f)
+        };
+
+        for (int i = 0; i < snapRadii.Length; i++)
+        {
+            if (!NavMesh.SamplePosition(sampleFrom, out NavMeshHit navHit, snapRadii[i], NavMesh.AllAreas))
+                continue;
+
             if (navHit.position.y <= floorPoint.y + 2.5f)
                 return navHit.position + Vector3.up * yOffset;
         }

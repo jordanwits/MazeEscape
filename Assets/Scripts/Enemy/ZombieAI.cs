@@ -416,7 +416,7 @@ public class ZombieAI : MonoBehaviour
 
         if (closestTarget == null)
         {
-            PlayerHealth[] players = FindObjectsOfType<PlayerHealth>();
+            PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsInactive.Exclude);
             for (int i = 0; i < players.Length; i++)
             {
                 PlayerHealth candidate = players[i];
@@ -620,7 +620,7 @@ public class ZombieAI : MonoBehaviour
 
         _hasPlayedAlertScream = true;
         screamAudioSource.clip = screamAudioClip;
-        screamAudioSource.volume = 1f;
+        screamAudioSource.volume = screamVolume;
         screamAudioSource.Play();
     }
 
@@ -845,10 +845,17 @@ public class ZombieAI : MonoBehaviour
         if (navMeshAgent.isOnNavMesh)
             return true;
 
-        if (!NavMesh.SamplePosition(transform.position, out NavMeshHit hit, 2f, NavMesh.AllAreas))
-            return false;
+        Vector3 p = transform.position;
+        float[] radii = { 2f, 6f, 12f };
+        for (int i = 0; i < radii.Length; i++)
+        {
+            if (!NavMesh.SamplePosition(p, out NavMeshHit hit, radii[i], NavMesh.AllAreas))
+                continue;
 
-        return navMeshAgent.Warp(hit.position);
+            return navMeshAgent.Warp(hit.position);
+        }
+
+        return false;
     }
 
     bool ShouldDropIntoPit()

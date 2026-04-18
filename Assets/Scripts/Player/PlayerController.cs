@@ -548,7 +548,7 @@ public class PlayerController : MonoBehaviour
 
     Image CreateStaminaBarUI()
     {
-        Canvas canvas = FindObjectOfType<Canvas>();
+        Canvas canvas = FindAnyObjectByType<Canvas>();
         if (canvas == null)
         {
             GameObject canvasGo = new GameObject("StaminaCanvas");

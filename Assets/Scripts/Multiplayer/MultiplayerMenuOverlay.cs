@@ -11,15 +11,19 @@ public class MultiplayerMenuOverlay : MonoBehaviour
 
     public static bool BlocksGameplayInput { get; private set; }
 
+    static int s_NextImGuiWindowId = 0x6D756C74; // "mult" — avoid IMGUI id collisions with other windows
+
     MultiplayerSessionController _session;
     MultiplayerSceneFlow _flow;
     Rect _windowRect = new(20f, 20f, WindowWidth, WindowHeight);
     string _addressInput;
     string _portInput;
     bool _isVisible = false;
+    int _imGuiWindowId;
 
     void Awake()
     {
+        _imGuiWindowId = s_NextImGuiWindowId++;
         _session = GetComponent<MultiplayerSessionController>();
         _addressInput = _session != null ? _session.DefaultAddress : "127.0.0.1";
         _portInput = _session != null ? _session.DefaultPort.ToString() : "7777";
@@ -57,7 +61,7 @@ public class MultiplayerMenuOverlay : MonoBehaviour
         if (!_isVisible || _session == null)
             return;
 
-        _windowRect = GUI.Window(GetInstanceID(), _windowRect, DrawWindow, "Multiplayer");
+        _windowRect = GUI.Window(_imGuiWindowId, _windowRect, DrawWindow, "Multiplayer");
     }
 
     void DrawWindow(int windowId)

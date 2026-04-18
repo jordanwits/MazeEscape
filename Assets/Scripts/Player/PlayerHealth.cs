@@ -94,7 +94,7 @@ public class PlayerHealth : MonoBehaviour
 
     Image CreateHealthBarUI()
     {
-        Canvas canvas = FindObjectOfType<Canvas>();
+        Canvas canvas = FindAnyObjectByType<Canvas>();
         if (canvas == null)
         {
             GameObject canvasGo = new GameObject("HealthCanvas");

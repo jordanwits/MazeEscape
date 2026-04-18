@@ -84,6 +84,33 @@ public static class MazePieceResolver
     }
 
     /// <summary>
+    /// Picks a prefab from <paramref name="prefabs"/> that matches <paramref name="requiredOpenFaces"/> (with rotation and
+    /// <see cref="MazePieceDefinition"/> context rules). Used for interior rooms and other constrained pools.
+    /// </summary>
+    public static bool TryResolveFromPrefabPool(
+        IEnumerable<GameObject> prefabs,
+        MazeFaceMask requiredOpenFaces,
+        bool isStart,
+        bool isExit,
+        int seed,
+        Vector2Int cellCoordinates,
+        uint salt,
+        out MazePieceMatch match)
+    {
+        List<Candidate> candidates = new();
+        AddCandidates(prefabs, requiredOpenFaces, isStart, isExit, candidates, null);
+
+        if (candidates.Count == 0)
+        {
+            match = default;
+            return false;
+        }
+
+        match = CreateMatch(ChooseCandidate(candidates, seed, cellCoordinates, requiredOpenFaces, salt), requiredOpenFaces);
+        return true;
+    }
+
+    /// <summary>
     /// Uses <see cref="ProceduralMazeConfig.ForcedStartPiecePrefab"/> for the start cell when assigned.
     /// Matches when the prefab's openings (after rotation) are a superset of the real cell openings
     /// (equal works for a one-way end-cap). Extras on the prefab get end caps. Pair single-opening art
@@ -96,8 +123,8 @@ public static class MazePieceResolver
         if (prefab == null)
             return false;
 
-        MazePieceDefinition definition = prefab.GetComponent<MazePieceDefinition>();
-        if (definition == null || definition.OpenFaces == MazeFaceMask.None)
+        if (!MazePieceDefinition.TryGetDefinitionForResolution(prefab, out MazePieceDefinition definition)
+            || definition.OpenFaces == MazeFaceMask.None)
             return false;
 
         int turnCount = definition.CanRotate ? 4 : 1;
@@ -150,8 +177,8 @@ public static class MazePieceResolver
             if (prefab == null)
                 continue;
 
-            MazePieceDefinition definition = prefab.GetComponent<MazePieceDefinition>();
-            if (definition == null || !definition.AllowsContext(isStart, isExit))
+            if (!MazePieceDefinition.TryGetDefinitionForResolution(prefab, out MazePieceDefinition definition)
+                || !definition.AllowsContext(isStart, isExit))
                 continue;
 
             if (expectedCategory.HasValue && definition.Category != expectedCategory.Value)

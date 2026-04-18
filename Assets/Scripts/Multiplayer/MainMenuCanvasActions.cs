@@ -25,8 +25,8 @@ public class MainMenuCanvasActions : MonoBehaviour
         }
         else
         {
-            _flow = FindFirstObjectByType<MultiplayerSceneFlow>();
-            _session = FindFirstObjectByType<MultiplayerSessionController>();
+            _flow = FindAnyObjectByType<MultiplayerSceneFlow>();
+            _session = FindAnyObjectByType<MultiplayerSessionController>();
         }
 
         if (hostButton != null)
