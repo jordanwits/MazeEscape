@@ -1,6 +1,12 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+public enum MazeSpecialRoomVariant
+{
+    Original,
+    Alternate
+}
+
 [CreateAssetMenu(menuName = "Maze Escape/Procedural Maze Config", fileName = "ProceduralMazeConfig")]
 public class ProceduralMazeConfig : ScriptableObject
 {
@@ -61,7 +67,12 @@ public class ProceduralMazeConfig : ScriptableObject
     [SerializeField] GameObject deadEndPrefab;
     [SerializeField] GameObject cornerPrefab;
     [SerializeField] GameObject teePrefab;
+    [Tooltip("Original room piece (e.g. MG_Room). Used when Special Room Variant is Original, or as fallback if Alternate is selected but Alternate Room Prefab is empty.")]
     [SerializeField] GameObject roomPrefab;
+    [Tooltip("Second room piece (e.g. MG_Room2). Used when Special Room Variant is Alternate.")]
+    [SerializeField] GameObject alternateRoomPrefab;
+    [Tooltip("Which legacy room prefab is used for special/start-exit fallback when Special Prefabs is empty.")]
+    [SerializeField] MazeSpecialRoomVariant specialRoomVariant = MazeSpecialRoomVariant.Original;
     [SerializeField] GameObject endCapPrefab;
     [SerializeField] float crossYawOffset;
     [SerializeField] float straightYawOffset;
@@ -124,6 +135,12 @@ public class ProceduralMazeConfig : ScriptableObject
     public GameObject CornerPrefab => cornerPrefab;
     public GameObject TeePrefab => teePrefab;
     public GameObject RoomPrefab => roomPrefab;
+    public GameObject AlternateRoomPrefab => alternateRoomPrefab;
+    public MazeSpecialRoomVariant SpecialRoomVariant => specialRoomVariant;
+    public GameObject EffectiveSpecialRoomPrefab =>
+        specialRoomVariant == MazeSpecialRoomVariant.Alternate && alternateRoomPrefab != null
+            ? alternateRoomPrefab
+            : roomPrefab;
     public GameObject EndCapPrefab => endCapPrefab;
     public float CrossYawOffset => crossYawOffset;
     public float StraightYawOffset => straightYawOffset;
@@ -181,8 +198,9 @@ public class ProceduralMazeConfig : ScriptableObject
             yield return configuredSpecialPrefabs[i];
         }
 
-        if (!yieldedConfiguredPrefab && roomPrefab != null)
-            yield return roomPrefab;
+        GameObject legacyRoom = EffectiveSpecialRoomPrefab;
+        if (!yieldedConfiguredPrefab && legacyRoom != null)
+            yield return legacyRoom;
     }
 
     public IEnumerable<GameObject> EnumerateConfiguredPrefabs(MazePieceCategory category)
@@ -232,7 +250,7 @@ public class ProceduralMazeConfig : ScriptableObject
             MazePieceCategory.Corner => cornerPrefab,
             MazePieceCategory.Tee => teePrefab,
             MazePieceCategory.Cross => crossPrefab,
-            MazePieceCategory.Special => roomPrefab,
+            MazePieceCategory.Special => EffectiveSpecialRoomPrefab,
             _ => null
         };
     }

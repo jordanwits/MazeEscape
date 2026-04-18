@@ -54,6 +54,7 @@ MonoBehaviour:
   - {fileID: 1554635876598814236, guid: 9c4f005e857f4374980ec7fb19e1099b, type: 3}
   interiorRoomPrefabs:
   - {fileID: 1781627571206459426, guid: 8935eb422580dd04287d6c8b2bbc5831, type: 3}
+  - {fileID: 1202736749511769541, guid: a114aced94108b341b2af7a93d9aec75, type: 3}
   interiorRoomGridFootprint: {x: 3, y: 3}
   interiorRoomCount: 3
   interiorRoomMinChebyshevSeparation: 3
@@ -65,6 +66,8 @@ MonoBehaviour:
   cornerPrefab: {fileID: 439739833298870958, guid: 192ffd866a087a54282e818f28315f1f, type: 3}
   teePrefab: {fileID: 7329128159845000926, guid: e4644eb61fef6604eb93debde795add3, type: 3}
   roomPrefab: {fileID: 1781627571206459426, guid: 8935eb422580dd04287d6c8b2bbc5831, type: 3}
+  alternateRoomPrefab: {fileID: 0}
+  specialRoomVariant: 0
   endCapPrefab: {fileID: 3711245343929725391, guid: 2cf7ede96161837419a46e717d4d96b4, type: 3}
   crossYawOffset: 0
   straightYawOffset: 0

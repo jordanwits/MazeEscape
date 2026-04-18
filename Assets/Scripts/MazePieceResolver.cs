@@ -71,9 +71,10 @@ public static class MazePieceResolver
             return true;
         }
 
-        if ((isStart || isExit) && config.RoomPrefab != null)
+        GameObject legacyRoom = config.EffectiveSpecialRoomPrefab;
+        if ((isStart || isExit) && legacyRoom != null)
         {
-            match = new MazePieceMatch(config.RoomPrefab, null, Quaternion.identity, requiredOpenFaces, true);
+            match = new MazePieceMatch(legacyRoom, null, Quaternion.identity, requiredOpenFaces, true);
             failureReason = null;
             return true;
         }

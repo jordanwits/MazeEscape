@@ -1733,11 +1733,21 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             break;
         }
 
-        if (_config.RoomPrefab != null && !hasConfiguredSpecialPrefabs)
+        if (_config.EffectiveSpecialRoomPrefab != null && !hasConfiguredSpecialPrefabs)
         {
             LogMazeWarningOnce(
                 "legacy-room-fallback",
-                "[Maze] RoomPrefab is still using legacy start/exit fallback behavior. Add a MazePieceDefinition and move it into Special Prefabs for exact face matching.",
+                "[Maze] Room Prefab / Alternate Room Prefab is still using legacy start/exit fallback behavior. Add a MazePieceDefinition and move it into Special Prefabs for exact face matching.",
+                this);
+        }
+
+        if (_config.SpecialRoomVariant == MazeSpecialRoomVariant.Alternate
+            && _config.AlternateRoomPrefab == null
+            && _config.RoomPrefab != null)
+        {
+            LogMazeWarningOnce(
+                "special-room-variant-alternate-missing",
+                "[Maze] Special Room Variant is Alternate but Alternate Room Prefab is empty; using Room Prefab as fallback.",
                 this);
         }
     }
