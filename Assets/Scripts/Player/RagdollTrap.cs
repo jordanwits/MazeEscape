@@ -8,6 +8,8 @@ using UnityEngine;
 [RequireComponent(typeof(Collider))]
 public class RagdollTrap : MonoBehaviour
 {
+    const float TrapDamageAmount = 25f;
+
     public enum KnockbackDirectionMode
     {
         CustomWorldVector,
@@ -72,16 +74,19 @@ public class RagdollTrap : MonoBehaviour
         {
             if (net.IsServer)
             {
-                netRagdoll.RequestRagdollFromServer(force, hitPoint, forceMode);
+                netRagdoll.RequestTrapHitFromServer(force, hitPoint, TrapDamageAmount, forceMode);
                 return;
             }
 
             NetworkObject playerNetObj = other.GetComponentInParent<NetworkObject>();
             if (playerNetObj != null && playerNetObj.IsOwner)
-                netRagdoll.RequestRagdollFromTrapServerRpc(force, hitPoint, (byte)forceMode);
+                netRagdoll.RequestTrapHitServerRpc(force, hitPoint, TrapDamageAmount, (byte)forceMode);
 
             return;
         }
+
+        PlayerHealth health = other.GetComponentInParent<PlayerHealth>();
+        health?.TakeDamage(TrapDamageAmount);
 
         if (ragdoll != null)
             ragdoll.ActivateRagdoll(force, hitPoint, forceMode);

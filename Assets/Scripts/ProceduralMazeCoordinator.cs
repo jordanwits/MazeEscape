@@ -82,9 +82,23 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         public HashSet<Vector2Int> SkipCells { get; }
     }
 
+    readonly struct TrapAnchorCandidate
+    {
+        public TrapAnchorCandidate(Vector2Int cell, Transform anchor)
+        {
+            Cell = cell;
+            Anchor = anchor;
+        }
+
+        public Vector2Int Cell { get; }
+        public Transform Anchor { get; }
+    }
+
     const string ConfigResourceName = "ProceduralMazeConfig";
     const string SeedRequestMessageName = "maze-seed-request";
     const string SeedResponseMessageName = "maze-seed-response";
+    const string TrapAnchorName = "TrapAnchor";
+    const string TrapMountPointName = "MountPoint";
 
     static readonly DirectionStep[] Steps =
     {
@@ -391,6 +405,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         InteriorRoomBuildPlan interiorPlan = SelectInteriorRoomPlacements(grid, start, exit, seed, width, height);
 
         Transform cellsRoot = CreateChild(root.transform, "Cells");
+        Dictionary<Vector2Int, Transform> builtCellRoots = new();
         float cellSize = _config.CellSize;
         float blockerOffset = _config.BlockerOffset > 0f ? _config.BlockerOffset : cellSize * 0.5f;
 
@@ -406,6 +421,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
                 Transform cellRoot = CreateChild(cellsRoot, $"Cell_{x}_{y}");
                 Vector2Int cell = new(x, y);
+                builtCellRoots[cell] = cellRoot;
                 bool isInteriorAnchor = interiorPlan.Anchors.TryGetValue(cell, out InteriorRoomPlacementEntry interiorEntry);
                 cellRoot.position = isInteriorAnchor
                     ? CellRectCenterWorld(x, y, interiorEntry.Footprint.x, interiorEntry.Footprint.y, cellSize)
@@ -426,6 +442,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             }
         }
 
+        TrySpawnMazeTraps(root.transform, grid, builtCellRoots, start, exit, seed, cellSize);
         CreateSpawnPoints(root.transform, start, cellSize);
         MultiplayerSpawnRegistry.Instance?.RefreshSpawnPoints();
         TryRebuildRuntimeNavMesh(root);
@@ -1352,33 +1369,29 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 if (ly + 1 < footprint.y)
                     m |= MazeFaceMask.North;
 
+                // Authored doorways describe a physical opening in the prefab art. If the maze
+                // cell on the other side is out of bounds or empty, the room would spawn with a
+                // visible doorway attached to nothing. Reject this rotation/placement so the
+                // caller can try another rotation, prefab, or anchor.
                 if (lx == 0 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.West)))
                 {
-                    int nx = anchor.x + lx - 1;
-                    int ny = anchor.y + ly;
-                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[nx, ny].Openings != MazeFaceMask.None)
-                        m |= MazeFaceMask.West;
+                    if (!TryAddAuthoredDoorway(grid, anchor.x + lx - 1, anchor.y + ly, width, height, MazeFaceMask.West, ref m))
+                        return false;
                 }
                 if (lx == footprint.x - 1 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.East)))
                 {
-                    int nx = anchor.x + lx + 1;
-                    int ny = anchor.y + ly;
-                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[nx, ny].Openings != MazeFaceMask.None)
-                        m |= MazeFaceMask.East;
+                    if (!TryAddAuthoredDoorway(grid, anchor.x + lx + 1, anchor.y + ly, width, height, MazeFaceMask.East, ref m))
+                        return false;
                 }
                 if (ly == 0 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.South)))
                 {
-                    int nx = anchor.x + lx;
-                    int ny = anchor.y + ly - 1;
-                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[nx, ny].Openings != MazeFaceMask.None)
-                        m |= MazeFaceMask.South;
+                    if (!TryAddAuthoredDoorway(grid, anchor.x + lx, anchor.y + ly - 1, width, height, MazeFaceMask.South, ref m))
+                        return false;
                 }
                 if (ly == footprint.y - 1 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.North)))
                 {
-                    int nx = anchor.x + lx;
-                    int ny = anchor.y + ly + 1;
-                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[nx, ny].Openings != MazeFaceMask.None)
-                        m |= MazeFaceMask.North;
+                    if (!TryAddAuthoredDoorway(grid, anchor.x + lx, anchor.y + ly + 1, width, height, MazeFaceMask.North, ref m))
+                        return false;
                 }
 
                 proposed[cell] = m;
@@ -1430,6 +1443,25 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         return IsConnectivityPreservedAfterStamp(grid, proposed, start, exit, width, height, out orphanedCells);
+    }
+
+    static bool TryAddAuthoredDoorway(
+        MazeCell[,] grid,
+        int nx,
+        int ny,
+        int width,
+        int height,
+        MazeFaceMask direction,
+        ref MazeFaceMask roomOpenings)
+    {
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height)
+            return false;
+
+        if (grid[nx, ny].Openings == MazeFaceMask.None)
+            return false;
+
+        roomOpenings |= direction;
+        return true;
     }
 
     static MazeFaceMask GetExteriorFaceMask(int lx, int ly, Vector2Int footprint)
@@ -1770,6 +1802,24 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 "[Maze] Special Room Variant is Alternate but Alternate Room Prefab is empty; using Room Prefab as fallback.",
                 this);
         }
+
+        if (_config.MazeTrapCount > 0)
+        {
+            if (_config.MazeTrapPrefab == null)
+            {
+                LogMazeWarningOnce(
+                    "maze-trap-count-no-prefab",
+                    "[Maze] Maze Trap Count is greater than zero but Maze Trap Prefab is empty.",
+                    this);
+            }
+            else if (_config.MazeTrapPrefab.GetComponent<NetworkObject>() == null)
+            {
+                LogMazeWarningOnce(
+                    $"maze-trap-no-networkobject:{_config.MazeTrapPrefab.name}",
+                    $"[Maze] Maze Trap Prefab \"{_config.MazeTrapPrefab.name}\" has no NetworkObject. It will not replicate to clients in multiplayer.",
+                    this);
+            }
+        }
     }
 
     void ValidatePiecePool(string poolName, MazePieceCategory? expectedCategory, IEnumerable<GameObject> prefabs, bool required)
@@ -1997,12 +2047,119 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
     }
 
+    void TrySpawnMazeTraps(
+        Transform mazeRoot,
+        MazeCell[,] grid,
+        IReadOnlyDictionary<Vector2Int, Transform> cellRoots,
+        Vector2Int start,
+        Vector2Int exit,
+        int seed,
+        float cellSize)
+    {
+        GameObject prefab = _config.MazeTrapPrefab;
+        int requestedCount = _config.MazeTrapCount;
+        if (prefab == null || requestedCount <= 0)
+            return;
+
+        if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
+            return;
+
+        int?[,] distances = ComputeMazeCellDistances(grid, start);
+        List<TrapAnchorCandidate> candidates = new();
+
+        foreach (KeyValuePair<Vector2Int, Transform> pair in cellRoots)
+        {
+            Vector2Int cell = pair.Key;
+            Transform cellRoot = pair.Value;
+            if (cellRoot == null)
+                continue;
+
+            if (cell == start)
+                continue;
+
+            if (_config.MazeTrapExcludeExitCell && cell == exit)
+                continue;
+
+            int? distance = distances[cell.x, cell.y];
+            if (!distance.HasValue || distance.Value < _config.MazeTrapMinCellsFromStart)
+                continue;
+
+            if (!TryFindTrapAnchor(cellRoot, out Transform anchor))
+                continue;
+
+            candidates.Add(new TrapAnchorCandidate(cell, anchor));
+        }
+
+        if (candidates.Count == 0)
+        {
+            LogMazeWarningOnce(
+                "maze-traps-no-anchors",
+                "[Maze] No valid TrapAnchor locations were found for maze traps. Add TrapAnchor children to generated maze prefabs and check min distance / exit exclusion settings.",
+                this);
+            return;
+        }
+
+        ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0x2D6E7A11))));
+
+        Transform trapsRoot = CreateChild(mazeRoot, "GeneratedTraps");
+        bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
+        float minSeparationXZ = ResolveMazeTrapMinSeparationXZ(cellSize);
+        float minSqr = minSeparationXZ * minSeparationXZ;
+        List<Vector3> placedTrapPositions = new(requestedCount);
+        int spawnedCount = 0;
+
+        for (int i = 0; i < candidates.Count && spawnedCount < requestedCount; i++)
+        {
+            TrapAnchorCandidate candidate = candidates[i];
+            Vector3 position = candidate.Anchor.position;
+            if (spawnedCount > 0 && minSeparationXZ > 0f && !IsFarEnoughXZ(position, placedTrapPositions, minSqr))
+                continue;
+
+            placedTrapPositions.Add(position);
+            GameObject instance = Instantiate(prefab, Vector3.zero, Quaternion.identity, trapsRoot);
+            AlignTrapInstanceToAnchor(instance.transform, candidate.Anchor);
+            spawnedCount++;
+
+            if (!spawnWithNetcode)
+                continue;
+
+            NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+            if (networkObject != null)
+                networkObject.Spawn();
+        }
+
+        if (spawnedCount <= 0)
+        {
+            LogMazeWarningOnce(
+                "maze-traps-filtered-out",
+                "[Maze] Maze traps were configured but no anchors survived the spacing rules. Lower Maze Trap Min Separation or increase anchor coverage.",
+                this);
+            return;
+        }
+
+        if (spawnedCount < requestedCount)
+        {
+            LogMazeWarningOnce(
+                "maze-traps-trimmed",
+                $"[Maze] Requested {requestedCount} maze traps but only spawned {spawnedCount} from {candidates.Count} TrapAnchor candidate(s).",
+                this);
+        }
+    }
+
     float ResolveMazeEnemyMinSeparationXZ(float cellSize)
     {
         if (_config.MazeEnemyMinSeparation > 0f)
             return Mathf.Max(0.25f, _config.MazeEnemyMinSeparation);
 
         return Mathf.Clamp(cellSize * 0.2f, 1.15f, 2.6f);
+    }
+
+    float ResolveMazeTrapMinSeparationXZ(float cellSize)
+    {
+        if (_config.MazeTrapMinSeparation > 0f)
+            return Mathf.Max(0.25f, _config.MazeTrapMinSeparation);
+
+        return Mathf.Clamp(cellSize * 0.25f, 1.5f, 4f);
     }
 
     Vector3 ResolveSpawnPositionWithSeparation(
@@ -2184,6 +2341,49 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         return distances;
+    }
+
+    static bool TryFindTrapAnchor(Transform root, out Transform anchor)
+    {
+        return TryFindNamedChild(root, TrapAnchorName, out anchor);
+    }
+
+    static bool TryFindTrapMountPoint(Transform root, out Transform mountPoint)
+    {
+        return TryFindNamedChild(root, TrapMountPointName, out mountPoint);
+    }
+
+    static bool TryFindNamedChild(Transform root, string childName, out Transform match)
+    {
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            Transform candidate = transforms[i];
+            if (candidate == null || !string.Equals(candidate.name, childName, StringComparison.Ordinal))
+                continue;
+
+            match = candidate;
+            return true;
+        }
+
+        match = null;
+        return false;
+    }
+
+    static void AlignTrapInstanceToAnchor(Transform trapRoot, Transform anchor)
+    {
+        if (trapRoot == null || anchor == null)
+            return;
+
+        if (!TryFindTrapMountPoint(trapRoot, out Transform mountPoint))
+        {
+            trapRoot.SetPositionAndRotation(anchor.position, anchor.rotation);
+            return;
+        }
+
+        Quaternion rootRotation = anchor.rotation * Quaternion.Inverse(mountPoint.localRotation);
+        Vector3 rootPosition = anchor.position - rootRotation * mountPoint.localPosition;
+        trapRoot.SetPositionAndRotation(rootPosition, rootRotation);
     }
 
     static void ShuffleList<T>(IList<T> list, System.Random random)

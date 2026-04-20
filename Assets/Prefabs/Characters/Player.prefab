@@ -1975,6 +1975,8 @@ MonoBehaviour:
   lockCursor: 1
   moveRelativeToCamera: 1
   cameraTransform: {fileID: 3623829882816591901}
+  cameraPitchTransform: {fileID: 0}
+  attachCameraPitchToHeadDuringRagdollRecovery: 1
   flashlightHoldPoint: {fileID: 7134374883248310731}
   flashlightFollowsCameraPitch: 1
   interactDistance: 5
@@ -2382,6 +2384,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::NetworkPlayerRagdoll
   ShowTopMostFoldoutHeaderGroup: 1
   ragdoll: {fileID: 7861290197597770154}
+  playerHealth: {fileID: 0}
 --- !u!1 &4494487397500983202
 GameObject:
   m_ObjectHideFlags: 0

@@ -1,6 +1,7 @@
 using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
 using Unity.Netcode;
 #if UNITY_EDITOR
@@ -34,6 +35,11 @@ public class PlayerController : MonoBehaviour
     [SerializeField] bool moveRelativeToCamera = true;
     [Tooltip("If null, uses Camera.main for facing and movement.")]
     [SerializeField] Transform cameraTransform;
+    [Tooltip("First-person yaw node (child of mesh, usually named CameraPitch). Auto-found under the player if empty.")]
+    [SerializeField] Transform cameraPitchTransform;
+    [Tooltip("While ragdolled or standing up, parent CameraPitch to the head so the view follows the body. Otherwise CameraPitch stays on its prefab parent (e.g. mesh root) so it does not bob with the head.")]
+    [FormerlySerializedAs("parentCameraPitchToHead")]
+    [SerializeField] bool attachCameraPitchToHeadDuringRagdollRecovery = true;
     [Header("Interaction")]
     [Tooltip("Where held items should attach. Assign your flashlight hold point here.")]
     [SerializeField] Transform flashlightHoldPoint;
@@ -161,6 +167,12 @@ public class PlayerController : MonoBehaviour
 
     float _ragdollRecoverAnimatorSuppressUntil;
 
+    bool _cameraPitchParentedToHead;
+    bool _hasSavedCameraPitchPrefabPose;
+    Transform _savedCameraPitchParent;
+    Vector3 _savedCameraPitchLocalPosition;
+    Quaternion _savedCameraPitchLocalRotation;
+
     public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
     public bool HasLocalControl => _hasLocalControl;
     public Transform LookPitchTransform => cameraTransform;
@@ -240,6 +252,18 @@ public class PlayerController : MonoBehaviour
         _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
         _ragdollController = GetComponent<PlayerRagdollController>();
 
+        if (cameraPitchTransform == null)
+        {
+            foreach (Transform t in GetComponentsInChildren<Transform>(true))
+            {
+                if (t != null && t.name == "CameraPitch")
+                {
+                    cameraPitchTransform = t;
+                    break;
+                }
+            }
+        }
+
         if (enemyMask == 0)
         {
             int enemyLayer = LayerMask.NameToLayer(EnemyLayerName);
@@ -269,6 +293,7 @@ public class PlayerController : MonoBehaviour
 
     void OnDisable()
     {
+        DetachCameraPitchFromHead();
         DisableInputActions();
         ReleaseCursor();
     }
@@ -284,7 +309,36 @@ public class PlayerController : MonoBehaviour
         if (!_hasLocalControl)
             return;
 
-        if (_ragdollController != null && (_ragdollController.IsRagdolled || _ragdollController.IsGettingUp))
+        EnsureCameraPitchParentedToHead();
+
+        if (_ragdollController != null && _ragdollController.IsRagdolled)
+        {
+            if (MultiplayerMenuOverlay.BlocksGameplayInput)
+            {
+                _moveInput = Vector2.zero;
+                return;
+            }
+
+            Vector2 lookInputR = _lookAction != null ? _lookAction.ReadValue<Vector2>() : ReadLookFallback();
+
+            if (firstPersonLook && lockCursor && Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame
+                && Cursor.lockState != CursorLockMode.Locked)
+            {
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
+
+            if (firstPersonLook)
+            {
+                ApplyRagdollFirstPersonLook(lookInputR);
+                if (UseNetworkedFlashlightFlow && _networkPlayerAvatar != null && _networkPlayerAvatar.IsOwner)
+                    _networkPlayerAvatar.PublishFlashlightLookPitch(_lookPitchDegrees);
+            }
+
+            return;
+        }
+
+        if (_ragdollController != null && _ragdollController.IsGettingUp)
             return;
 
         if (MultiplayerMenuOverlay.BlocksGameplayInput)
@@ -797,12 +851,8 @@ public class PlayerController : MonoBehaviour
         return onGround;
     }
 
-    void ApplyFirstPersonLook(Vector2 look)
+    void AccumulateFirstPersonLookDeltas(Vector2 look)
     {
-        Transform cam = CameraTransformForFacing;
-        if (cam == null)
-            return;
-
         if (look.sqrMagnitude > 1e-8f)
         {
             InputDevice activeDevice = _lookAction != null ? _lookAction.activeControl?.device : null;
@@ -828,12 +878,88 @@ public class PlayerController : MonoBehaviour
         }
 
         _lookPitchDegrees = Mathf.Clamp(_lookPitchDegrees, minPitchDegrees, maxPitchDegrees);
+    }
+
+    void ApplyFirstPersonLook(Vector2 look)
+    {
+        Transform cam = CameraTransformForFacing;
+        if (cam == null)
+            return;
+
+        AccumulateFirstPersonLookDeltas(look);
         transform.rotation = Quaternion.Euler(0f, _lookYawDegrees, 0f);
 
         if (cam.IsChildOf(transform))
             cam.localRotation = Quaternion.Euler(_lookPitchDegrees, 0f, 0f);
         else
             cam.rotation = transform.rotation * Quaternion.Euler(_lookPitchDegrees, 0f, 0f);
+    }
+
+    void EnsureCameraPitchParentedToHead()
+    {
+        if (!attachCameraPitchToHeadDuringRagdollRecovery || cameraPitchTransform == null || animator == null || !animator.isHuman)
+        {
+            if (_cameraPitchParentedToHead)
+                DetachCameraPitchFromHead();
+            return;
+        }
+
+        bool wantAttach = _ragdollController != null && firstPersonLook
+            && (_ragdollController.IsRagdolled || _ragdollController.IsGettingUp);
+
+        if (wantAttach && !_cameraPitchParentedToHead)
+        {
+            Transform head = animator.GetBoneTransform(HumanBodyBones.Head);
+            if (head == null)
+                return;
+
+            if (!_hasSavedCameraPitchPrefabPose)
+            {
+                _savedCameraPitchParent = cameraPitchTransform.parent;
+                _savedCameraPitchLocalPosition = cameraPitchTransform.localPosition;
+                _savedCameraPitchLocalRotation = cameraPitchTransform.localRotation;
+                _hasSavedCameraPitchPrefabPose = true;
+            }
+
+            cameraPitchTransform.SetParent(head, true);
+            _cameraPitchParentedToHead = true;
+        }
+        else if (!wantAttach && _cameraPitchParentedToHead)
+            DetachCameraPitchFromHead();
+    }
+
+    void DetachCameraPitchFromHead()
+    {
+        if (!_cameraPitchParentedToHead || cameraPitchTransform == null)
+            return;
+
+        if (_hasSavedCameraPitchPrefabPose && _savedCameraPitchParent != null)
+        {
+            cameraPitchTransform.SetParent(_savedCameraPitchParent, false);
+            cameraPitchTransform.localPosition = _savedCameraPitchLocalPosition;
+            cameraPitchTransform.localRotation = _savedCameraPitchLocalRotation;
+        }
+
+        _cameraPitchParentedToHead = false;
+        if (firstPersonLook)
+            SyncLookAnglesFromTransforms();
+    }
+
+    void ApplyRagdollFirstPersonLook(Vector2 look)
+    {
+        Transform cam = CameraTransformForFacing;
+        if (cam == null)
+            return;
+
+        AccumulateFirstPersonLookDeltas(look);
+
+        if (cameraPitchTransform != null && _cameraPitchParentedToHead)
+        {
+            cameraPitchTransform.localRotation = Quaternion.Euler(0f, _lookYawDegrees, 0f);
+            cam.localRotation = Quaternion.Euler(_lookPitchDegrees, 0f, 0f);
+        }
+        else
+            cam.rotation = Quaternion.Euler(_lookPitchDegrees, _lookYawDegrees, 0f);
     }
 
     void SyncLookAnglesFromTransforms()

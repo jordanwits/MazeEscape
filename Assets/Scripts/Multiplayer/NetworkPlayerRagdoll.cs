@@ -14,19 +14,22 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     static readonly Dictionary<ulong, float> s_TrapRagdollNextAllowedTime = new Dictionary<ulong, float>();
 
     [SerializeField] PlayerRagdollController ragdoll;
+    [SerializeField] PlayerHealth playerHealth;
 
     void Awake()
     {
         if (ragdoll == null)
             ragdoll = GetComponent<PlayerRagdollController>();
+        if (playerHealth == null)
+            playerHealth = GetComponent<PlayerHealth>();
     }
 
     /// <summary>
     /// Call from server-only code (e.g. trap OnTriggerEnter when IsServer).
     /// </summary>
-    public void RequestRagdollFromServer(Vector3 worldForce, Vector3 worldForcePosition, ForceMode forceMode = ForceMode.Impulse)
+    public void RequestTrapHitFromServer(Vector3 worldForce, Vector3 worldForcePosition, float damageAmount, ForceMode forceMode = ForceMode.Impulse)
     {
-        if (!IsServer || ragdoll == null)
+        if (!IsServer || ragdoll == null || playerHealth == null)
             return;
 
         ulong id = OwnerClientId;
@@ -35,6 +38,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             return;
 
         s_TrapRagdollNextAllowedTime[id] = now + TrapRagdollServerCooldownSeconds;
+        playerHealth.TakeDamage(damageAmount);
 
         byte mode = (byte)forceMode;
         RagdollOwnerClientRpc(worldForce, worldForcePosition, mode, new ClientRpcParams
@@ -50,9 +54,9 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     /// Call from a client-owned collider (e.g. trap trigger on the joining player). Server relays to owner via ClientRpc.
     /// </summary>
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
-    public void RequestRagdollFromTrapServerRpc(Vector3 worldForce, Vector3 worldForcePosition, byte forceMode)
+    public void RequestTrapHitServerRpc(Vector3 worldForce, Vector3 worldForcePosition, float damageAmount, byte forceMode)
     {
-        RequestRagdollFromServer(worldForce, worldForcePosition, (ForceMode)forceMode);
+        RequestTrapHitFromServer(worldForce, worldForcePosition, damageAmount, (ForceMode)forceMode);
     }
 
     [ClientRpc]

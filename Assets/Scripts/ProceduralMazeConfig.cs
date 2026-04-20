@@ -98,6 +98,17 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Minimum horizontal distance between enemies spawned in the same batch. Use 0 for auto (from cell size).")]
     [SerializeField] float mazeEnemyMinSeparation;
 
+    [Header("Maze traps (anchor-based, optional)")]
+    [Tooltip("Prefab spawned at child transforms named TrapAnchor on generated maze pieces. Use a NetworkObject prefab for multiplayer.")]
+    [SerializeField] GameObject mazeTrapPrefab;
+    [SerializeField] int mazeTrapCount;
+    [Tooltip("Minimum graph distance from the start cell along open passages. Start cell is never used.")]
+    [SerializeField] int mazeTrapMinCellsFromStart = 2;
+    [Tooltip("If true, the farthest (exit) cell is not used for trap spawns.")]
+    [SerializeField] bool mazeTrapExcludeExitCell = true;
+    [Tooltip("Minimum horizontal distance between spawned traps. Use 0 for auto (from cell size).")]
+    [SerializeField] float mazeTrapMinSeparation;
+
     public bool EnableGeneration => enableGeneration;
     public string TargetSceneName => targetSceneName;
     public bool BuildOfflineInPlayMode => buildOfflineInPlayMode;
@@ -156,6 +167,11 @@ public class ProceduralMazeConfig : ScriptableObject
     public int MazeEnemyMinCellsFromStart => Mathf.Max(0, mazeEnemyMinCellsFromStart);
     public bool MazeEnemyExcludeExitCell => mazeEnemyExcludeExitCell;
     public float MazeEnemyMinSeparation => mazeEnemyMinSeparation;
+    public GameObject MazeTrapPrefab => mazeTrapPrefab;
+    public int MazeTrapCount => Mathf.Max(0, mazeTrapCount);
+    public int MazeTrapMinCellsFromStart => Mathf.Max(0, mazeTrapMinCellsFromStart);
+    public bool MazeTrapExcludeExitCell => mazeTrapExcludeExitCell;
+    public float MazeTrapMinSeparation => mazeTrapMinSeparation;
 
     public bool HasMinimumStarterSet => HasAssignedForCategory(MazePieceCategory.Cross)
         && HasAssignedForCategory(MazePieceCategory.Straight)
