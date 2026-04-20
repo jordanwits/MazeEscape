@@ -108,6 +108,13 @@ public class PlayerController : MonoBehaviour
     [SerializeField] string speedParameter = "Speed";
     [SerializeField] string groundedParameter = "Grounded";
     [SerializeField] string verticalVelocityParameter = "VerticalVelocity";
+    [Tooltip("After ragdoll/get-up, keep animator locomotion Speed at 0 for this long (covers GettingUp→Idle blend ~0.15s + margin).")]
+    [SerializeField] float ragdollRecoverAnimatorSuppressSeconds = 0.28f;
+    [Tooltip("If true, cross-fade base layer to Idle when ragdoll recovery ends so locomotion cannot flash during the transition.")]
+    [SerializeField] bool snapAnimatorToIdleAfterRagdollRecover = true;
+    [SerializeField] string baseLayerIdleStateName = "Idle";
+    [Tooltip("Fixed-time crossfade duration into Idle (seconds).")]
+    [SerializeField] float ragdollIdleCrossFadeSeconds = 0.08f;
     [Tooltip("Animator Speed value used for walking. Keep this below the run threshold in the controller.")]
     [SerializeField] float walkAnimationSpeed = 0.35f;
     [Tooltip("Animator Speed value used for sprinting. Keep this above the run threshold in the controller.")]
@@ -150,10 +157,44 @@ public class PlayerController : MonoBehaviour
     const string EnemyLayerName = "Enemy";
     NetworkPlayerCombat _networkPlayerCombat;
     NetworkPlayerAvatar _networkPlayerAvatar;
+    PlayerRagdollController _ragdollController;
+
+    float _ragdollRecoverAnimatorSuppressUntil;
 
     public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
     public bool HasLocalControl => _hasLocalControl;
     public Transform LookPitchTransform => cameraTransform;
+
+    /// <summary>
+    /// Clears movement state and animator locomotion parameters. Call when ragdoll/get-up ends so
+    /// pre-ragdoll horizontal velocity does not briefly drive Walk/Run after returning to Idle.
+    /// </summary>
+    public void ResetLocomotionAfterRagdollRecover()
+    {
+        _horizontalVelocity = Vector3.zero;
+        _currentHorizontalSpeed = 0f;
+        _groundMoveThisFrame = Vector3.zero;
+        _isSprinting = false;
+        _verticalVelocity.y = characterController != null && characterController.isGrounded
+            ? -groundedStickDown
+            : 0f;
+
+        if (!driveAnimator || animator == null)
+            return;
+
+        if (snapAnimatorToIdleAfterRagdollRecover && !string.IsNullOrEmpty(baseLayerIdleStateName))
+        {
+            int idleHash = Animator.StringToHash(baseLayerIdleStateName);
+            if (animator.HasState(0, idleHash))
+                animator.CrossFadeInFixedTime(baseLayerIdleStateName, ragdollIdleCrossFadeSeconds, 0, 0f);
+        }
+
+        animator.SetFloat(speedParameter, 0f);
+        animator.SetBool(groundedParameter, true);
+        animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);
+
+        _ragdollRecoverAnimatorSuppressUntil = Time.time + Mathf.Max(0f, ragdollRecoverAnimatorSuppressSeconds);
+    }
 
     void Awake()
     {
@@ -197,6 +238,7 @@ public class PlayerController : MonoBehaviour
         ConfigureFootstepAudioSource();
         _networkPlayerCombat = GetComponent<NetworkPlayerCombat>();
         _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
+        _ragdollController = GetComponent<PlayerRagdollController>();
 
         if (enemyMask == 0)
         {
@@ -240,6 +282,9 @@ public class PlayerController : MonoBehaviour
     void Update()
     {
         if (!_hasLocalControl)
+            return;
+
+        if (_ragdollController != null && (_ragdollController.IsRagdolled || _ragdollController.IsGettingUp))
             return;
 
         if (MultiplayerMenuOverlay.BlocksGameplayInput)
@@ -338,6 +383,9 @@ public class PlayerController : MonoBehaviour
                 speedForAnimator = _isSprinting ? runAnimationSpeed : walkAnimationSpeed;
 
             speedForAnimator = Mathf.Clamp01(speedForAnimator);
+            if (Time.time < _ragdollRecoverAnimatorSuppressUntil)
+                speedForAnimator = 0f;
+
             animator.SetFloat(speedParameter, speedForAnimator);
             animator.SetBool(groundedParameter, characterController.isGrounded);
             animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);
@@ -590,6 +638,9 @@ public class PlayerController : MonoBehaviour
     void LateUpdate()
     {
         if (!_hasLocalControl)
+            return;
+
+        if (_ragdollController != null && (_ragdollController.IsRagdolled || _ragdollController.IsGettingUp))
             return;
 
         if (firstPersonLook)

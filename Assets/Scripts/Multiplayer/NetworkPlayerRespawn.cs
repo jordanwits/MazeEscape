@@ -10,6 +10,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     [SerializeField] PlayerHealth playerHealth;
     [SerializeField] CharacterController characterController;
     [SerializeField] NetworkPlayerInventory networkPlayerInventory;
+    [SerializeField] PlayerRagdollController ragdollController;
     NetworkPlayerAvatar _networkPlayerAvatar;
 
     readonly NetworkVariable<bool> _isDead = new(false);
@@ -28,6 +29,8 @@ public class NetworkPlayerRespawn : NetworkBehaviour
             networkPlayerInventory = GetComponent<NetworkPlayerInventory>();
         if (_networkPlayerAvatar == null)
             _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
+        if (ragdollController == null)
+            ragdollController = GetComponent<PlayerRagdollController>();
 
         _projectSettings = Resources.Load<MultiplayerProjectSettings>("MultiplayerProjectSettings");
     }
@@ -164,6 +167,8 @@ public class NetworkPlayerRespawn : NetworkBehaviour
 
     void ApplyRespawnTransform(Vector3 respawnPosition, Quaternion respawnRotation)
     {
+        ragdollController?.ForceExitRagdollWithoutGroundSnap();
+
         bool wasCharacterControllerEnabled = characterController != null && characterController.enabled;
 
         if (characterController != null && wasCharacterControllerEnabled)

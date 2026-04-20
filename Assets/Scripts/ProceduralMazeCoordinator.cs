@@ -1353,13 +1353,33 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                     m |= MazeFaceMask.North;
 
                 if (lx == 0 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.West)))
-                    m |= MazeFaceMask.West;
+                {
+                    int nx = anchor.x + lx - 1;
+                    int ny = anchor.y + ly;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[nx, ny].Openings != MazeFaceMask.None)
+                        m |= MazeFaceMask.West;
+                }
                 if (lx == footprint.x - 1 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.East)))
-                    m |= MazeFaceMask.East;
+                {
+                    int nx = anchor.x + lx + 1;
+                    int ny = anchor.y + ly;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[nx, ny].Openings != MazeFaceMask.None)
+                        m |= MazeFaceMask.East;
+                }
                 if (ly == 0 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.South)))
-                    m |= MazeFaceMask.South;
+                {
+                    int nx = anchor.x + lx;
+                    int ny = anchor.y + ly - 1;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[nx, ny].Openings != MazeFaceMask.None)
+                        m |= MazeFaceMask.South;
+                }
                 if (ly == footprint.y - 1 && doorways.Contains(new InteriorDoorwaySpec(new Vector2Int(lx, ly), MazeFaceMask.North)))
-                    m |= MazeFaceMask.North;
+                {
+                    int nx = anchor.x + lx;
+                    int ny = anchor.y + ly + 1;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && grid[nx, ny].Openings != MazeFaceMask.None)
+                        m |= MazeFaceMask.North;
+                }
 
                 proposed[cell] = m;
                 exteriorMask |= m & GetExteriorFaceMask(lx, ly, footprint);
