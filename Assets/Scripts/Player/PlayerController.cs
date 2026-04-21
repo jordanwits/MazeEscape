@@ -48,7 +48,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] float interactDistance = 5f;
     [Tooltip("Radius for aim-forgiving interaction checks. 0 uses a thin line raycast.")]
     [SerializeField] float interactSphereRadius = 0.25f;
-    [SerializeField] float dropForce = 1.5f;
+    [SerializeField] float dropForce = 0.65f;
     [Tooltip("Optional UI root (e.g. a Panel) shown when you look at something you can pick up.")]
     [SerializeField] GameObject pickupPromptRoot;
     [Tooltip("Optional UI Text for the pickup prompt. If empty, tries to find a Text under pickupPromptRoot.")]
@@ -164,6 +164,7 @@ public class PlayerController : MonoBehaviour
     NetworkPlayerCombat _networkPlayerCombat;
     NetworkPlayerAvatar _networkPlayerAvatar;
     PlayerRagdollController _ragdollController;
+    PlayerHealth _playerHealth;
 
     float _ragdollRecoverAnimatorSuppressUntil;
 
@@ -176,6 +177,18 @@ public class PlayerController : MonoBehaviour
     public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
     public bool HasLocalControl => _hasLocalControl;
     public Transform LookPitchTransform => cameraTransform;
+
+    public void RestoreFullStamina()
+    {
+        _currentStamina = maxStamina;
+        _staminaRegenTimer = 0f;
+        RefreshStaminaUI();
+    }
+
+    void HandlePlayerHealthStaminaReset()
+    {
+        RestoreFullStamina();
+    }
 
     /// <summary>
     /// Clears movement state and animator locomotion parameters. Call when ragdoll/get-up ends so
@@ -251,6 +264,7 @@ public class PlayerController : MonoBehaviour
         _networkPlayerCombat = GetComponent<NetworkPlayerCombat>();
         _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
         _ragdollController = GetComponent<PlayerRagdollController>();
+        _playerHealth = GetComponent<PlayerHealth>();
 
         if (cameraPitchTransform == null)
         {
@@ -288,11 +302,23 @@ public class PlayerController : MonoBehaviour
 
     void OnEnable()
     {
+        if (_playerHealth != null)
+        {
+            _playerHealth.Died += HandlePlayerHealthStaminaReset;
+            _playerHealth.Restored += HandlePlayerHealthStaminaReset;
+        }
+
         ApplyLocalControlState();
     }
 
     void OnDisable()
     {
+        if (_playerHealth != null)
+        {
+            _playerHealth.Died -= HandlePlayerHealthStaminaReset;
+            _playerHealth.Restored -= HandlePlayerHealthStaminaReset;
+        }
+
         DetachCameraPitchFromHead();
         DisableInputActions();
         ReleaseCursor();
@@ -306,7 +332,7 @@ public class PlayerController : MonoBehaviour
 
     void Update()
     {
-        if (!_hasLocalControl)
+        if (!_hasLocalControl && !ShouldRunDeadRagdollCameraUpdate())
             return;
 
         EnsureCameraPitchParentedToHead();
@@ -319,7 +345,9 @@ public class PlayerController : MonoBehaviour
                 return;
             }
 
-            Vector2 lookInputR = _lookAction != null ? _lookAction.ReadValue<Vector2>() : ReadLookFallback();
+            Vector2 lookInputR = _playerMap != null && _playerMap.enabled && _lookAction != null
+                ? _lookAction.ReadValue<Vector2>()
+                : ReadLookFallback();
 
             if (firstPersonLook && lockCursor && Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame
                 && Cursor.lockState != CursorLockMode.Locked)
@@ -893,6 +921,21 @@ public class PlayerController : MonoBehaviour
             cam.localRotation = Quaternion.Euler(_lookPitchDegrees, 0f, 0f);
         else
             cam.rotation = transform.rotation * Quaternion.Euler(_lookPitchDegrees, 0f, 0f);
+    }
+
+    /// <summary>
+    /// When dead, <see cref="NetworkPlayerAvatar"/> clears local control so movement stops, but we still need
+    /// Update (camera parented to head + ragdoll look) while death ragdoll is active for the owning player.
+    /// </summary>
+    bool ShouldRunDeadRagdollCameraUpdate()
+    {
+        if (_playerHealth == null || !_playerHealth.IsDead)
+            return false;
+        if (_ragdollController == null || !_ragdollController.IsRagdolled)
+            return false;
+        if (_networkPlayerAvatar != null && _networkPlayerAvatar.IsSpawned && !_networkPlayerAvatar.IsOwner)
+            return false;
+        return true;
     }
 
     void EnsureCameraPitchParentedToHead()

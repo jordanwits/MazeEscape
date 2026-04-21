@@ -98,6 +98,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     const string SeedRequestMessageName = "maze-seed-request";
     const string SeedResponseMessageName = "maze-seed-response";
     const string TrapAnchorName = "TrapAnchor";
+    const string TrapAnchor2Name = "TrapAnchor2";
     const string TrapMountPointName = "MountPoint";
 
     static readonly DirectionStep[] Steps =
@@ -127,6 +128,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     int _currentSeed;
     Coroutine _sceneRoutine;
     readonly HashSet<string> _loggedMazeWarnings = new();
+    readonly HashSet<GameObject> _registeredRuntimeNetworkPrefabs = new();
     string _lastServerMazeBuildSceneName;
     int _lastServerMazeBuildSeed = int.MinValue;
 
@@ -136,11 +138,32 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             ? configOverride
             : Resources.Load<ProceduralMazeConfig>(ConfigResourceName);
         _networkManager = GetComponent<NetworkManager>();
+        EnsureRuntimeSpawnPrefabsRegistered();
 
         if (_config == null)
             Debug.LogWarning("[Maze] Assign config Override on ProceduralMazeCoordinator or add ProceduralMazeConfig to Resources.", this);
         else if (!_config.HasMinimumStarterSet)
             Debug.LogWarning("[Maze] ProceduralMazeConfig needs cross, straight, dead-end, corner, and tee prefabs assigned.", this);
+    }
+
+    void EnsureRuntimeSpawnPrefabsRegistered()
+    {
+        if (_networkManager == null || _config == null)
+            return;
+
+        RegisterRuntimeNetworkPrefab(mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab);
+        RegisterRuntimeNetworkPrefab(_config.MazeTrapPrefab);
+    }
+
+    void RegisterRuntimeNetworkPrefab(GameObject prefab)
+    {
+        if (prefab == null || !_registeredRuntimeNetworkPrefabs.Add(prefab))
+            return;
+
+        if (prefab.GetComponent<NetworkObject>() == null)
+            return;
+
+        _networkManager.AddNetworkPrefab(prefab);
     }
 
     void OnEnable()
@@ -2066,6 +2089,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         int?[,] distances = ComputeMazeCellDistances(grid, start);
         List<TrapAnchorCandidate> candidates = new();
+        List<Transform> cellTrapAnchors = new(4);
 
         foreach (KeyValuePair<Vector2Int, Transform> pair in cellRoots)
         {
@@ -2084,17 +2108,20 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             if (!distance.HasValue || distance.Value < _config.MazeTrapMinCellsFromStart)
                 continue;
 
-            if (!TryFindTrapAnchor(cellRoot, out Transform anchor))
+            cellTrapAnchors.Clear();
+            CollectTrapAnchors(cellRoot, cellTrapAnchors);
+            if (cellTrapAnchors.Count == 0)
                 continue;
 
-            candidates.Add(new TrapAnchorCandidate(cell, anchor));
+            for (int a = 0; a < cellTrapAnchors.Count; a++)
+                candidates.Add(new TrapAnchorCandidate(cell, cellTrapAnchors[a]));
         }
 
         if (candidates.Count == 0)
         {
             LogMazeWarningOnce(
                 "maze-traps-no-anchors",
-                "[Maze] No valid TrapAnchor locations were found for maze traps. Add TrapAnchor children to generated maze prefabs and check min distance / exit exclusion settings.",
+                "[Maze] No valid TrapAnchor or TrapAnchor2 locations were found for maze traps. Add those children to generated maze prefabs and check min distance / exit exclusion settings.",
                 this);
             return;
         }
@@ -2343,9 +2370,20 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         return distances;
     }
 
-    static bool TryFindTrapAnchor(Transform root, out Transform anchor)
+    static void CollectTrapAnchors(Transform root, List<Transform> into)
     {
-        return TryFindNamedChild(root, TrapAnchorName, out anchor);
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            Transform candidate = transforms[i];
+            if (candidate == null)
+                continue;
+
+            string name = candidate.name;
+            if (string.Equals(name, TrapAnchorName, StringComparison.Ordinal) ||
+                string.Equals(name, TrapAnchor2Name, StringComparison.Ordinal))
+                into.Add(candidate);
+        }
     }
 
     static bool TryFindTrapMountPoint(Transform root, out Transform mountPoint)

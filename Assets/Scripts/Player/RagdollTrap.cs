@@ -29,6 +29,14 @@ public class RagdollTrap : MonoBehaviour
     [SerializeField] float upwardImpulse = 5f;
     [Tooltip("Velocity Change = reliable knock (m/s). Impulse = physics impulse at hips.")]
     [SerializeField] ForceMode forceMode = ForceMode.VelocityChange;
+    [Tooltip("If set (or auto-found on a parent), hits only apply while that swing trap is swung out — not while it returns to rest.")]
+    [SerializeField] PivotSwingTrap swingTrapDamageGate;
+
+    void Awake()
+    {
+        if (swingTrapDamageGate == null)
+            swingTrapDamageGate = GetComponentInParent<PivotSwingTrap>();
+    }
 
     void Reset()
     {
@@ -59,6 +67,34 @@ public class RagdollTrap : MonoBehaviour
 
     void TryHit(Collider other)
     {
+        if (swingTrapDamageGate != null && !swingTrapDamageGate.CanDealSwingTrapDamage)
+            return;
+
+        ZombieHealth zombieHealth = other.GetComponentInParent<ZombieHealth>();
+        if (zombieHealth != null && !zombieHealth.IsDead)
+        {
+            NetworkManager networkManager = NetworkManager.Singleton;
+            if (networkManager != null && networkManager.IsListening)
+            {
+                if (networkManager.IsServer)
+                {
+                    zombieHealth.Die();
+                    return;
+                }
+
+                PivotSwingTrap pivot = swingTrapDamageGate != null
+                    ? swingTrapDamageGate
+                    : GetComponentInParent<PivotSwingTrap>();
+                NetworkObject zombieNetObj = other.GetComponentInParent<NetworkObject>();
+                if (pivot != null && zombieNetObj != null)
+                    pivot.RequestZombieTrapKillServerRpc(zombieNetObj.NetworkObjectId);
+                return;
+            }
+
+            zombieHealth.Die();
+            return;
+        }
+
         NetworkPlayerRagdoll netRagdoll = other.GetComponentInParent<NetworkPlayerRagdoll>();
         PlayerRagdollController ragdoll = other.GetComponentInParent<PlayerRagdollController>();
 

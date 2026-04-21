@@ -99,7 +99,7 @@ public class ProceduralMazeConfig : ScriptableObject
     [SerializeField] float mazeEnemyMinSeparation;
 
     [Header("Maze traps (anchor-based, optional)")]
-    [Tooltip("Prefab spawned at child transforms named TrapAnchor on generated maze pieces. Use a NetworkObject prefab for multiplayer.")]
+    [Tooltip("Prefab spawned at child transforms named TrapAnchor or TrapAnchor2 on generated maze pieces. Use a NetworkObject prefab for multiplayer.")]
     [SerializeField] GameObject mazeTrapPrefab;
     [SerializeField] int mazeTrapCount;
     [Tooltip("Minimum graph distance from the start cell along open passages. Start cell is never used.")]

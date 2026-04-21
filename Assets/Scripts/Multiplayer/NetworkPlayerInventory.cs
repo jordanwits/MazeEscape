@@ -12,6 +12,8 @@ public enum NetworkHeldItemKind : byte
 public class NetworkPlayerInventory : NetworkBehaviour
 {
     [SerializeField] PlayerController playerController;
+    [Tooltip("Forward impulse when dropping the flashlight (matches PlayerController drop force).")]
+    [SerializeField] float dropThrowImpulse = 0.65f;
 
     readonly NetworkVariable<byte> _heldKind = new NetworkVariable<byte>(
         (byte)NetworkHeldItemKind.None,
@@ -169,7 +171,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         _heldFlashlightLightOn.Value = flashlight.IsLightOn;
 
         flashlight.ApplyNetworkHeldState(NetworkObjectId, flashlight.IsLightOn);
-        ApplyFlashlightStateClientRpc(resolvedId, true, NetworkObjectId, pickupHintPosition, pickupHintRotation, flashlight.IsLightOn);
+        ApplyFlashlightStateClientRpc(resolvedId, true, NetworkObjectId, pickupHintPosition, pickupHintRotation, flashlight.IsLightOn, default);
     }
 
     void ServerToggleHeldFlashlight()
@@ -183,7 +185,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         bool lightEnabled = !flashlight.IsLightOn;
         _heldFlashlightLightOn.Value = lightEnabled;
         flashlight.ApplyNetworkHeldState(NetworkObjectId, lightEnabled);
-        ApplyFlashlightStateClientRpc(_heldFlashlightItemId.Value, true, NetworkObjectId, flashlight.transform.position, flashlight.transform.rotation, lightEnabled);
+        ApplyFlashlightStateClientRpc(_heldFlashlightItemId.Value, true, NetworkObjectId, flashlight.transform.position, flashlight.transform.rotation, lightEnabled, default);
     }
 
     void ServerDropHeldFlashlight(Vector3 dropPosition, Quaternion dropRotation, Vector3 dropForward)
@@ -197,7 +199,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         Vector3 normalizedForward = dropForward.sqrMagnitude > 0.0001f ? dropForward.normalized : transform.forward;
         Vector3 finalDropPosition = dropPosition + normalizedForward * 0.35f;
         finalDropPosition.y = Mathf.Max(finalDropPosition.y, transform.position.y + 0.1f);
-        Quaternion finalDropRotation = dropRotation;
+        Quaternion finalDropRotation = flashlight.transform.rotation;
         bool lightEnabled = flashlight.IsLightOn;
         ulong droppedItemId = _heldFlashlightItemId.Value;
 
@@ -205,8 +207,13 @@ public class NetworkPlayerInventory : NetworkBehaviour
         _heldFlashlightItemId.Value = 0UL;
         _heldFlashlightLightOn.Value = false;
 
-        flashlight.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, lightEnabled);
-        ApplyFlashlightStateClientRpc(droppedItemId, false, NetworkObjectId, finalDropPosition, finalDropRotation, lightEnabled);
+        Vector3 throwImpulse = normalizedForward * dropThrowImpulse;
+        if (IsServer && !IsClient)
+            flashlight.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, lightEnabled, throwImpulse);
+        else if (IsServer && IsClient)
+            flashlight.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, lightEnabled, default);
+
+        ApplyFlashlightStateClientRpc(droppedItemId, false, NetworkObjectId, finalDropPosition, finalDropRotation, lightEnabled, throwImpulse);
     }
 
     bool TryGetHeldFlashlight(out FlashlightItem flashlight)
@@ -241,6 +248,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
                 snapshotPosition,
                 snapshotRotation,
                 flashlight.IsLightOn,
+                default,
                 targetOwner);
         }
     }
@@ -253,6 +261,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         Vector3 worldPosition,
         Quaternion worldRotation,
         bool lightEnabled,
+        Vector3 worldDropImpulse,
         ClientRpcParams clientRpcParams = default)
     {
         if (!FlashlightItem.TryResolveRegisteredFlashlightForState(flashlightItemId, worldPosition, out FlashlightItem flashlight) || flashlight == null)
@@ -266,7 +275,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         }
         else
         {
-            flashlight.ApplyNetworkWorldState(worldPosition, worldRotation, lightEnabled);
+            flashlight.ApplyNetworkWorldState(worldPosition, worldRotation, lightEnabled, worldDropImpulse);
         }
     }
 }

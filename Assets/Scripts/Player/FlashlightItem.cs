@@ -8,6 +8,8 @@ public class FlashlightItem : MonoBehaviour
     static readonly Dictionary<ulong, FlashlightItem> RegisteredFlashlights = new();
 
     [SerializeField] Light flashlightLight;
+    [Tooltip("Lens / glow meshes that should match the spotlight on/off (Renderer.enabled).")]
+    [SerializeField] Renderer[] lensGlowRenderers;
     [SerializeField] Rigidbody itemRigidbody;
     [SerializeField] Collider[] itemColliders;
     [SerializeField] Vector3 heldLocalPosition;
@@ -74,6 +76,7 @@ public class FlashlightItem : MonoBehaviour
     void Awake()
     {
         CacheLights();
+        ResolveLensGlowRenderers();
         CacheHeldRotation();
         CacheIdentityHint();
 
@@ -84,6 +87,7 @@ public class FlashlightItem : MonoBehaviour
             itemColliders = GetComponentsInChildren<Collider>(true);
 
         _isLightOn = AreAnyLightsEnabled();
+        SetLensGlowEnabled(_isLightOn);
     }
 
     void OnEnable()
@@ -146,6 +150,7 @@ public class FlashlightItem : MonoBehaviour
         if (_lights == null || _lights.Length == 0)
         {
             _isLightOn = enabled;
+            SetLensGlowEnabled(enabled);
             return;
         }
 
@@ -162,6 +167,42 @@ public class FlashlightItem : MonoBehaviour
         }
 
         _isLightOn = enabled;
+        SetLensGlowEnabled(enabled);
+    }
+
+    void ResolveLensGlowRenderers()
+    {
+        if (lensGlowRenderers != null && lensGlowRenderers.Length > 0)
+        {
+            for (int i = 0; i < lensGlowRenderers.Length; i++)
+            {
+                if (lensGlowRenderers[i] != null)
+                    return;
+            }
+        }
+
+        Transform sphere = transform.Find("Sphere");
+        if (sphere == null)
+            return;
+
+        Renderer r = sphere.GetComponent<Renderer>();
+        if (r == null)
+            return;
+
+        lensGlowRenderers = new[] { r };
+    }
+
+    void SetLensGlowEnabled(bool enabled)
+    {
+        if (lensGlowRenderers == null)
+            return;
+
+        for (int i = 0; i < lensGlowRenderers.Length; i++)
+        {
+            Renderer renderer = lensGlowRenderers[i];
+            if (renderer != null)
+                renderer.enabled = enabled;
+        }
     }
 
     public void ApplyNetworkHeldState(ulong holderNetworkObjectId, bool lightEnabled)
@@ -172,30 +213,37 @@ public class FlashlightItem : MonoBehaviour
         TryAttachToNetworkHolder(holderNetworkObjectId);
     }
 
-    public void ApplyNetworkWorldState(Vector3 worldPosition, Quaternion worldRotation, bool lightEnabled)
+    public void ApplyNetworkWorldState(Vector3 worldPosition, Quaternion worldRotation, bool lightEnabled, Vector3 worldImpulse = default)
     {
         SetLightEnabled(lightEnabled);
         _holderNetworkObjectId = 0;
         EndHeldState(enableWorldPhysics: true);
         transform.SetPositionAndRotation(worldPosition, worldRotation);
+
+        if (worldImpulse.sqrMagnitude > 0.0001f && itemRigidbody != null && !itemRigidbody.isKinematic)
+        {
+            itemRigidbody.angularVelocity = Vector3.zero;
+            itemRigidbody.AddForce(worldImpulse, ForceMode.Impulse);
+        }
     }
 
     void CacheLights()
     {
-        if (flashlightLight != null)
-        {
-            _lights = new[] { flashlightLight };
-            ApplyPeerVisibleLightSettings(flashlightLight);
+        Light[] found = GetComponentsInChildren<Light>(true);
+        if (found.Length == 0)
             return;
+
+        _lights = found;
+        flashlightLight = null;
+        for (int i = 0; i < found.Length; i++)
+        {
+            ApplyPeerVisibleLightSettings(found[i]);
+            if (flashlightLight == null && found[i].type == LightType.Spot)
+                flashlightLight = found[i];
         }
 
-        _lights = GetComponentsInChildren<Light>(true);
-        if (_lights.Length > 0)
-        {
-            flashlightLight = _lights[0];
-            for (int i = 0; i < _lights.Length; i++)
-                ApplyPeerVisibleLightSettings(_lights[i]);
-        }
+        if (flashlightLight == null)
+            flashlightLight = found[0];
     }
 
     static void ApplyPeerVisibleLightSettings(Light light)

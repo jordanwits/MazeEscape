@@ -79,9 +79,15 @@ public class PlayerHealth : MonoBehaviour
 
     public void ApplyReplicatedState(float currentHealth, bool isDead)
     {
+        bool wasDead = IsDead;
         CurrentHealth = Mathf.Clamp(currentHealth, 0f, Mathf.Max(1f, maxHealth));
         IsDead = isDead;
         UpdateHealthBar();
+        if (!wasDead && isDead)
+        {
+            onDied?.Invoke();
+            Died?.Invoke();
+        }
     }
 
     void UpdateHealthBar()

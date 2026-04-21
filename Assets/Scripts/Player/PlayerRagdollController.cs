@@ -99,6 +99,10 @@ public class PlayerRagdollController : MonoBehaviour
 
         if (hipsRigidbody != null)
             SetRagdollPhysicsActive(false);
+
+        PlayerHealth health = GetComponent<PlayerHealth>();
+        if (health != null)
+            health.Died += OnPlayerHealthDiedForOfflineRagdoll;
     }
 
     void CacheRagdollParts()
@@ -146,10 +150,27 @@ public class PlayerRagdollController : MonoBehaviour
             hipsRigidbody = _ragdollBodies[0];
     }
 
+    void OnDestroy()
+    {
+        PlayerHealth health = GetComponent<PlayerHealth>();
+        if (health != null)
+            health.Died -= OnPlayerHealthDiedForOfflineRagdoll;
+    }
+
+    void OnPlayerHealthDiedForOfflineRagdoll()
+    {
+        Unity.Netcode.NetworkManager net = Unity.Netcode.NetworkManager.Singleton;
+        if (net != null && net.IsListening)
+            return;
+
+        ActivateRagdoll(Vector3.zero, Vector3.zero, ForceMode.Impulse, allowAutoRecovery: false);
+    }
+
     /// <summary>
     /// Turns on ragdoll, disables CharacterController + animator control, and applies an optional impulse.
     /// </summary>
-    public void ActivateRagdoll(Vector3 worldForce, Vector3 worldForcePosition, ForceMode forceMode = ForceMode.Impulse)
+    /// <param name="allowAutoRecovery">When false (e.g. death), land/auto stand-up is skipped until <see cref="ForceExitRagdollWithoutGroundSnap"/>.</param>
+    public void ActivateRagdoll(Vector3 worldForce, Vector3 worldForcePosition, ForceMode forceMode = ForceMode.Impulse, bool allowAutoRecovery = true)
     {
         if (IsRagdolled)
             return;
@@ -198,6 +219,9 @@ public class PlayerRagdollController : MonoBehaviour
         }
 
         StopRecoveryCoroutines();
+
+        if (!allowAutoRecovery)
+            return;
 
         if (autoRecoverAfterSeconds > 0f)
             _autoRecoverRoutine = StartCoroutine(AutoRecoverAfterDelay());

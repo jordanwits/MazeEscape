@@ -16,12 +16,32 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     [SerializeField] PlayerRagdollController ragdoll;
     [SerializeField] PlayerHealth playerHealth;
 
+    bool _serverRagdollActive;
+    bool _lastOwnerWasRagdolled;
+
     void Awake()
     {
         if (ragdoll == null)
             ragdoll = GetComponent<PlayerRagdollController>();
         if (playerHealth == null)
             playerHealth = GetComponent<PlayerHealth>();
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        _lastOwnerWasRagdolled = ragdoll != null && ragdoll.IsRagdolled;
+    }
+
+    void Update()
+    {
+        if (!IsSpawned || !IsOwner || ragdoll == null)
+            return;
+
+        bool isRagdolledNow = ragdoll.IsRagdolled;
+        if (_lastOwnerWasRagdolled && !isRagdolledNow)
+            NotifyRecoveryStartedServerRpc();
+
+        _lastOwnerWasRagdolled = isRagdolledNow;
     }
 
     /// <summary>
@@ -39,15 +59,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
         s_TrapRagdollNextAllowedTime[id] = now + TrapRagdollServerCooldownSeconds;
         playerHealth.TakeDamage(damageAmount);
-
-        byte mode = (byte)forceMode;
-        RagdollOwnerClientRpc(worldForce, worldForcePosition, mode, new ClientRpcParams
-        {
-            Send = new ClientRpcSendParams
-            {
-                TargetClientIds = new[] { OwnerClientId }
-            }
-        });
+        BeginRagdollFromServer(worldForce, worldForcePosition, forceMode, allowAutoRecovery: true);
     }
 
     /// <summary>
@@ -60,11 +72,66 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     }
 
     [ClientRpc]
-    void RagdollOwnerClientRpc(Vector3 worldForce, Vector3 worldForcePosition, byte forceMode, ClientRpcParams clientRpcParams = default)
+    void StartRagdollClientRpc(Vector3 worldForce, Vector3 worldForcePosition, byte forceMode, bool allowAutoRecovery)
     {
-        if (ragdoll == null || !IsOwner)
+        if (ragdoll == null)
             return;
 
-        ragdoll.ActivateRagdoll(worldForce, worldForcePosition, (ForceMode)forceMode);
+        ragdoll.ActivateRagdoll(
+            worldForce,
+            worldForcePosition,
+            (ForceMode)forceMode,
+            allowAutoRecovery: IsOwner && allowAutoRecovery);
+    }
+
+    /// <summary>
+    /// Call from server when the player dies so the owning client runs ragdoll physics (no auto stand-up until respawn).
+    /// </summary>
+    public void NotifyDeathRagdollFromServer()
+    {
+        if (!IsServer || ragdoll == null)
+            return;
+
+        BeginRagdollFromServer(Vector3.zero, Vector3.zero, ForceMode.Impulse, allowAutoRecovery: false);
+    }
+
+    void BeginRagdollFromServer(Vector3 worldForce, Vector3 worldForcePosition, ForceMode forceMode, bool allowAutoRecovery)
+    {
+        if (!IsServer || ragdoll == null)
+            return;
+
+        _serverRagdollActive = true;
+        StartRagdollClientRpc(worldForce, worldForcePosition, (byte)forceMode, allowAutoRecovery);
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+    void NotifyRecoveryStartedServerRpc()
+    {
+        if (!_serverRagdollActive)
+            return;
+
+        _serverRagdollActive = false;
+        StopRagdollClientRpc(playRecoveryAnimation: true);
+    }
+
+    public void ForceExitRagdollFromServer()
+    {
+        if (!IsServer || !_serverRagdollActive)
+            return;
+
+        _serverRagdollActive = false;
+        StopRagdollClientRpc(playRecoveryAnimation: false);
+    }
+
+    [ClientRpc]
+    void StopRagdollClientRpc(bool playRecoveryAnimation)
+    {
+        if (ragdoll == null)
+            return;
+
+        if (playRecoveryAnimation)
+            ragdoll.DeactivateRagdoll();
+        else
+            ragdoll.ForceExitRagdollWithoutGroundSnap();
     }
 }

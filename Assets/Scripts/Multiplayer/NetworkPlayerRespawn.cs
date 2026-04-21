@@ -91,6 +91,9 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         networkPlayerInventory?.ServerDropHeldFlashlightOnDeath();
         _isDead.Value = true;
 
+        NetworkPlayerRagdoll netRagdoll = GetComponent<NetworkPlayerRagdoll>();
+        netRagdoll?.NotifyDeathRagdollFromServer();
+
         if (_respawnRoutine != null)
             StopCoroutine(_respawnRoutine);
 
@@ -121,6 +124,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
             respawnRotation = registryRotation;
         }
 
+        GetComponent<NetworkPlayerRagdoll>()?.ForceExitRagdollFromServer();
         ApplyRespawnTransform(respawnPosition, respawnRotation);
         playerHealth?.RestoreFullHealth();
 
