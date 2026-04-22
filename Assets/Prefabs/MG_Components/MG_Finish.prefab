@@ -124,6 +124,7 @@ GameObject:
   - component: {fileID: 1179021101136035216}
   - component: {fileID: 2449371044725569101}
   - component: {fileID: 7363727074799335177}
+  - component: {fileID: 8323080737087264925}
   m_Layer: 0
   m_Name: MG_Finish
   m_TagString: Untagged
@@ -173,6 +174,7 @@ MonoBehaviour:
   startOnly: 0
   exitOnly: 1
   yawOffset: 0
+  interiorGridFootprint: {x: 0, y: 0}
   footprintSize: 6
   gizmoHeight: 6
   drawGizmoAlways: 1
@@ -210,6 +212,30 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   addKinematicRigidbody: 1
+--- !u!167 &8323080737087264925
+AudioReverbZone:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1554635876598814236}
+  m_Enabled: 1
+  m_MinDistance: 4.4926405
+  m_MaxDistance: 5.7426405
+  m_ReverbPreset: 9
+  m_Room: -1000
+  m_RoomHF: 0
+  m_DecayTime: 2.91
+  m_DecayHFRatio: 1.3
+  m_Reflections: -602
+  m_ReflectionsDelay: 0.015
+  m_Reverb: -302
+  m_ReverbDelay: 0.022
+  m_HFReference: 5000
+  m_Diffusion: 100
+  m_Density: 100
+  m_LFReference: 250
+  m_RoomLF: 0
 --- !u!1 &3355722020765320611
 GameObject:
   m_ObjectHideFlags: 0

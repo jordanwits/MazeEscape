@@ -2026,10 +2026,21 @@ MonoBehaviour:
   meleeHitDelay: 0.25
   meleeCooldown: 0.8
   meleeTrigger: RightHook
+  meleeSwooshClip: {fileID: 8300000, guid: a3514c7620787264db2f66773c382e25, type: 3}
+  meleeSwooshVolume: 0.05
+  meleeHitPunch1: {fileID: 8300000, guid: 0809f00abbc41df4485d14cffb03b995, type: 3}
+  meleeHitPunch2: {fileID: 8300000, guid: 86521a467b5e53743a882401f4c6826b, type: 3}
+  meleeHitPunch3: {fileID: 8300000, guid: fbb08b43cbfdff34dbc315d33be6c1da, type: 3}
+  meleeHitPunchVolume: 0.1
+  zombieHitClip: {fileID: 8300000, guid: 760ebab85d080824fa55f9111cd5c194, type: 3}
+  zombieHitVolume: 0.1
   driveAnimator: 1
   speedParameter: Speed
   groundedParameter: Grounded
   verticalVelocityParameter: VerticalVelocity
+  strafeDirectionParameter: StrafeDirection
+  animSpeedParameter: AnimSpeed
+  strafeDirectionSmoothSpeed: 8
   ragdollRecoverAnimatorSuppressSeconds: 0.35
   snapAnimatorToIdleAfterRagdollRecover: 1
   baseLayerIdleStateName: Idle
@@ -2189,7 +2200,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 5131748
+  GlobalObjectIdHash: 3810701028
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 1

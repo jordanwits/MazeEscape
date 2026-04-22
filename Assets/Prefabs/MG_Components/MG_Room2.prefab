@@ -3832,6 +3832,7 @@ GameObject:
   m_Component:
   - component: {fileID: 3260250784847465316}
   - component: {fileID: 2519651865180913995}
+  - component: {fileID: 2607996645820774813}
   m_Layer: 0
   m_Name: MG_Room2
   m_TagString: Untagged
@@ -3898,6 +3899,30 @@ MonoBehaviour:
   footprintSize: 6
   gizmoHeight: 6
   drawGizmoAlways: 1
+--- !u!167 &2607996645820774813
+AudioReverbZone:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1202736749511769541}
+  m_Enabled: 1
+  m_MinDistance: 12.9779215
+  m_MaxDistance: 14.2279215
+  m_ReverbPreset: 9
+  m_Room: -1000
+  m_RoomHF: 0
+  m_DecayTime: 2.91
+  m_DecayHFRatio: 1.3
+  m_Reflections: -602
+  m_ReflectionsDelay: 0.015
+  m_Reverb: -302
+  m_ReverbDelay: 0.022
+  m_HFReference: 5000
+  m_Diffusion: 100
+  m_Density: 100
+  m_LFReference: 250
+  m_RoomLF: 0
 --- !u!1 &1221317422344678906
 GameObject:
   m_ObjectHideFlags: 0

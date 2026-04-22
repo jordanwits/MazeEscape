@@ -114,6 +114,14 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] float meleeCooldown = 0.8f;
     [Tooltip("Trigger parameter name in Animator for melee attack.")]
     [SerializeField] string meleeTrigger = "RightHook";
+    [SerializeField] AudioClip meleeSwooshClip;
+    [SerializeField, Range(0f, 1f)] float meleeSwooshVolume = 0.65f;
+    [SerializeField] AudioClip meleeHitPunch1;
+    [SerializeField] AudioClip meleeHitPunch2;
+    [SerializeField] AudioClip meleeHitPunch3;
+    [SerializeField, Range(0f, 1f)] float meleeHitPunchVolume = 0.7f;
+    [SerializeField] AudioClip zombieHitClip;
+    [SerializeField, Range(0f, 1f)] float zombieHitVolume = 0.75f;
 
     [Header("Animator")]
     [SerializeField] bool driveAnimator = true;
@@ -188,6 +196,7 @@ public partial class PlayerController : MonoBehaviour
 
     float _nextMeleeTime;
     readonly Collider[] _meleeHits = new Collider[16];
+    readonly HashSet<ZombieHealth> _meleeHitZombies = new();
     const string EnemyLayerName = "Enemy";
     NetworkPlayerCombat _networkPlayerCombat;
     NetworkPlayerAvatar _networkPlayerAvatar;
@@ -754,6 +763,18 @@ public partial class PlayerController : MonoBehaviour
 
         if (flashlightClickClip == null)
             flashlightClickClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/FlashLightClick.wav");
+
+        if (meleeSwooshClip == null)
+            meleeSwooshClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Swoosh.wav");
+
+        if (meleeHitPunch1 == null)
+            meleeHitPunch1 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Punch1.wav");
+        if (meleeHitPunch2 == null)
+            meleeHitPunch2 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Punch2.wav");
+        if (meleeHitPunch3 == null)
+            meleeHitPunch3 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Punch3.wav");
+        if (zombieHitClip == null)
+            zombieHitClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieHit.wav");
     }
 #endif
 
@@ -1594,7 +1615,16 @@ public partial class PlayerController : MonoBehaviour
         else if (animator != null)
             animator.SetTrigger(meleeTrigger);
 
+        PlayMeleeSwooshSfx();
         StartCoroutine(ApplyMeleeDamageAfterDelay());
+    }
+
+    void PlayMeleeSwooshSfx()
+    {
+        if (meleeSwooshClip == null || footstepAudioSource == null)
+            return;
+
+        footstepAudioSource.PlayOneShot(meleeSwooshClip, Mathf.Max(0f, meleeSwooshVolume));
     }
 
     IEnumerator ApplyMeleeDamageAfterDelay()
@@ -1613,15 +1643,23 @@ public partial class PlayerController : MonoBehaviour
             return;
         }
 
-        ApplyMeleeDamageLocally();
+        if (ApplyMeleeDamageLocally())
+            PlayMeleeHitSfx();
     }
 
     public void ApplyServerAuthoritativeMeleeDamage()
     {
-        ApplyMeleeDamageLocally();
+        bool hitZombie = ApplyMeleeDamageLocally();
+        if (!hitZombie)
+            return;
+
+        if (_networkPlayerCombat != null && _networkPlayerCombat.IsSpawned)
+            _networkPlayerCombat.NotifyOwnerMeleeHit();
+        else
+            PlayMeleeHitSfx();
     }
 
-    void ApplyMeleeDamageLocally()
+    bool ApplyMeleeDamageLocally()
     {
         Vector3 origin = transform.position;
         Vector3 forward = transform.forward;
@@ -1629,6 +1667,8 @@ public partial class PlayerController : MonoBehaviour
         int mask = enemyMask.value == 0 ? Physics.DefaultRaycastLayers : enemyMask.value;
         int hitCount = Physics.OverlapSphereNonAlloc(origin, meleeRange, _meleeHits, mask, QueryTriggerInteraction.Ignore);
 
+        bool damagedAny = false;
+        _meleeHitZombies.Clear();
         for (int i = 0; i < hitCount; i++)
         {
             Collider col = _meleeHits[i];
@@ -1646,8 +1686,59 @@ public partial class PlayerController : MonoBehaviour
             if (zombieHealth == null || zombieHealth.IsDead)
                 continue;
 
+            if (!_meleeHitZombies.Add(zombieHealth))
+                continue;
+
             float damage = zombieHealth.MaxHealth * 0.25f;
-            zombieHealth.TakeDamage(damage);
+            if (zombieHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
+                damagedAny = true;
         }
+
+        return damagedAny;
+    }
+
+    public void PlayMeleeHitSfx()
+    {
+        if (footstepAudioSource == null)
+            return;
+
+        AudioClip clip = PickRandomMeleeHitClip();
+        if (clip == null)
+            return;
+
+        footstepAudioSource.PlayOneShot(clip, Mathf.Max(0f, meleeHitPunchVolume));
+    }
+
+    public void PlayZombieHitSfx()
+    {
+        if (zombieHitClip == null || footstepAudioSource == null)
+            return;
+
+        footstepAudioSource.PlayOneShot(zombieHitClip, Mathf.Max(0f, zombieHitVolume));
+    }
+
+    AudioClip PickRandomMeleeHitClip()
+    {
+        AudioClip c0 = meleeHitPunch1, c1 = meleeHitPunch2, c2 = meleeHitPunch3;
+        int n = (c0 != null ? 1 : 0) + (c1 != null ? 1 : 0) + (c2 != null ? 1 : 0);
+        if (n == 0)
+            return null;
+
+        int r = UnityEngine.Random.Range(0, n);
+        if (c0 != null)
+        {
+            if (r == 0)
+                return c0;
+            r--;
+        }
+
+        if (c1 != null)
+        {
+            if (r == 0)
+                return c1;
+            r--;
+        }
+
+        return c2;
     }
 }

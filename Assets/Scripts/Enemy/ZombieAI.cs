@@ -64,9 +64,24 @@ public class ZombieAI : MonoBehaviour
     [SerializeField] float stepSpeedSmoothing = 15f;
 
     [Header("Combat")]
-    [SerializeField] float damage = 15f;
+    [SerializeField] float damage = 25f;
     [SerializeField] float attackRate = 1.5f;
+    [Tooltip("If the zombie is punched again before this window expires, it immediately counters with Attack2 instead of taking another hit.")]
+    [SerializeField] float counterAttackQuickSuccessionWindow = 1f;
+    [Tooltip("Seconds between the attack start and the frame where the swipe should actually deal damage.")]
     [SerializeField] float attackHitDelay = 0.45f;
+    [Tooltip("Attack2-only hit timing. Lets the retaliatory swing land later without affecting Attack 1.")]
+    [SerializeField] float counterAttackHitDelay = 1f;
+    [Tooltip("Extra reach added on top of Attack Radius when the swipe damage is checked.")]
+    [SerializeField] float attackHitRangePadding = 0.15f;
+    [Tooltip("How wide the committed swipe can hit. Lower values make side-steps dodge more reliably.")]
+    [SerializeField, Range(0f, 180f)] float attackHitHalfAngle = 55f;
+    [Tooltip("If enabled, the zombie only lands the swipe when nothing solid is between it and the player.")]
+    [SerializeField] bool requireAttackLineOfSight = true;
+    [Tooltip("Layers considered solid when checking whether the swipe is blocked.")]
+    [SerializeField] LayerMask attackLineOfSightMask = Physics.DefaultRaycastLayers;
+    [Tooltip("Height used for the swipe obstruction check so the ray aims roughly at chest level.")]
+    [SerializeField] float attackLineOfSightHeight = 1.1f;
 
     [Header("Alert")]
     [SerializeField] bool screamsOnAlert = true;
@@ -87,6 +102,9 @@ public class ZombieAI : MonoBehaviour
     [SerializeField] string verticalVelocityParameter = "VerticalVelocity";
     [SerializeField] float attackCrossfadeDuration = 0.08f;
     [SerializeField] string attackTrigger = "Attack";
+    [SerializeField] string counterAttackStateName = "Attack2";
+    [Tooltip("Extra blend time when easing the retaliatory Attack2 back out to the empty upper-body pose.")]
+    [SerializeField] float counterAttackExitCrossfadeDuration = 0.22f;
     [SerializeField] string screamTrigger = "Scream";
     [SerializeField] string hitReactionTrigger = "HitReaction";
     [Tooltip("How long the zombie is stunned during a hit reaction.")]
@@ -115,11 +133,14 @@ public class ZombieAI : MonoBehaviour
     float _intendedMoveSpeed;
     bool _pitDropActive;
     float _pitDropUnlockTime;
+    float _rapidPunchCounterWindowEndTime;
+    bool _isCounterAttackInvincible;
 
     float _currentStamina;
     bool _staminaFull;
 
     public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
+    public bool IsInvincible => _isCounterAttackInvincible;
 
     void Reset()
     {
@@ -243,6 +264,30 @@ public class ZombieAI : MonoBehaviour
         _intendedMoveSpeed = 0f;
         _pitDropActive = false;
         _hasPlayedAlertScream = false;
+        _rapidPunchCounterWindowEndTime = 0f;
+        _isCounterAttackInvincible = false;
+    }
+
+    public bool TryHandleIncomingMeleeHit(Transform attacker, PlayerHealth attackerHealth)
+    {
+        if (_state == ZombieState.Dead)
+            return false;
+
+        if (_isCounterAttackInvincible)
+            return false;
+
+        AssignAttackerAsTarget(attacker, attackerHealth);
+
+        bool wasHitTooQuickly = counterAttackQuickSuccessionWindow > 0f
+            && Time.time <= _rapidPunchCounterWindowEndTime;
+        if (wasHitTooQuickly)
+        {
+            StartCounterAttack();
+            return false;
+        }
+
+        _rapidPunchCounterWindowEndTime = Time.time + counterAttackQuickSuccessionWindow;
+        return true;
     }
 
     public void TakeHit()
@@ -306,6 +351,33 @@ public class ZombieAI : MonoBehaviour
         }
 
         _state = _targetHealth != null && !_targetHealth.IsDead ? ZombieState.Chase : ZombieState.Idle;
+    }
+
+    void AssignAttackerAsTarget(Transform attacker, PlayerHealth attackerHealth)
+    {
+        if (attackerHealth == null && attacker != null)
+            attackerHealth = attacker.GetComponentInParent<PlayerHealth>();
+
+        if (attackerHealth == null || attackerHealth.IsDead)
+            return;
+
+        if (_targetHealth != attackerHealth)
+            _hasAlertedTarget = false;
+
+        _targetHealth = attackerHealth;
+        _target = attackerHealth.transform;
+    }
+
+    void StartCounterAttack()
+    {
+        if (_attackRoutine != null)
+        {
+            StopCoroutine(_attackRoutine);
+            _attackRoutine = null;
+        }
+
+        _rapidPunchCounterWindowEndTime = 0f;
+        _attackRoutine = StartCoroutine(AttackRoutine(useCounterAttack: true));
     }
 
     void ResetAllTriggers()
@@ -615,6 +687,7 @@ public class ZombieAI : MonoBehaviour
         _intendedMoveSpeed = 0f;
         _pitDropActive = false;
         _hasPlayedAlertScream = false;
+        _rapidPunchCounterWindowEndTime = 0f;
     }
 
     void ClearTarget()
@@ -623,6 +696,7 @@ public class ZombieAI : MonoBehaviour
         _targetHealth = null;
         _hasAlertedTarget = false;
         _hasPlayedAlertScream = false;
+        _rapidPunchCounterWindowEndTime = 0f;
     }
 
     public void PlayScreamAudio()
@@ -639,10 +713,13 @@ public class ZombieAI : MonoBehaviour
         screamAudioSource.Play();
     }
 
-    IEnumerator AttackRoutine()
+    IEnumerator AttackRoutine(bool useCounterAttack = false)
     {
-        bool wasMovingDuringAttack = allowMoveWhileAttacking && _state == ZombieState.Chase;
-        
+        bool useUpperBodyAttack = upperBodyLayerIndex > 0 && (allowMoveWhileAttacking || useCounterAttack);
+        bool wasMovingDuringAttack = useUpperBodyAttack && _state == ZombieState.Chase && !useCounterAttack;
+        Vector3 committedAttackDirection = GetCommittedAttackDirection();
+        float hitDelay = useCounterAttack ? counterAttackHitDelay : attackHitDelay;
+
         if (!wasMovingDuringAttack)
         {
             _state = ZombieState.Attack;
@@ -658,43 +735,54 @@ public class ZombieAI : MonoBehaviour
             _pitDropActive = false;
         }
 
+        if (useCounterAttack)
+        {
+            _isCounterAttackInvincible = true;
+            _hitReactionEndTime = 0f;
+        }
+
         FaceTarget();
-        
+
         if (animator != null)
         {
             ResetAllTriggers();
-            if (allowMoveWhileAttacking && upperBodyLayerIndex > 0)
+            if (useCounterAttack)
+                animator.CrossFadeInFixedTime("Idle", hitReactionExitCrossfadeDuration, 0, 0f);
+
+            string attackStateName = useCounterAttack ? counterAttackStateName : "Attack";
+            if (useUpperBodyAttack)
             {
                 animator.SetLayerWeight(upperBodyLayerIndex, 1f);
-                animator.CrossFadeInFixedTime("Attack", attackCrossfadeDuration, upperBodyLayerIndex, 0f);
+                animator.CrossFadeInFixedTime(attackStateName, attackCrossfadeDuration, upperBodyLayerIndex, 0f);
             }
             else
             {
-                animator.CrossFadeInFixedTime("Attack", attackCrossfadeDuration, 0, 0f);
+                animator.CrossFadeInFixedTime(attackStateName, attackCrossfadeDuration, 0, 0f);
             }
         }
 
-        if (attackHitDelay > 0f)
-            yield return new WaitForSeconds(attackHitDelay);
+        if (hitDelay > 0f)
+            yield return new WaitForSeconds(hitDelay);
 
-        if (_targetHealth != null && !_targetHealth.IsDead)
+        if (CanLandCommittedAttack(_targetHealth, committedAttackDirection))
         {
-            float distanceToTarget = Vector3.Distance(transform.position, _targetHealth.transform.position);
-            if (distanceToTarget <= attackRadius + 0.35f)
-                _targetHealth.TakeDamage(damage);
+            _targetHealth.TakeDamage(damage);
+            NotifyZombiePlayerHitSfx(_targetHealth);
         }
 
         _nextAttackTime = Time.time + attackRate;
 
-        float recoveryTime = Mathf.Max(0f, attackRate - attackHitDelay);
+        float recoveryTime = Mathf.Max(0f, attackRate - hitDelay);
         if (recoveryTime > 0f)
             yield return new WaitForSeconds(recoveryTime);
 
-        if (animator != null && allowMoveWhileAttacking && upperBodyLayerIndex > 0)
+        if (animator != null && useUpperBodyAttack)
         {
-            animator.CrossFadeInFixedTime("Empty", 0.1f, upperBodyLayerIndex, 0f);
+            float exitCrossfadeDuration = useCounterAttack ? counterAttackExitCrossfadeDuration : 0.1f;
+            animator.CrossFadeInFixedTime("Empty", exitCrossfadeDuration, upperBodyLayerIndex, 0f);
         }
 
+        _isCounterAttackInvincible = false;
         _attackRoutine = null;
 
         if (_state == ZombieState.Dead)
@@ -702,6 +790,75 @@ public class ZombieAI : MonoBehaviour
 
         if (!wasMovingDuringAttack)
             _state = _targetHealth != null && !_targetHealth.IsDead ? ZombieState.Chase : ZombieState.Idle;
+    }
+
+    Vector3 GetCommittedAttackDirection()
+    {
+        if (_target == null)
+            return transform.forward;
+
+        Vector3 toTarget = _target.position - transform.position;
+        toTarget.y = 0f;
+        if (toTarget.sqrMagnitude < 0.0001f)
+            return transform.forward;
+
+        return toTarget.normalized;
+    }
+
+    static void NotifyZombiePlayerHitSfx(PlayerHealth targetHealth)
+    {
+        if (targetHealth == null)
+            return;
+
+        NetworkPlayerCombat combat = targetHealth.GetComponent<NetworkPlayerCombat>();
+        if (combat != null && combat.IsSpawned && combat.IsServer)
+        {
+            combat.NotifyOwnerZombieHitSfx();
+            return;
+        }
+
+        targetHealth.GetComponent<PlayerController>()?.PlayZombieHitSfx();
+    }
+
+    bool CanLandCommittedAttack(PlayerHealth targetHealth, Vector3 committedAttackDirection)
+    {
+        if (targetHealth == null || targetHealth.IsDead)
+            return false;
+
+        Vector3 toTarget = targetHealth.transform.position - transform.position;
+        Vector3 horizontalToTarget = toTarget;
+        horizontalToTarget.y = 0f;
+        float horizontalDistanceToTarget = horizontalToTarget.magnitude;
+        if (horizontalDistanceToTarget > attackRadius + attackHitRangePadding)
+            return false;
+
+        if (horizontalDistanceToTarget > 0.001f)
+        {
+            float attackAngle = Vector3.Angle(committedAttackDirection, horizontalToTarget / horizontalDistanceToTarget);
+            if (attackAngle > attackHitHalfAngle)
+                return false;
+        }
+
+        if (requireAttackLineOfSight && !HasAttackLineOfSight(targetHealth, committedAttackDirection))
+            return false;
+
+        return true;
+    }
+
+    bool HasAttackLineOfSight(PlayerHealth targetHealth, Vector3 committedAttackDirection)
+    {
+        Vector3 origin = transform.position + Vector3.up * attackLineOfSightHeight + committedAttackDirection * 0.15f;
+        Vector3 targetPoint = targetHealth.transform.position + Vector3.up * attackLineOfSightHeight;
+        Vector3 toTarget = targetPoint - origin;
+        float distanceToTarget = toTarget.magnitude;
+        if (distanceToTarget <= 0.001f)
+            return true;
+
+        int mask = attackLineOfSightMask.value == 0 ? Physics.DefaultRaycastLayers : attackLineOfSightMask.value;
+        if (!Physics.Raycast(origin, toTarget / distanceToTarget, out RaycastHit hit, distanceToTarget, mask, QueryTriggerInteraction.Ignore))
+            return true;
+
+        return hit.transform == targetHealth.transform || hit.transform.IsChildOf(targetHealth.transform);
     }
 
     void RegenStamina()

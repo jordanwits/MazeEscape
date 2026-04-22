@@ -36,23 +36,34 @@ public class ZombieHealth : MonoBehaviour
         CurrentHealth = Mathf.Max(1f, maxHealth);
     }
 
-    public void TakeDamage(float amount)
+    public bool TakeDamage(float amount, bool fromPlayerMelee = false, Transform attacker = null, PlayerHealth attackerHealth = null)
     {
         if (_networkObject != null && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && !NetworkManager.Singleton.IsServer)
-            return;
+            return false;
 
         if (IsDead || amount <= 0f)
-            return;
+            return false;
+
+        if (zombieAI != null)
+        {
+            if (zombieAI.IsInvincible)
+                return false;
+
+            if (fromPlayerMelee && !zombieAI.TryHandleIncomingMeleeHit(attacker, attackerHealth))
+                return false;
+        }
 
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         if (CurrentHealth <= 0f)
         {
             Die();
-            return;
+            return true;
         }
 
         if (zombieAI != null)
             zombieAI.TakeHit();
+
+        return true;
     }
 
     public void Die()

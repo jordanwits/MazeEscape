@@ -2495,9 +2495,18 @@ MonoBehaviour:
     m_PostInfinity: 2
     m_RotationOrder: 4
   stepSpeedSmoothing: 15
-  damage: 15
+  damage: 25
   attackRate: 1.5
-  attackHitDelay: 0.45
+  counterAttackQuickSuccessionWindow: 1.8
+  attackHitDelay: 0.8
+  counterAttackHitDelay: 1
+  attackHitRangePadding: 0.15
+  attackHitHalfAngle: 55
+  requireAttackLineOfSight: 1
+  attackLineOfSightMask:
+    serializedVersion: 2
+    m_Bits: 115
+  attackLineOfSightHeight: 1.1
   screamsOnAlert: 1
   screamDuration: 2.5
   screamVolume: 0.8
@@ -2510,6 +2519,8 @@ MonoBehaviour:
   verticalVelocityParameter: VerticalVelocity
   attackCrossfadeDuration: 0.08
   attackTrigger: Attack
+  counterAttackStateName: Attack2
+  counterAttackExitCrossfadeDuration: 0.22
   screamTrigger: Scream
   hitReactionTrigger: HitReaction
   hitReactionDuration: 2
@@ -2650,7 +2661,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 1267639654
+  GlobalObjectIdHash: 2742399464
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 1
