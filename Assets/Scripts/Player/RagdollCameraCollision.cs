@@ -5,6 +5,7 @@ using UnityEngine;
 /// Attach to the same GameObject as PlayerController.
 /// Offsets the camera pivot (CameraPitch) to keep the camera out of geometry.
 /// </summary>
+[DisallowMultipleComponent]
 [DefaultExecutionOrder(601)]
 public class RagdollCameraCollision : MonoBehaviour
 {
@@ -50,8 +51,19 @@ public class RagdollCameraCollision : MonoBehaviour
 
     void FindCameraReferences()
     {
-        if (cameraTransform == null && Camera.main != null)
-            cameraTransform = Camera.main.transform;
+        if (cameraTransform == null)
+        {
+            PlayerController playerController = GetComponent<PlayerController>();
+            if (playerController != null && playerController.LookPitchTransform != null
+                && playerController.LookPitchTransform.IsChildOf(transform))
+            {
+                cameraTransform = playerController.LookPitchTransform;
+            }
+            else if (Camera.main != null && Camera.main.transform.IsChildOf(transform))
+            {
+                cameraTransform = Camera.main.transform;
+            }
+        }
 
         if (cameraPitchTransform == null && cameraTransform != null)
         {
@@ -149,7 +161,9 @@ public class RagdollCameraCollision : MonoBehaviour
         // Floor check - cast from well above to find the floor reliably
         // even if camera is already below floor level
         float floorY = FindFloorBelow(pos);
-        float requiredY = floorY + minClearance;
+        // Keep the full collision sphere above the floor, then add extra visual clearance
+        // so the camera near clip plane does not skim into the ground during ragdoll.
+        float requiredY = floorY + collisionRadius + minClearance;
         
         if (pos.y < requiredY)
         {

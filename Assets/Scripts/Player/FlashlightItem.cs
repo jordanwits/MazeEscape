@@ -13,6 +13,17 @@ public class FlashlightItem : GrabbableInventoryItem
     public bool IsLightOn => _isLightOn;
     bool _isLightOn;
 
+    [Tooltip("Total runtime in seconds with the light on before it goes dead. New pickups start full. No recharging in this build.")]
+    [SerializeField] float maxBatterySeconds = 180f;
+    [SerializeField, Min(0.001f)] float minBatteryToOperate = 0.001f;
+    /// <summary>Current seconds remaining; drains only while the light is on. Authoritative on server in multiplayer; local copy otherwise.</summary>
+    float _batterySeconds;
+
+    public bool HasUsableBattery => _batterySeconds > minBatteryToOperate;
+    /// <summary>0 = dead, 1 = full. Used for HUD and network sync.</summary>
+    public float BatteryFractionNormalized
+        => maxBatterySeconds <= 0f ? 0f : Mathf.Clamp01(_batterySeconds / maxBatterySeconds);
+
     public static IEnumerable<FlashlightItem> GetRegisteredFlashlights()
     {
         foreach (GrabbableInventoryItem g in GetRegisteredItems())
@@ -80,8 +91,15 @@ public class FlashlightItem : GrabbableInventoryItem
         ResolveLensGlowRenderers();
         base.Awake();
 
+        _batterySeconds = maxBatterySeconds > 0f ? maxBatterySeconds : 0f;
         _isLightOn = AreAnyLightsEnabled();
-        SetLensGlowEnabled(_isLightOn);
+        if (!HasUsableBattery)
+        {
+            _isLightOn = false;
+            SetLightEnabled(false);
+        }
+        else
+            SetLensGlowEnabled(_isLightOn);
     }
 
     protected override void FinalizeCachedHoldRotation()
@@ -105,6 +123,9 @@ public class FlashlightItem : GrabbableInventoryItem
 
     public void SetLightEnabled(bool enabled)
     {
+        if (enabled && !HasUsableBattery)
+            enabled = false;
+
         CacheLights();
 
         if (_lights == null || _lights.Length == 0)
@@ -128,6 +149,28 @@ public class FlashlightItem : GrabbableInventoryItem
 
         _isLightOn = enabled;
         SetLensGlowEnabled(enabled);
+    }
+
+    /// <summary>Called each frame on the authority (host/server or offline) while the item exists.</summary>
+    public void TickBattery(float deltaTime)
+    {
+        if (deltaTime <= 0f)
+            return;
+        if (!HasUsableBattery)
+        {
+            if (_isLightOn)
+                SetLightEnabled(false);
+            return;
+        }
+        if (!_isLightOn)
+            return;
+        if (maxBatterySeconds <= 0f)
+            return;
+        _batterySeconds -= deltaTime;
+        if (_batterySeconds < 0f)
+            _batterySeconds = 0f;
+        if (!HasUsableBattery)
+            SetLightEnabled(false);
     }
 
     public void ApplyNetworkHeldState(ulong holderNetworkObjectId, bool lightEnabled)

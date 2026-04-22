@@ -171,6 +171,10 @@ public partial class PlayerController : MonoBehaviour
     int[] _localSlotStacks = new int[3];
     int _localSelectedSlot;
     Text[] _inventorySlotCountTexts;
+    Image[] _inventorySlotFlashlightBatteryFillImages;
+    RectTransform[] _inventorySlotFlashlightBatteryFillRects;
+    GameObject[] _inventorySlotFlashlightBatteryBarRoots;
+    static readonly Color FlashlightBatteryBarFill = new Color(0.95f, 0.88f, 0.2f, 0.95f);
     float _footstepTimer;
     bool _playFootstep1Next = true;
     bool _hasLocalControl = true;
@@ -181,6 +185,7 @@ public partial class PlayerController : MonoBehaviour
     NetworkPlayerCombat _networkPlayerCombat;
     NetworkPlayerAvatar _networkPlayerAvatar;
     PlayerRagdollController _ragdollController;
+    RagdollCameraCollision _ragdollCameraCollision;
     PlayerHealth _playerHealth;
 
     float _ragdollRecoverAnimatorSuppressUntil;
@@ -283,8 +288,12 @@ public partial class PlayerController : MonoBehaviour
         _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
         _networkPlayerInventory = GetComponent<NetworkPlayerInventory>();
         _ragdollController = GetComponent<PlayerRagdollController>();
+        _ragdollCameraCollision = GetComponent<RagdollCameraCollision>();
         _playerHealth = GetComponent<PlayerHealth>();
         EnsureInventoryStashRoot();
+
+        if (firstPersonLook && _ragdollController != null && _ragdollCameraCollision == null)
+            _ragdollCameraCollision = gameObject.AddComponent<RagdollCameraCollision>();
 
         if (cameraPitchTransform == null)
         {
@@ -354,6 +363,9 @@ public partial class PlayerController : MonoBehaviour
     {
         if (!_hasLocalControl && !ShouldRunDeadRagdollCameraUpdate())
             return;
+
+        if (_hasLocalControl && !IsUsingNetworkedInventory)
+            TickLocalFlashlightBatteries();
 
         EnsureCameraPitchParentedToHead();
 
@@ -743,6 +755,9 @@ public partial class PlayerController : MonoBehaviour
         _inventorySlotBorderImages = new Image[3];
         _inventorySlotIconImages = new Image[3];
         _inventorySlotCountTexts = new Text[3];
+        _inventorySlotFlashlightBatteryFillImages = new Image[3];
+        _inventorySlotFlashlightBatteryFillRects = new RectTransform[3];
+        _inventorySlotFlashlightBatteryBarRoots = new GameObject[3];
         for (int i = 0; i < 3; i++)
         {
             GameObject slot = new GameObject("InventorySlot" + (i + 1));
@@ -773,12 +788,47 @@ public partial class PlayerController : MonoBehaviour
             icon.preserveAspect = true;
             icon.enabled = false;
             RectTransform iconRect = icon.GetComponent<RectTransform>();
-            iconRect.anchorMin = new Vector2(0.1f, 0.1f);
+            iconRect.anchorMin = new Vector2(0.1f, 0.17f);
             iconRect.anchorMax = new Vector2(0.9f, 0.9f);
             iconRect.pivot = new Vector2(0.5f, 0.5f);
             iconRect.offsetMin = Vector2.zero;
             iconRect.offsetMax = Vector2.zero;
             _inventorySlotIconImages[i] = icon;
+
+            GameObject batteryBarGo = new GameObject("FlashlightBattery");
+            batteryBarGo.transform.SetParent(invSlotFillGo.transform, false);
+            _inventorySlotFlashlightBatteryBarRoots[i] = batteryBarGo;
+            RectTransform batteryBarRt = batteryBarGo.AddComponent<RectTransform>();
+            batteryBarRt.anchorMin = new Vector2(0.1f, 0.04f);
+            batteryBarRt.anchorMax = new Vector2(0.9f, 0.12f);
+            batteryBarRt.pivot = new Vector2(0.5f, 0.5f);
+            batteryBarRt.offsetMin = Vector2.zero;
+            batteryBarRt.offsetMax = Vector2.zero;
+            GameObject trackGo = new GameObject("Track");
+            trackGo.transform.SetParent(batteryBarGo.transform, false);
+            Image trackImg = trackGo.AddComponent<Image>();
+            trackImg.raycastTarget = false;
+            trackImg.color = new Color(0.06f, 0.06f, 0.07f, 0.9f);
+            RectTransform trackRect = trackGo.GetComponent<RectTransform>();
+            trackRect.anchorMin = Vector2.zero;
+            trackRect.anchorMax = Vector2.one;
+            trackRect.pivot = new Vector2(0.5f, 0.5f);
+            trackRect.offsetMin = Vector2.zero;
+            trackRect.offsetMax = Vector2.zero;
+            GameObject batteryFillGo = new GameObject("Fill");
+            batteryFillGo.transform.SetParent(batteryBarGo.transform, false);
+            Image batteryFill = batteryFillGo.AddComponent<Image>();
+            batteryFill.raycastTarget = false;
+            batteryFill.color = FlashlightBatteryBarFill;
+            _inventorySlotFlashlightBatteryFillImages[i] = batteryFill;
+            RectTransform batteryFillRect = batteryFill.GetComponent<RectTransform>();
+            batteryFillRect.anchorMin = new Vector2(0f, 0f);
+            batteryFillRect.anchorMax = new Vector2(1f, 1f);
+            batteryFillRect.pivot = new Vector2(0f, 0.5f);
+            batteryFillRect.offsetMin = new Vector2(1.5f, 1.5f);
+            batteryFillRect.offsetMax = new Vector2(-1.5f, -1.5f);
+            _inventorySlotFlashlightBatteryFillRects[i] = batteryFillRect;
+            batteryBarGo.SetActive(false);
 
             GameObject countGo = new GameObject("StackCount");
             countGo.transform.SetParent(invSlotFillGo.transform, false);
@@ -828,6 +878,9 @@ public partial class PlayerController : MonoBehaviour
 
     void LateUpdate()
     {
+        if (_hasLocalControl)
+            UpdateInventoryFlashlightBatteryHud();
+
         if (!_hasLocalControl)
             return;
 
@@ -1248,6 +1301,81 @@ public partial class PlayerController : MonoBehaviour
             return;
 
         Array.Sort(_interactCastHitBuffer, 0, count, Comparer<RaycastHit>.Create((a, b) => a.distance.CompareTo(b.distance)));
+    }
+
+    /// <summary>
+    /// When <see cref="Physics.SphereCastNonAlloc"/> fills its buffer, Unity does not guarantee the closest hits
+    /// (docs: arbitrary subset up to buffer size). Small floor pickups like glowsticks are often missing from the
+    /// hit list in dense mazes. This scans registered grabbables in a view cylinder and uses a short LOS ray toward
+    /// each item's closest collider point so the ground does not spuriously block.
+    /// </summary>
+    bool TryFindInteractableGrabbableInViewFallback(Transform cam, int mask, out GrabbableInventoryItem grabbable)
+    {
+        grabbable = null;
+        if (cam == null)
+            return false;
+
+        Vector3 o = cam.position;
+        Vector3 d = cam.forward;
+        if (d.sqrMagnitude < 1e-6f)
+            return false;
+        d.Normalize();
+
+        float maxAlong = interactDistance + Mathf.Max(0.15f, interactSphereRadius) + 0.45f;
+        float lateral = Mathf.Max(0.4f, interactSphereRadius + 0.4f);
+        float lateralSq = lateral * lateral;
+
+        GrabbableInventoryItem best = null;
+        float bestAlong = float.MaxValue;
+
+        foreach (GrabbableInventoryItem g in GrabbableInventoryItem.GetRegisteredItems())
+        {
+            if (g == null || !g.gameObject.activeInHierarchy || g.IsHeld)
+                continue;
+
+            if (IsUsingNetworkedInventory)
+            {
+                if (_networkPlayerInventory == null
+                    || !_networkPlayerInventory.CanPickup(g))
+                    continue;
+            }
+            else if (!CanPickupLocal(g))
+                continue;
+
+            Collider col = g.GetComponentInChildren<Collider>(true);
+            Vector3 aim = col != null ? col.ClosestPoint(o) : g.transform.position;
+
+            float t = Vector3.Dot(aim - o, d);
+            if (t < -0.12f || t > maxAlong)
+                continue;
+
+            Vector3 closestOnRay = o + d * t;
+            if ((aim - closestOnRay).sqrMagnitude > lateralSq)
+                continue;
+
+            Vector3 toAim = aim - o;
+            float dist = toAim.magnitude;
+            if (dist > 0.04f)
+            {
+                if (Physics.Raycast(o, toAim / dist, out RaycastHit rh, dist - 0.03f, mask, QueryTriggerInteraction.Ignore))
+                {
+                    if (rh.collider.GetComponentInParent<GrabbableInventoryItem>() != g)
+                        continue;
+                }
+            }
+
+            if (t < bestAlong)
+            {
+                bestAlong = t;
+                best = g;
+            }
+        }
+
+        if (best == null)
+            return false;
+
+        grabbable = best;
+        return true;
     }
 
     void SetPickupPromptVisible(bool visible, string messageForText = null)

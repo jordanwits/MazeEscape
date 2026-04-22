@@ -51,6 +51,20 @@ public class NetworkPlayerInventory : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
+    /// <summary>Replicated 0…1 for HUD; only meaningful when the slot holds a flashlight. Server-writes from the world object each frame.</summary>
+    readonly NetworkVariable<float> _slot0FlashlightBattery = new NetworkVariable<float>(
+        0f,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+    readonly NetworkVariable<float> _slot1FlashlightBattery = new NetworkVariable<float>(
+        0f,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+    readonly NetworkVariable<float> _slot2FlashlightBattery = new NetworkVariable<float>(
+        0f,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
     public int SelectedSlotIndex => _selectedSlot.Value;
     public bool SelectedFlashlightLightOn => _selectedFlashlightLightOn.Value;
 
@@ -84,6 +98,21 @@ public class NetworkPlayerInventory : NetworkBehaviour
         if (index == 0) _slot0Stack.Value = value;
         else if (index == 1) _slot1Stack.Value = value;
         else if (index == 2) _slot2Stack.Value = value;
+    }
+
+    public float GetSlotFlashlightBatteryNormalizedForHud(int index)
+    {
+        if (index == 0) return _slot0FlashlightBattery.Value;
+        if (index == 1) return _slot1FlashlightBattery.Value;
+        if (index == 2) return _slot2FlashlightBattery.Value;
+        return 0f;
+    }
+
+    void SetSlotFlashlightBatteryNormalized(int index, float value)
+    {
+        if (index == 0) _slot0FlashlightBattery.Value = value;
+        else if (index == 1) _slot1FlashlightBattery.Value = value;
+        else if (index == 2) _slot2FlashlightBattery.Value = value;
     }
 
     int GetFirstEmptySlot()
@@ -158,6 +187,37 @@ public class NetworkPlayerInventory : NetworkBehaviour
         _slot0Stack.OnValueChanged -= OnStackChanged;
         _slot1Stack.OnValueChanged -= OnStackChanged;
         _slot2Stack.OnValueChanged -= OnStackChanged;
+    }
+
+    void Update()
+    {
+        if (!IsServer || !IsSpawned)
+            return;
+        float dt = Time.deltaTime;
+        Vector3 resolveHint = playerController != null ? playerController.transform.position : transform.position;
+        for (int i = 0; i < 3; i++)
+        {
+            ulong id = GetSlotItemId(i);
+            if (id == 0UL)
+            {
+                SetSlotFlashlightBatteryNormalized(i, 0f);
+                continue;
+            }
+            if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g)
+                && !GrabbableInventoryItem.TryResolveForState(id, resolveHint, out g))
+            {
+                SetSlotFlashlightBatteryNormalized(i, 0f);
+                continue;
+            }
+            if (g is not FlashlightItem f)
+            {
+                SetSlotFlashlightBatteryNormalized(i, 0f);
+                continue;
+            }
+            f.TickBattery(dt);
+            SetSlotFlashlightBatteryNormalized(i, f.BatteryFractionNormalized);
+        }
+        UpdateFlashlightSyncFromSelected();
     }
 
     void OnStackChanged(byte previous, byte current) { RaiseChangedAndRefresh(); }
@@ -503,9 +563,11 @@ public class NetworkPlayerInventory : NetworkBehaviour
         if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || !(g is FlashlightItem flashlight))
             return;
 
-        bool lightEnabled = !flashlight.IsLightOn;
-        _selectedFlashlightLightOn.Value = lightEnabled;
-        flashlight.SetLightEnabled(lightEnabled);
+        if (flashlight.IsLightOn)
+            flashlight.SetLightEnabled(false);
+        else if (flashlight.HasUsableBattery)
+            flashlight.SetLightEnabled(true);
+        _selectedFlashlightLightOn.Value = flashlight.IsLightOn;
     }
 
     public void ServerDropAllHeldOnDeath()

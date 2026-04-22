@@ -221,7 +221,7 @@ Rigidbody:
   m_GameObject: {fileID: 5194082878846942669}
   serializedVersion: 5
   m_Mass: 0.2
-  m_LinearDamping: 0.05
+  m_LinearDamping: 0.2
   m_AngularDamping: 0.35
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
@@ -255,8 +255,10 @@ MonoBehaviour:
   _slotIcon: {fileID: 21300000, guid: ea79e04a99302234e819f9e8fe757bd1, type: 3}
   itemRigidbody: {fileID: 7788990011000001}
   itemColliders: []
+  itemRenderers: []
   heldLocalPosition: {x: 0, y: 0, z: 0}
   heldLocalEulerAngles: {x: 0, y: 0, z: 0}
   alignRotationWithFollow: 1
+  _stackCount: 1
   _pointLights: []
   _onWhenSelectedInHand: 1

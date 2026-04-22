@@ -101,6 +101,7 @@ GameObject:
   - component: {fileID: 9064642228650993922}
   - component: {fileID: 6237022670769251056}
   - component: {fileID: 8517335181859305349}
+  - component: {fileID: 5094625046422655093}
   m_Layer: 0
   m_Name: SM_Mug_02
   m_TagString: Untagged
@@ -180,6 +181,28 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!64 &5094625046422655093
+MeshCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3422139326419884769}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 5
+  m_Convex: 0
+  m_CookingOptions: 30
+  m_Mesh: {fileID: -2788931992864208628, guid: f7797cc4c79503d4eb1c7d756a009edb, type: 3}
 --- !u!1 &3637194688174039518
 GameObject:
   m_ObjectHideFlags: 0

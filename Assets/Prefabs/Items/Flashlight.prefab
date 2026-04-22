@@ -352,14 +352,18 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::FlashlightItem
   _itemTypeId: 1
   _slotIcon: {fileID: 21300000, guid: e1fc6805aca38634799b05a17c071264, type: 3}
+  itemRigidbody: {fileID: 5538197934289644156}
+  itemColliders: []
+  itemRenderers: []
+  heldLocalPosition: {x: 0, y: 0, z: 0}
+  heldLocalEulerAngles: {x: 0, y: 0, z: 0}
+  alignRotationWithFollow: 1
   flashlightLight: {fileID: 8291094232997298271}
   lensGlowRenderers:
   - {fileID: 2898514983395639065}
-  itemRigidbody: {fileID: 5538197934289644156}
-  itemColliders: []
-  heldLocalPosition: {x: 0, y: 0, z: 0}
   alignHeldRotationToLight: 1
-  heldLocalEulerAngles: {x: 0, y: 0, z: 0}
+  maxBatterySeconds: 60
+  minBatteryToOperate: 0.001
 --- !u!54 &5538197934289644156
 Rigidbody:
   m_ObjectHideFlags: 0

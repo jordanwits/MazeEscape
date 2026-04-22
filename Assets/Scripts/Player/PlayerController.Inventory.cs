@@ -8,6 +8,13 @@ public partial class PlayerController
     public Transform InventoryStashRoot => inventoryStashRoot;
     public NetworkPlayerInventory NetworkPlayerInventory => _networkPlayerInventory;
 
+    /// <summary>
+    /// True when the Netcode hotbar is active. Prefer this for slot icons, battery fill, and
+    /// input routing — <c>UseNetworkedFlashlightFlow</c> also needs a listening manager + avatar
+    /// and can disagree with <see cref="NetworkPlayerInventory.IsSpawned"/>.
+    /// </summary>
+    bool IsUsingNetworkedInventory => _networkPlayerInventory != null && _networkPlayerInventory.IsSpawned;
+
     void EnsureInventoryStashRoot()
     {
         if (inventoryStashRoot != null)
@@ -43,7 +50,7 @@ public partial class PlayerController
         if (!isActiveAndEnabled)
             return;
 
-        if (UseNetworkedFlashlightFlow && _networkPlayerInventory != null && _networkPlayerInventory.IsSpawned)
+        if (IsUsingNetworkedInventory)
         {
             NetworkObject thisPlayer = GetComponent<NetworkObject>();
             if (thisPlayer == null)
@@ -317,7 +324,7 @@ public partial class PlayerController
             Image icon = _inventorySlotIconImages[i];
             if (icon == null)
                 continue;
-            if (UseNetworkedFlashlightFlow && _networkPlayerInventory != null && _networkPlayerInventory.IsSpawned)
+            if (IsUsingNetworkedInventory)
             {
                 ulong id = _networkPlayerInventory.GetSlotItemId(i);
                 if (id == 0UL)
@@ -356,7 +363,7 @@ public partial class PlayerController
 
             if (_inventorySlotBorderImages != null && i < _inventorySlotBorderImages.Length && _inventorySlotBorderImages[i] != null)
             {
-                int sel = UseNetworkedFlashlightFlow && _networkPlayerInventory != null && _networkPlayerInventory.IsSpawned
+                int sel = IsUsingNetworkedInventory
                     ? _networkPlayerInventory.SelectedSlotIndex
                     : _localSelectedSlot;
                 _inventorySlotBorderImages[i].color = i == sel ? _inventorySelectedBorderColor : _inventoryDefaultBorderColor;
@@ -385,7 +392,7 @@ public partial class PlayerController
     {
         if (MultiplayerMenuOverlay.BlocksGameplayInput)
             return;
-        if (UseNetworkedFlashlightFlow
+        if (IsUsingNetworkedInventory
             && _networkPlayerAvatar != null
             && _networkPlayerAvatar.IsSpawned
             && !_networkPlayerAvatar.IsOwner)
@@ -401,7 +408,7 @@ public partial class PlayerController
         if (Mathf.Abs(y) < 0.01f)
             return;
         int sign = y < 0f ? 1 : -1;
-        if (UseNetworkedFlashlightFlow && _networkPlayerInventory != null && _networkPlayerInventory.IsSpawned)
+        if (IsUsingNetworkedInventory)
             _networkPlayerInventory.TryCycleSelection(sign);
         else
             TryCycleLocalSelection(sign);
@@ -416,7 +423,7 @@ public partial class PlayerController
             return;
         }
 
-        if (UseNetworkedFlashlightFlow)
+        if (IsUsingNetworkedInventory)
         {
             TryPickupNetwork();
             return;
@@ -450,7 +457,7 @@ public partial class PlayerController
 
     void HandleDropInput()
     {
-        if (UseNetworkedFlashlightFlow)
+        if (IsUsingNetworkedInventory)
         {
             if (_networkPlayerInventory == null
                 || !_networkPlayerInventory.HasItemInSelectedSlot)
@@ -470,7 +477,7 @@ public partial class PlayerController
 
     void HandleFlashlightToggleInput()
     {
-        if (UseNetworkedFlashlightFlow)
+        if (IsUsingNetworkedInventory)
         {
             if (_networkPlayerInventory == null
                 || !HasSelectedFlashlightInWorld())
@@ -547,7 +554,7 @@ public partial class PlayerController
                 continue;
             }
 
-            if (UseNetworkedFlashlightFlow)
+            if (IsUsingNetworkedInventory)
             {
                 if (_networkPlayerInventory == null
                     || !_networkPlayerInventory.CanPickup(g))
@@ -565,7 +572,66 @@ public partial class PlayerController
             return true;
         }
 
-        return false;
+        return TryFindInteractableGrabbableInViewFallback(cam, mask, out grabbable);
     }
 
+    void TickLocalFlashlightBatteries()
+    {
+        bool anyLightStateChanged = false;
+        for (int i = 0; i < 3; i++)
+        {
+            if (_localInventorySlots[i] is not FlashlightItem f)
+                continue;
+            bool onBefore = f.IsLightOn;
+            f.TickBattery(Time.deltaTime);
+            if (onBefore != f.IsLightOn)
+                anyLightStateChanged = true;
+        }
+        if (anyLightStateChanged)
+            RefreshLocalInventoryView();
+    }
+
+    void UpdateInventoryFlashlightBatteryHud()
+    {
+        if (_inventorySlotFlashlightBatteryFillImages == null
+            || _inventorySlotFlashlightBatteryFillRects == null
+            || _inventorySlotFlashlightBatteryBarRoots == null
+            || _inventorySlotFlashlightBatteryFillImages.Length < 3
+            || _inventorySlotFlashlightBatteryFillRects.Length < 3)
+            return;
+        for (int i = 0; i < 3; i++)
+        {
+            bool show = false;
+            float t = 0f;
+            if (IsUsingNetworkedInventory)
+            {
+                ulong id = _networkPlayerInventory.GetSlotItemId(i);
+                if (id != 0UL
+                    && GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g)
+                    && g is FlashlightItem)
+                {
+                    show = true;
+                    t = _networkPlayerInventory.GetSlotFlashlightBatteryNormalizedForHud(i);
+                }
+            }
+            else if (_localInventorySlots[i] is FlashlightItem fl)
+            {
+                show = true;
+                t = fl.BatteryFractionNormalized;
+            }
+            GameObject barRoot = _inventorySlotFlashlightBatteryBarRoots[i];
+            if (barRoot != null)
+                barRoot.SetActive(show);
+            if (show
+                && i < _inventorySlotFlashlightBatteryFillImages.Length
+                && i < _inventorySlotFlashlightBatteryFillRects.Length
+                && _inventorySlotFlashlightBatteryFillImages[i] != null
+                && _inventorySlotFlashlightBatteryFillRects[i] != null)
+            {
+                float normalized = Mathf.Clamp01(t);
+                RectTransform fillRect = _inventorySlotFlashlightBatteryFillRects[i];
+                fillRect.anchorMax = new Vector2(normalized, 1f);
+            }
+        }
+    }
 }
