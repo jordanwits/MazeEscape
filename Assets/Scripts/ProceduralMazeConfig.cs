@@ -109,6 +109,10 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Minimum horizontal distance between spawned traps. Use 0 for auto (from cell size).")]
     [SerializeField] float mazeTrapMinSeparation;
 
+    [Header("Maze chests (anchor-based, optional)")]
+    [Tooltip("Prefab spawned at each child transform named ChestAnchor on generated maze pieces. Use a NetworkObject prefab for multiplayer.")]
+    [SerializeField] GameObject mazeChestPrefab;
+
     public bool EnableGeneration => enableGeneration;
     public string TargetSceneName => targetSceneName;
     public bool BuildOfflineInPlayMode => buildOfflineInPlayMode;
@@ -172,6 +176,7 @@ public class ProceduralMazeConfig : ScriptableObject
     public int MazeTrapMinCellsFromStart => Mathf.Max(0, mazeTrapMinCellsFromStart);
     public bool MazeTrapExcludeExitCell => mazeTrapExcludeExitCell;
     public float MazeTrapMinSeparation => mazeTrapMinSeparation;
+    public GameObject MazeChestPrefab => mazeChestPrefab;
 
     public bool HasMinimumStarterSet => HasAssignedForCategory(MazePieceCategory.Cross)
         && HasAssignedForCategory(MazePieceCategory.Straight)

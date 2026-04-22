@@ -118,10 +118,10 @@ public class PlayerHealth : MonoBehaviour
         Image bgImage = bg.AddComponent<Image>();
         bgImage.color = new Color(0f, 0f, 0f, 0.6f);
         RectTransform bgRect = bg.GetComponent<RectTransform>();
-        bgRect.anchorMin = new Vector2(0.5f, 0f);
-        bgRect.anchorMax = new Vector2(0.5f, 0f);
-        bgRect.pivot = new Vector2(0.5f, 0f);
-        bgRect.anchoredPosition = new Vector2(0f, 60f);
+        bgRect.anchorMin = new Vector2(0.5f, 1f);
+        bgRect.anchorMax = new Vector2(0.5f, 1f);
+        bgRect.pivot = new Vector2(0.5f, 1f);
+        bgRect.anchoredPosition = new Vector2(0f, -60f);
         bgRect.sizeDelta = new Vector2(304f, 24f);
         _healthBarRoot = bg;
 

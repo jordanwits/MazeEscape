@@ -32,7 +32,9 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     OwnerNetworkAnimator _ownerNetworkAnimator;
     Light _remoteFlashlightProxyLight;
 
-    public bool HasHeldFlashlight => playerInventory != null && playerInventory.HasEquippedFlashlight;
+    public bool HasHeldFlashlight => playerInventory != null
+        && playerInventory.IsSpawned
+        && playerInventory.HasItemInSelectedSlot;
 
     void Awake()
     {
@@ -132,9 +134,14 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         CopyFlashlightLightSettings(flashlight);
     }
 
+    public bool CanPickupItem(GrabbableInventoryItem item)
+    {
+        return playerInventory != null && item != null && playerInventory.CanPickup(item);
+    }
+
     public bool CanPickupFlashlight(FlashlightItem flashlight)
     {
-        return playerInventory != null && playerInventory.CanPickupFlashlight(flashlight);
+        return CanPickupItem(flashlight);
     }
 
     public bool TryGetFlashlightAttachmentTargets(out Transform holdPoint, out Transform followTransform)
@@ -144,9 +151,22 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         return playerController != null && playerController.TryGetFlashlightAttachmentTargets(out holdPoint, out followTransform);
     }
 
+    public bool TryGetInventoryAttachmentTargets(out Transform holdPoint, out Transform followTransform, out Transform stash)
+    {
+        holdPoint = null;
+        followTransform = null;
+        stash = null;
+        return playerController != null && playerController.TryGetInventoryAttachmentTargets(out holdPoint, out followTransform, out stash);
+    }
+
+    public void TryPickupItem(GrabbableInventoryItem item)
+    {
+        playerInventory?.TryPickupItem(item);
+    }
+
     public void TryPickupFlashlight(FlashlightItem flashlight)
     {
-        playerInventory?.TryPickupFlashlight(flashlight);
+        TryPickupItem(flashlight);
     }
 
     public void TriggerAnimation(string triggerName)
@@ -167,12 +187,12 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
     public void TryToggleHeldFlashlight()
     {
-        playerInventory?.TryToggleHeldFlashlight();
+        playerInventory?.TryToggleSelectedFlashlight();
     }
 
     public void TryDropHeldFlashlight(Vector3 dropPosition, Quaternion dropRotation, Vector3 dropForward)
     {
-        playerInventory?.TryDropHeldFlashlight(dropPosition, dropRotation, dropForward);
+        playerInventory?.TryDropSelectedItem(dropPosition, dropRotation, dropForward);
     }
 
     void EnsureAnimationSync()
@@ -237,8 +257,13 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     {
         Transform holdPoint = null;
         Transform followTransform = null;
-        bool hasFlashlight = playerInventory != null && playerInventory.HasEquippedFlashlight;
-        bool lightOn = playerInventory != null && playerInventory.HeldFlashlightLightOn;
+        bool hasFlashlight = playerInventory != null
+            && playerInventory.IsSpawned
+            && playerInventory.IsSelectedItemFlashlight
+            && playerInventory.HasItemInSelectedSlot;
+        bool lightOn = playerInventory != null
+            && playerInventory.IsSpawned
+            && playerInventory.SelectedFlashlightLightOn;
         bool shouldEnable = IsSpawned
             && !IsOwner
             && !_isDormant

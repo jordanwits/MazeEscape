@@ -1,230 +1,541 @@
 using Unity.Netcode;
 using UnityEngine;
-
-public enum NetworkHeldItemKind : byte
-{
-    None = 0,
-    Flashlight = 1,
-}
+using Object = UnityEngine.Object;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
 public class NetworkPlayerInventory : NetworkBehaviour
 {
     [SerializeField] PlayerController playerController;
-    [Tooltip("Forward impulse when dropping the flashlight (matches PlayerController drop force).")]
+    [Tooltip("Forward impulse when dropping (matches PlayerController drop force).")]
     [SerializeField] float dropThrowImpulse = 0.65f;
 
-    readonly NetworkVariable<byte> _heldKind = new NetworkVariable<byte>(
-        (byte)NetworkHeldItemKind.None,
-        NetworkVariableReadPermission.Everyone,
-        NetworkVariableWritePermission.Server);
+    NetworkPlayerAvatar _avatar;
 
-    readonly NetworkVariable<ulong> _heldFlashlightItemId = new NetworkVariable<ulong>(
+    readonly NetworkVariable<ulong> _slot0ItemId = new NetworkVariable<ulong>(
         0UL,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
-    readonly NetworkVariable<bool> _heldFlashlightLightOn = new NetworkVariable<bool>(
+    readonly NetworkVariable<ulong> _slot1ItemId = new NetworkVariable<ulong>(
+        0UL,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    readonly NetworkVariable<ulong> _slot2ItemId = new NetworkVariable<ulong>(
+        0UL,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    readonly NetworkVariable<byte> _selectedSlot = new NetworkVariable<byte>(
+        0,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    readonly NetworkVariable<bool> _selectedFlashlightLightOn = new NetworkVariable<bool>(
         false,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
-    public bool HasEquippedFlashlight => IsSpawned && (NetworkHeldItemKind)_heldKind.Value == NetworkHeldItemKind.Flashlight;
-    public bool HasAnyEquippedItem => IsSpawned && (NetworkHeldItemKind)_heldKind.Value != NetworkHeldItemKind.None;
-    public ulong HeldFlashlightItemId => _heldFlashlightItemId.Value;
-    public bool HeldFlashlightLightOn => _heldFlashlightLightOn.Value;
+    /// <summary>0 when slot is empty; 1 for flashlight; 1–<see cref="GlowstickItem.MaxStack"/> for glowstick stacks.</summary>
+    readonly NetworkVariable<byte> _slot0Stack = new NetworkVariable<byte>(
+        0,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+    readonly NetworkVariable<byte> _slot1Stack = new NetworkVariable<byte>(
+        0,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+    readonly NetworkVariable<byte> _slot2Stack = new NetworkVariable<byte>(
+        0,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    public int SelectedSlotIndex => _selectedSlot.Value;
+    public bool SelectedFlashlightLightOn => _selectedFlashlightLightOn.Value;
+
+    public event System.Action OnInventoryChanged;
+
+    public ulong GetSlotItemId(int index)
+    {
+        if (index == 0) return _slot0ItemId.Value;
+        if (index == 1) return _slot1ItemId.Value;
+        if (index == 2) return _slot2ItemId.Value;
+        return 0UL;
+    }
+
+    void SetSlotItemId(int index, ulong value)
+    {
+        if (index == 0) _slot0ItemId.Value = value;
+        else if (index == 1) _slot1ItemId.Value = value;
+        else if (index == 2) _slot2ItemId.Value = value;
+    }
+
+    public int GetSlotStackCount(int index)
+    {
+        if (index == 0) return _slot0Stack.Value;
+        if (index == 1) return _slot1Stack.Value;
+        if (index == 2) return _slot2Stack.Value;
+        return 0;
+    }
+
+    void SetSlotStackCount(int index, byte value)
+    {
+        if (index == 0) _slot0Stack.Value = value;
+        else if (index == 1) _slot1Stack.Value = value;
+        else if (index == 2) _slot2Stack.Value = value;
+    }
+
+    int GetFirstEmptySlot()
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            if (GetSlotItemId(i) == 0UL)
+                return i;
+        }
+
+        return -1;
+    }
+
+    public bool IsInventoryCompletelyFull => GetFirstEmptySlot() < 0;
+
+    public bool HasItemInSelectedSlot
+    {
+        get
+        {
+            if (!IsSpawned)
+                return false;
+            return GetSlotItemId(SelectedSlotIndex) != 0UL;
+        }
+    }
+
+    public bool IsSelectedItemFlashlight
+    {
+        get
+        {
+            if (!IsSpawned)
+                return false;
+            ulong id = GetSlotItemId(SelectedSlotIndex);
+            if (id == 0UL)
+                return false;
+            if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || g == null)
+                return false;
+            return g is FlashlightItem;
+        }
+    }
 
     void Awake()
     {
         if (playerController == null)
             playerController = GetComponent<PlayerController>();
+        _avatar = GetComponent<NetworkPlayerAvatar>();
     }
 
     public override void OnNetworkSpawn()
     {
+        _slot0ItemId.OnValueChanged += OnSlot0Changed;
+        _slot1ItemId.OnValueChanged += OnSlot1Changed;
+        _slot2ItemId.OnValueChanged += OnSlot2Changed;
+        _selectedSlot.OnValueChanged += OnSelectedChanged;
+        _selectedFlashlightLightOn.OnValueChanged += OnFlashlightLightChanged;
+        _slot0Stack.OnValueChanged += OnStackChanged;
+        _slot1Stack.OnValueChanged += OnStackChanged;
+        _slot2Stack.OnValueChanged += OnStackChanged;
+
         if (IsServer)
-            SendFlashlightSnapshotToOwner();
+            SendItemSnapshotToOwner();
+
+        RaiseChangedAndRefresh();
     }
 
-    public bool CanPickupFlashlight(FlashlightItem flashlight)
+    public override void OnNetworkDespawn()
     {
-        return flashlight != null
-            && flashlight.gameObject.activeInHierarchy
-            && !HasAnyEquippedItem
-            && !flashlight.IsHeld;
+        _slot0ItemId.OnValueChanged -= OnSlot0Changed;
+        _slot1ItemId.OnValueChanged -= OnSlot1Changed;
+        _slot2ItemId.OnValueChanged -= OnSlot2Changed;
+        _selectedSlot.OnValueChanged -= OnSelectedChanged;
+        _selectedFlashlightLightOn.OnValueChanged -= OnFlashlightLightChanged;
+        _slot0Stack.OnValueChanged -= OnStackChanged;
+        _slot1Stack.OnValueChanged -= OnStackChanged;
+        _slot2Stack.OnValueChanged -= OnStackChanged;
     }
 
-    public bool TryGetFlashlightAttachmentTargets(out Transform holdPoint, out Transform followTransform)
+    void OnStackChanged(byte previous, byte current) { RaiseChangedAndRefresh(); }
+
+    void OnSlot0Changed(ulong previous, ulong current) { RaiseChangedAndRefresh(); }
+    void OnSlot1Changed(ulong previous, ulong current) { RaiseChangedAndRefresh(); }
+    void OnSlot2Changed(ulong previous, ulong current) { RaiseChangedAndRefresh(); }
+    void OnSelectedChanged(byte previous, byte current) { RaiseChangedAndRefresh(); }
+    void OnFlashlightLightChanged(bool previous, bool current) { RaiseChangedAndRefresh(); }
+
+    void RaiseChangedAndRefresh()
     {
-        holdPoint = null;
-        followTransform = null;
-        return playerController != null && playerController.TryGetFlashlightAttachmentTargets(out holdPoint, out followTransform);
+        OnInventoryChanged?.Invoke();
+        playerController?.RefreshInventoryViewFromNetwork();
     }
 
-    public void TryPickupFlashlight(FlashlightItem flashlight)
+    public bool CanPickup(GrabbableInventoryItem item)
     {
-        if (!CanPickupFlashlight(flashlight))
+        if (item == null
+            || !item.gameObject.activeInHierarchy
+            || item.IsHeld)
+            return false;
+
+        if (item is GlowstickItem gs)
+        {
+            int w = gs.StackCount;
+            if (GetFirstEmptySlot() >= 0)
+                return true;
+            for (int i = 0; i < 3; i++)
+            {
+                if (GetSlotItemId(i) == 0UL)
+                    continue;
+                if (!GrabbableInventoryItem.TryGetRegistered(GetSlotItemId(i), out GrabbableInventoryItem g)
+                    || g is not GlowstickItem)
+                    continue;
+                if (GetSlotStackCount(i) < GlowstickItem.MaxStack && w > 0)
+                    return true;
+            }
+            return false;
+        }
+
+        return !IsInventoryCompletelyFull;
+    }
+
+    public void TryPickupItem(GrabbableInventoryItem item)
+    {
+        if (!CanPickup(item))
             return;
 
         if (IsServer)
         {
-            ServerTryPickupFlashlight(flashlight.ItemId, flashlight.transform.position);
+            ServerTryPickup(item.ItemId, item.transform.position);
             return;
         }
 
-        RequestPickupFlashlightServerRpc(flashlight.ItemId, flashlight.transform.position);
+        RequestPickupItemServerRpc(item.ItemId, item.transform.position);
     }
 
-    public void TryToggleHeldFlashlight()
+    [ServerRpc]
+    void RequestPickupItemServerRpc(ulong itemId, Vector3 worldHint, ServerRpcParams serverRpcParams = default)
     {
-        if (!HasEquippedFlashlight)
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
             return;
 
-        if (IsServer)
+        ServerTryPickup(itemId, worldHint);
+    }
+
+    void ServerTryPickup(ulong itemId, Vector3 worldHint)
+    {
+        if (!IsServer)
+            return;
+
+        if (!GrabbableInventoryItem.TryResolveForPickup(itemId, worldHint, out GrabbableInventoryItem item) || item == null || item.IsHeld)
+            return;
+
+        if (item is FlashlightItem f0)
         {
-            ServerToggleHeldFlashlight();
+            int empty = GetFirstEmptySlot();
+            if (empty < 0)
+                return;
+            _selectedSlot.Value = (byte)empty;
+            SetSlotItemId(empty, item.ItemId);
+            SetSlotStackCount(empty, 1);
+            _selectedFlashlightLightOn.Value = f0.IsLightOn;
             return;
         }
 
-        RequestToggleHeldFlashlightServerRpc();
+        if (item is GlowstickItem pickup)
+        {
+            int w = pickup.StackCount;
+            for (int i = 0; i < 3 && w > 0; i++)
+            {
+                ulong slotId = GetSlotItemId(i);
+                if (slotId == 0UL)
+                    continue;
+                if (!GrabbableInventoryItem.TryGetRegistered(slotId, out GrabbableInventoryItem inSlotG) || inSlotG is not GlowstickItem inSlot)
+                    continue;
+                int c = GetSlotStackCount(i);
+                int space = GlowstickItem.MaxStack - c;
+                if (space <= 0)
+                    continue;
+                int add = Mathf.Min(w, space);
+                inSlot.SetStackCount(c + add);
+                SetSlotStackCount(i, (byte)inSlot.StackCount);
+                w -= add;
+            }
+            if (w <= 0)
+            {
+                Object.Destroy(pickup.gameObject);
+                return;
+            }
+            int emptyG = GetFirstEmptySlot();
+            if (emptyG < 0)
+            {
+                pickup.SetStackCount(w);
+                return;
+            }
+            pickup.SetStackCount(w);
+            _selectedSlot.Value = (byte)emptyG;
+            SetSlotItemId(emptyG, pickup.ItemId);
+            SetSlotStackCount(emptyG, (byte)w);
+            _selectedFlashlightLightOn.Value = false;
+            return;
+        }
+
+        int emptyOther = GetFirstEmptySlot();
+        if (emptyOther < 0)
+            return;
+        _selectedSlot.Value = (byte)emptyOther;
+        SetSlotItemId(emptyOther, item.ItemId);
+        SetSlotStackCount(emptyOther, 1);
+        _selectedFlashlightLightOn.Value = false;
     }
 
-    public void TryDropHeldFlashlight(Vector3 dropPosition, Quaternion dropRotation, Vector3 dropForward)
+    public void TryDropSelectedItem(Vector3 dropPosition, Quaternion dropRotation, Vector3 dropForward)
     {
-        if (!HasEquippedFlashlight)
-            return;
-
         Vector3 normalizedForward = dropForward.sqrMagnitude > 0.0001f ? dropForward.normalized : transform.forward;
         if (IsServer)
         {
-            ServerDropHeldFlashlight(dropPosition, dropRotation, normalizedForward);
+            ServerDropSelectedItem(dropPosition, dropRotation, normalizedForward);
             return;
         }
 
-        RequestDropHeldFlashlightServerRpc(dropPosition, dropRotation, normalizedForward);
-    }
-
-    public void ServerDropHeldFlashlightOnDeath()
-    {
-        if (!IsServer || !HasEquippedFlashlight)
-            return;
-
-        Vector3 forward = transform.forward.sqrMagnitude > 0.0001f ? transform.forward : Vector3.forward;
-        Vector3 dropPosition = transform.position + Vector3.up * 0.9f + forward * 0.6f;
-        Quaternion dropRotation = transform.rotation;
-        if (playerController != null && playerController.TryGetFlashlightAttachmentTargets(out Transform holdPoint, out Transform followTransform))
-        {
-            dropPosition = holdPoint.position;
-            dropRotation = followTransform != null ? followTransform.rotation : holdPoint.rotation;
-        }
-
-        ServerDropHeldFlashlight(dropPosition, dropRotation, forward);
+        RequestDropSelectedItemServerRpc(dropPosition, dropRotation, normalizedForward);
     }
 
     [ServerRpc]
-    void RequestPickupFlashlightServerRpc(ulong flashlightItemId, Vector3 flashlightWorldPosition, ServerRpcParams serverRpcParams = default)
-    {
-        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
-            return;
-
-        ServerTryPickupFlashlight(flashlightItemId, flashlightWorldPosition);
-    }
-
-    [ServerRpc]
-    void RequestToggleHeldFlashlightServerRpc(ServerRpcParams serverRpcParams = default)
-    {
-        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
-            return;
-
-        ServerToggleHeldFlashlight();
-    }
-
-    [ServerRpc]
-    void RequestDropHeldFlashlightServerRpc(Vector3 dropPosition, Quaternion dropRotation, Vector3 dropForward, ServerRpcParams serverRpcParams = default)
+    void RequestDropSelectedItemServerRpc(Vector3 dropPosition, Quaternion dropRotation, Vector3 dropForward, ServerRpcParams serverRpcParams = default)
     {
         if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
             return;
 
         Vector3 normalizedForward = dropForward.sqrMagnitude > 0.0001f ? dropForward.normalized : transform.forward;
-        ServerDropHeldFlashlight(dropPosition, dropRotation, normalizedForward);
+        ServerDropSelectedItem(dropPosition, dropRotation, normalizedForward);
     }
 
-    void ServerTryPickupFlashlight(ulong flashlightItemId, Vector3 flashlightWorldPosition)
+    void ServerDropSelectedItem(Vector3 dropPosition, Quaternion dropRotation, Vector3 dropForward)
     {
-        if (!IsServer || HasAnyEquippedItem)
+        if (!IsServer || !HasItemInSelectedSlot)
             return;
 
-        if (!FlashlightItem.TryResolveRegisteredFlashlightForPickup(flashlightItemId, flashlightWorldPosition, out FlashlightItem flashlight)
-            || flashlight == null
-            || flashlight.IsHeld)
+        int sel = SelectedSlotIndex;
+        ulong id = GetSlotItemId(sel);
+        if (id == 0UL)
+            return;
+
+        if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem item) || item == null)
         {
+            SetSlotItemId(sel, 0UL);
+            SetSlotStackCount(sel, 0);
+            SelectAfterDrop();
             return;
         }
 
-        Vector3 pickupHintPosition = flashlight.transform.position;
-        Quaternion pickupHintRotation = flashlight.transform.rotation;
-        ulong resolvedId = flashlight.ItemId;
+        int stackForDrop = item is GlowstickItem ? GetSlotStackCount(sel) : 1;
 
-        _heldKind.Value = (byte)NetworkHeldItemKind.Flashlight;
-        _heldFlashlightItemId.Value = resolvedId;
-        _heldFlashlightLightOn.Value = flashlight.IsLightOn;
+        Vector3 norm = dropForward;
+        if (norm.sqrMagnitude < 0.0001f)
+            norm = transform.forward;
+        norm.Normalize();
+        Vector3 finalDropPosition = dropPosition + norm * 0.35f;
+        finalDropPosition.y = Mathf.Max(finalDropPosition.y, transform.position.y + 0.1f);
+        Quaternion finalDropRotation = item.transform.rotation;
+        Vector3 throwImpulse = norm * dropThrowImpulse;
 
-        flashlight.ApplyNetworkHeldState(NetworkObjectId, flashlight.IsLightOn);
-        ApplyFlashlightStateClientRpc(resolvedId, true, NetworkObjectId, pickupHintPosition, pickupHintRotation, flashlight.IsLightOn, default);
+        if (item is GlowstickItem glowStack && stackForDrop > 1)
+        {
+            int next = stackForDrop - 1;
+            glowStack.SetStackCount(next);
+            SetSlotStackCount(sel, (byte)next);
+            ulong templateId = glowStack.ItemId;
+            SpawnSingleGlowstickDropClientRpc(templateId, finalDropPosition, finalDropRotation, throwImpulse);
+            return;
+        }
+
+        SetSlotItemId(sel, 0UL);
+        SetSlotStackCount(sel, 0);
+        SelectAfterDrop();
+        _selectedFlashlightLightOn.Value = false;
+
+        if (item is FlashlightItem flashlight)
+        {
+            bool lightOn = flashlight.IsLightOn;
+            if (IsServer && !IsClient)
+                flashlight.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, lightOn, throwImpulse);
+            else
+                flashlight.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, lightOn, default);
+
+            ApplyItemStateClientRpc(flashlight.ItemId, false, 0UL, finalDropPosition, finalDropRotation, throwImpulse);
+        }
+        else
+        {
+            if (item is GlowstickItem gsz)
+                gsz.SetStackCount(Mathf.Max(1, stackForDrop));
+            item.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, throwImpulse);
+            if (item is GlowstickItem gForVis)
+                gForVis.SetWorldDroppedVisual();
+
+            ApplyItemStateClientRpc(item.ItemId, false, 0UL, finalDropPosition, finalDropRotation, default);
+        }
     }
 
-    void ServerToggleHeldFlashlight()
+    [ClientRpc]
+    void SpawnSingleGlowstickDropClientRpc(ulong templateGlowstickItemId, Vector3 worldPosition, Quaternion worldRotation, Vector3 throwImpulse)
     {
-        if (!IsServer || !HasEquippedFlashlight)
+        if (!GrabbableInventoryItem.TryGetRegistered(templateGlowstickItemId, out GrabbableInventoryItem template)
+            || template is not GlowstickItem)
             return;
 
-        if (!TryGetHeldFlashlight(out FlashlightItem flashlight))
+        GameObject d = Object.Instantiate(template.gameObject, worldPosition, worldRotation);
+        d.transform.SetParent(null, true);
+        if (!d.TryGetComponent(out GlowstickItem dropped) || dropped == null)
+        {
+            Object.Destroy(d);
+            return;
+        }
+
+        dropped.SetStackCount(1);
+        dropped.ApplyNetworkWorldState(worldPosition, worldRotation, throwImpulse);
+        dropped.SetWorldDroppedVisual();
+    }
+
+    void SelectAfterDrop()
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            if (GetSlotItemId(i) != 0UL)
+            {
+                _selectedSlot.Value = (byte)i;
+                UpdateFlashlightSyncFromSelected();
+                return;
+            }
+        }
+
+        _selectedSlot.Value = 0;
+    }
+
+    public void TryCycleSelection(int delta)
+    {
+        if (delta == 0)
+            return;
+
+        if (IsServer)
+        {
+            ServerCycleSelection(delta);
+            return;
+        }
+
+        RequestCycleSelectionServerRpc((sbyte)delta);
+    }
+
+    [ServerRpc]
+    void RequestCycleSelectionServerRpc(sbyte delta, ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+
+        ServerCycleSelection(delta);
+    }
+
+    void ServerCycleSelection(int delta)
+    {
+        if (!IsServer)
+            return;
+        if (delta == 0)
+            return;
+
+        int sign = delta > 0 ? 1 : -1;
+        int cur = _selectedSlot.Value;
+        int next = cur + sign;
+        int n = 3;
+        int wrapped = ((next % n) + n) % n;
+        _selectedSlot.Value = (byte)wrapped;
+        UpdateFlashlightSyncFromSelected();
+    }
+
+    void UpdateFlashlightSyncFromSelected()
+    {
+        if (!IsServer)
+            return;
+
+        ulong id = GetSlotItemId(SelectedSlotIndex);
+        if (id == 0UL
+            || !GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g)
+            || !(g is FlashlightItem f))
+        {
+            _selectedFlashlightLightOn.Value = false;
+            return;
+        }
+
+        _selectedFlashlightLightOn.Value = f.IsLightOn;
+    }
+
+    public void TryToggleSelectedFlashlight()
+    {
+        if (IsServer)
+        {
+            ServerToggleSelectedFlashlight();
+            return;
+        }
+
+        RequestToggleSelectedFlashlightServerRpc();
+    }
+
+    [ServerRpc]
+    void RequestToggleSelectedFlashlightServerRpc(ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+
+        ServerToggleSelectedFlashlight();
+    }
+
+    void ServerToggleSelectedFlashlight()
+    {
+        if (!IsServer || !HasItemInSelectedSlot)
+            return;
+
+        ulong id = GetSlotItemId(SelectedSlotIndex);
+        if (id == 0UL)
+            return;
+
+        if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || !(g is FlashlightItem flashlight))
             return;
 
         bool lightEnabled = !flashlight.IsLightOn;
-        _heldFlashlightLightOn.Value = lightEnabled;
-        flashlight.ApplyNetworkHeldState(NetworkObjectId, lightEnabled);
-        ApplyFlashlightStateClientRpc(_heldFlashlightItemId.Value, true, NetworkObjectId, flashlight.transform.position, flashlight.transform.rotation, lightEnabled, default);
+        _selectedFlashlightLightOn.Value = lightEnabled;
+        flashlight.SetLightEnabled(lightEnabled);
     }
 
-    void ServerDropHeldFlashlight(Vector3 dropPosition, Quaternion dropRotation, Vector3 dropForward)
+    public void ServerDropAllHeldOnDeath()
     {
-        if (!IsServer || !HasEquippedFlashlight)
+        if (!IsServer)
             return;
 
-        if (!TryGetHeldFlashlight(out FlashlightItem flashlight))
-            return;
-
-        Vector3 normalizedForward = dropForward.sqrMagnitude > 0.0001f ? dropForward.normalized : transform.forward;
-        Vector3 finalDropPosition = dropPosition + normalizedForward * 0.35f;
-        finalDropPosition.y = Mathf.Max(finalDropPosition.y, transform.position.y + 0.1f);
-        Quaternion finalDropRotation = flashlight.transform.rotation;
-        bool lightEnabled = flashlight.IsLightOn;
-        ulong droppedItemId = _heldFlashlightItemId.Value;
-
-        _heldKind.Value = (byte)NetworkHeldItemKind.None;
-        _heldFlashlightItemId.Value = 0UL;
-        _heldFlashlightLightOn.Value = false;
-
-        Vector3 throwImpulse = normalizedForward * dropThrowImpulse;
-        if (IsServer && !IsClient)
-            flashlight.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, lightEnabled, throwImpulse);
-        else if (IsServer && IsClient)
-            flashlight.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, lightEnabled, default);
-
-        ApplyFlashlightStateClientRpc(droppedItemId, false, NetworkObjectId, finalDropPosition, finalDropRotation, lightEnabled, throwImpulse);
+        Vector3 forward = transform.forward.sqrMagnitude > 0.0001f ? transform.forward : Vector3.forward;
+        for (int s = 0; s < 3; s++)
+        {
+            int safety = 0;
+            while (GetSlotItemId(s) != 0UL)
+            {
+                if (++safety > 32)
+                    break;
+                _selectedSlot.Value = (byte)s;
+                UpdateFlashlightSyncFromSelected();
+                if (playerController == null
+                    || !playerController.TryGetFlashlightAttachmentTargets(out Transform holdPoint, out Transform follow))
+                {
+                    break;
+                }
+                Vector3 pos = holdPoint.position;
+                Quaternion rot = follow != null ? follow.rotation : holdPoint.rotation;
+                ServerDropSelectedItem(pos, rot, forward);
+            }
+        }
     }
 
-    bool TryGetHeldFlashlight(out FlashlightItem flashlight)
-    {
-        flashlight = null;
-        return HasEquippedFlashlight
-            && FlashlightItem.TryGetRegisteredFlashlight(_heldFlashlightItemId.Value, out flashlight)
-            && flashlight != null;
-    }
-
-    void SendFlashlightSnapshotToOwner()
+    void SendItemSnapshotToOwner()
     {
         ClientRpcParams targetOwner = new ClientRpcParams
         {
@@ -234,48 +545,68 @@ public class NetworkPlayerInventory : NetworkBehaviour
             }
         };
 
-        foreach (FlashlightItem flashlight in FlashlightItem.GetRegisteredFlashlights())
+        foreach (GrabbableInventoryItem g in GrabbableInventoryItem.GetRegisteredItems())
         {
-            if (flashlight == null)
+            if (g == null)
                 continue;
 
-            Vector3 snapshotPosition = flashlight.transform.position;
-            Quaternion snapshotRotation = flashlight.transform.rotation;
-            ApplyFlashlightStateClientRpc(
-                flashlight.ItemId,
-                flashlight.IsHeld,
-                flashlight.HolderNetworkObjectId,
-                snapshotPosition,
-                snapshotRotation,
-                flashlight.IsLightOn,
+            bool held = g.IsHeld;
+            ulong holder = g.HolderNetworkObjectId;
+            Vector3 p = g.transform.position;
+            Quaternion r = g.transform.rotation;
+            ApplyItemStateClientRpc(
+                g.ItemId,
+                held,
+                holder,
+                p,
+                r,
                 default,
                 targetOwner);
         }
     }
 
     [ClientRpc]
-    void ApplyFlashlightStateClientRpc(
-        ulong flashlightItemId,
+    void ApplyItemStateClientRpc(
+        ulong itemId,
         bool isHeld,
         ulong holderNetworkObjectId,
         Vector3 worldPosition,
         Quaternion worldRotation,
-        bool lightEnabled,
         Vector3 worldDropImpulse,
         ClientRpcParams clientRpcParams = default)
     {
-        if (!FlashlightItem.TryResolveRegisteredFlashlightForState(flashlightItemId, worldPosition, out FlashlightItem flashlight) || flashlight == null)
+        if (!GrabbableInventoryItem.TryResolveForState(itemId, worldPosition, out GrabbableInventoryItem g) || g == null)
             return;
 
-        NetworkPlayerAvatar avatar = GetComponent<NetworkPlayerAvatar>();
         if (isHeld)
         {
-            avatar?.NotifyFlashlightVisualAttach(flashlight);
-            flashlight.ApplyNetworkHeldState(holderNetworkObjectId, lightEnabled);
+            if (g is FlashlightItem f)
+            {
+                _avatar?.NotifyFlashlightVisualAttach(f);
+                f.ApplyNetworkHeldState(holderNetworkObjectId, f.IsLightOn);
+            }
+            else
+            {
+                g.ApplyNetworkHeldState(holderNetworkObjectId);
+            }
         }
         else
         {
-            flashlight.ApplyNetworkWorldState(worldPosition, worldRotation, lightEnabled, worldDropImpulse);
+            if (g is FlashlightItem f2)
+            {
+                f2.ApplyNetworkWorldState(worldPosition, worldRotation, f2.IsLightOn, worldDropImpulse);
+            }
+            else
+            {
+                g.ApplyNetworkWorldState(worldPosition, worldRotation, worldDropImpulse);
+            }
+
+            if (g is GlowstickItem gStick)
+            {
+                gStick.SetWorldDroppedVisual();
+            }
         }
+
+        playerController?.RefreshInventoryViewFromNetwork();
     }
 }

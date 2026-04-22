@@ -100,6 +100,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     const string TrapAnchorName = "TrapAnchor";
     const string TrapAnchor2Name = "TrapAnchor2";
     const string TrapMountPointName = "MountPoint";
+    const string ChestAnchorName = "ChestAnchor";
+    const string ChestMountPointName = "ChestMount";
 
     static readonly DirectionStep[] Steps =
     {
@@ -153,6 +155,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         RegisterRuntimeNetworkPrefab(mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab);
         RegisterRuntimeNetworkPrefab(_config.MazeTrapPrefab);
+        RegisterRuntimeNetworkPrefab(_config.MazeChestPrefab);
     }
 
     void RegisterRuntimeNetworkPrefab(GameObject prefab)
@@ -466,6 +469,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         TrySpawnMazeTraps(root.transform, grid, builtCellRoots, start, exit, seed, cellSize);
+        TrySpawnMazeChests(root.transform, builtCellRoots, seed);
         CreateSpawnPoints(root.transform, start, cellSize);
         MultiplayerSpawnRegistry.Instance?.RefreshSpawnPoints();
         TryRebuildRuntimeNavMesh(root);
@@ -2171,6 +2175,80 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 $"[Maze] Requested {requestedCount} maze traps but only spawned {spawnedCount} from {candidates.Count} TrapAnchor candidate(s).",
                 this);
         }
+    }
+
+    void TrySpawnMazeChests(Transform mazeRoot, IReadOnlyDictionary<Vector2Int, Transform> cellRoots, int mazeSeed)
+    {
+        GameObject prefab = _config.MazeChestPrefab;
+        if (prefab == null)
+            return;
+
+        if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
+            return;
+
+        Transform chestsRoot = CreateChild(mazeRoot, "GeneratedChests");
+        List<Transform> cellChestAnchors = new(4);
+        int chestIndex = 0;
+        bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
+
+        foreach (KeyValuePair<Vector2Int, Transform> pair in cellRoots)
+        {
+            Transform cellRoot = pair.Value;
+            if (cellRoot == null)
+                continue;
+
+            cellChestAnchors.Clear();
+            CollectChestAnchors(cellRoot, cellChestAnchors);
+
+            for (int a = 0; a < cellChestAnchors.Count; a++)
+            {
+                Transform anchor = cellChestAnchors[a];
+                GameObject instance = Instantiate(prefab, Vector3.zero, Quaternion.identity, chestsRoot);
+                AlignChestInstanceToAnchor(instance.transform, anchor);
+                int lootSeed = MixSeed(mazeSeed, MixSeed(chestIndex++, unchecked((int)0x7E5ECAB1)));
+
+                MazeChest mazeChest = instance.GetComponent<MazeChest>();
+                if (mazeChest != null)
+                    mazeChest.ConfigureFromMaze(lootSeed);
+
+                if (!spawnWithNetcode)
+                    continue;
+
+                NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+                if (networkObject != null)
+                    networkObject.Spawn();
+            }
+        }
+    }
+
+    static void CollectChestAnchors(Transform root, List<Transform> into)
+    {
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            Transform candidate = transforms[i];
+            if (candidate == null)
+                continue;
+
+            if (string.Equals(candidate.name, ChestAnchorName, StringComparison.Ordinal))
+                into.Add(candidate);
+        }
+    }
+
+    static void AlignChestInstanceToAnchor(Transform chestRoot, Transform anchor)
+    {
+        if (chestRoot == null || anchor == null)
+            return;
+
+        if (!TryFindNamedChild(chestRoot, ChestMountPointName, out Transform mountPoint))
+        {
+            chestRoot.SetPositionAndRotation(anchor.position, anchor.rotation);
+            return;
+        }
+
+        Quaternion rootRotation = anchor.rotation * Quaternion.Inverse(mountPoint.localRotation);
+        Vector3 rootPosition = anchor.position - rootRotation * mountPoint.localPosition;
+        chestRoot.SetPositionAndRotation(rootPosition, rootRotation);
     }
 
     float ResolveMazeEnemyMinSeparationXZ(float cellSize)

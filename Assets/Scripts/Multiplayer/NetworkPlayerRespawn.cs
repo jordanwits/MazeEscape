@@ -88,7 +88,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         if (!IsServer || _isDead.Value)
             return;
 
-        networkPlayerInventory?.ServerDropHeldFlashlightOnDeath();
+        networkPlayerInventory?.ServerDropAllHeldOnDeath();
         _isDead.Value = true;
 
         NetworkPlayerRagdoll netRagdoll = GetComponent<NetworkPlayerRagdoll>();

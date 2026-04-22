@@ -1,4 +1,6 @@
+using System;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Serialization;
@@ -11,7 +13,7 @@ using UnityEditor;
 [RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(AudioSource))]
 [DefaultExecutionOrder(100)]
-public class PlayerController : MonoBehaviour
+public partial class PlayerController : MonoBehaviour
 {
     [Header("References")]
     [SerializeField] CharacterController characterController;
@@ -54,8 +56,10 @@ public class PlayerController : MonoBehaviour
     [Tooltip("Optional UI Text for the pickup prompt. If empty, tries to find a Text under pickupPromptRoot.")]
     [SerializeField] Text pickupPromptText;
     [SerializeField] string pickupPromptMessage = "Press E to pick up";
+    [SerializeField] string chestPromptMessage = "Press E to open";
     [Tooltip("Optional mask for interactable items. If empty, Unity default raycast layers are used.")]
     [SerializeField] LayerMask interactMask;
+    [NonSerialized] RaycastHit[] _interactCastHitBuffer = new RaycastHit[32];
     [Tooltip("Optional mask for upper-body wall blocking. If empty, Unity default raycast layers are used.")]
     [SerializeField] LayerMask upperBodyWallMask;
     [SerializeField] float walkSpeed = 2.4f;
@@ -145,7 +149,6 @@ public class PlayerController : MonoBehaviour
     Vector2 _moveInput;
     Vector3 _groundMoveThisFrame;
     float _currentHorizontalSpeed;
-    FlashlightItem _heldFlashlight;
     readonly Collider[] _upperBodyWallHits = new Collider[16];
     bool _pickupPromptVisible;
 
@@ -154,6 +157,20 @@ public class PlayerController : MonoBehaviour
     bool _isSprinting;
     RectTransform _staminaFillRect;
     GameObject _staminaBarRoot;
+    GameObject _inventorySlotsRoot;
+    Image[] _inventorySlotBorderImages;
+    Image[] _inventorySlotIconImages;
+    Color _inventoryDefaultBorderColor;
+    Color _inventoryDefaultFillColor;
+    Color _inventorySelectedBorderColor;
+    NetworkPlayerInventory _networkPlayerInventory;
+    [Tooltip("Items not in the active hotbar slot are parented here. Auto-created as child of the player if empty.")]
+    [SerializeField] Transform inventoryStashRoot;
+    GrabbableInventoryItem[] _localInventorySlots = new GrabbableInventoryItem[3];
+    /// <summary>Parallel to <see cref="_localInventorySlots"/>; 0 for empty, 1 for flashlight, 1–5 for glowstick.</summary>
+    int[] _localSlotStacks = new int[3];
+    int _localSelectedSlot;
+    Text[] _inventorySlotCountTexts;
     float _footstepTimer;
     bool _playFootstep1Next = true;
     bool _hasLocalControl = true;
@@ -254,6 +271,7 @@ public class PlayerController : MonoBehaviour
             staminaBarImage = CreateStaminaBarUI();
 
         RefreshStaminaUI();
+        RefreshInventorySlotHud();
 
         if (footstepAudioSource == null)
             footstepAudioSource = GetComponent<AudioSource>();
@@ -263,8 +281,10 @@ public class PlayerController : MonoBehaviour
         ConfigureFootstepAudioSource();
         _networkPlayerCombat = GetComponent<NetworkPlayerCombat>();
         _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
+        _networkPlayerInventory = GetComponent<NetworkPlayerInventory>();
         _ragdollController = GetComponent<PlayerRagdollController>();
         _playerHealth = GetComponent<PlayerHealth>();
+        EnsureInventoryStashRoot();
 
         if (cameraPitchTransform == null)
         {
@@ -406,6 +426,8 @@ public class PlayerController : MonoBehaviour
 
         if (firstPersonLook && UseNetworkedFlashlightFlow && _networkPlayerAvatar != null && _networkPlayerAvatar.IsOwner)
             _networkPlayerAvatar.PublishFlashlightLookPitch(_lookPitchDegrees);
+
+        HandleInventoryScrollInUpdate();
 
         if (interactPressed)
             HandlePickupInput();
@@ -587,6 +609,9 @@ public class PlayerController : MonoBehaviour
         else if (staminaBarImage != null)
             staminaBarImage.enabled = visible;
 
+        if (_inventorySlotsRoot != null)
+            _inventorySlotsRoot.SetActive(visible);
+
         if (!visible)
             SetPickupPromptVisible(false);
     }
@@ -678,6 +703,12 @@ public class PlayerController : MonoBehaviour
 
     Image CreateStaminaBarUI()
     {
+        const float invSlotRowHeight = 96f;
+        const float invSlotBorder = 2.5f;
+        const float invSlotBottomPad = 4f;
+        const float invSlotStaminaGap = 6f;
+        float staminaBarBottomY = invSlotBottomPad + invSlotRowHeight + invSlotStaminaGap;
+
         Canvas canvas = FindAnyObjectByType<Canvas>();
         if (canvas == null)
         {
@@ -690,6 +721,84 @@ public class PlayerController : MonoBehaviour
             canvasGo.AddComponent<GraphicRaycaster>();
         }
 
+        GameObject invRow = new GameObject("InventorySlotRow");
+        invRow.transform.SetParent(canvas.transform, false);
+        RectTransform invRowRect = invRow.AddComponent<RectTransform>();
+        invRowRect.anchorMin = new Vector2(0.5f, 0f);
+        invRowRect.anchorMax = new Vector2(0.5f, 0f);
+        invRowRect.pivot = new Vector2(0.5f, 0f);
+        invRowRect.anchoredPosition = new Vector2(0f, invSlotBottomPad);
+        invRowRect.sizeDelta = new Vector2(304f, invSlotRowHeight);
+        HorizontalLayoutGroup invLayout = invRow.AddComponent<HorizontalLayoutGroup>();
+        invLayout.spacing = 6f;
+        invLayout.childAlignment = TextAnchor.MiddleCenter;
+        invLayout.childControlWidth = true;
+        invLayout.childControlHeight = true;
+        invLayout.childForceExpandWidth = true;
+        invLayout.childForceExpandHeight = true;
+        // Border was nearly opaque; it dominates the look—keep alpha low for a see-through frame.
+        _inventoryDefaultBorderColor = new Color(0.15f, 0.15f, 0.17f, 0.35f);
+        _inventoryDefaultFillColor = new Color(0.4f, 0.4f, 0.42f, 0.12f);
+        _inventorySelectedBorderColor = new Color(0.65f, 0.44f, 0.24f, 0.6f);
+        _inventorySlotBorderImages = new Image[3];
+        _inventorySlotIconImages = new Image[3];
+        _inventorySlotCountTexts = new Text[3];
+        for (int i = 0; i < 3; i++)
+        {
+            GameObject slot = new GameObject("InventorySlot" + (i + 1));
+            slot.transform.SetParent(invRow.transform, false);
+            Image border = slot.AddComponent<Image>();
+            border.color = _inventoryDefaultBorderColor;
+            _inventorySlotBorderImages[i] = border;
+            LayoutElement le = slot.AddComponent<LayoutElement>();
+            le.flexibleWidth = 1f;
+            le.minHeight = invSlotRowHeight;
+
+            GameObject invSlotFillGo = new GameObject("Fill");
+            invSlotFillGo.transform.SetParent(slot.transform, false);
+            Image invSlotFillImage = invSlotFillGo.AddComponent<Image>();
+            invSlotFillImage.color = _inventoryDefaultFillColor;
+            RectTransform invSlotFillRect = invSlotFillGo.GetComponent<RectTransform>();
+            invSlotFillRect.anchorMin = Vector2.zero;
+            invSlotFillRect.anchorMax = Vector2.one;
+            invSlotFillRect.pivot = new Vector2(0.5f, 0.5f);
+            invSlotFillRect.offsetMin = new Vector2(invSlotBorder, invSlotBorder);
+            invSlotFillRect.offsetMax = new Vector2(-invSlotBorder, -invSlotBorder);
+
+            GameObject iconGo = new GameObject("Icon");
+            iconGo.transform.SetParent(invSlotFillGo.transform, false);
+            Image icon = iconGo.AddComponent<Image>();
+            icon.color = Color.white;
+            icon.raycastTarget = false;
+            icon.preserveAspect = true;
+            icon.enabled = false;
+            RectTransform iconRect = icon.GetComponent<RectTransform>();
+            iconRect.anchorMin = new Vector2(0.1f, 0.1f);
+            iconRect.anchorMax = new Vector2(0.9f, 0.9f);
+            iconRect.pivot = new Vector2(0.5f, 0.5f);
+            iconRect.offsetMin = Vector2.zero;
+            iconRect.offsetMax = Vector2.zero;
+            _inventorySlotIconImages[i] = icon;
+
+            GameObject countGo = new GameObject("StackCount");
+            countGo.transform.SetParent(invSlotFillGo.transform, false);
+            Text countText = countGo.AddComponent<Text>();
+            countText.alignment = TextAnchor.LowerRight;
+            countText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            countText.fontSize = 20;
+            countText.color = new Color(1f, 1f, 1f, 0.95f);
+            countText.raycastTarget = false;
+            countText.text = string.Empty;
+            _inventorySlotCountTexts[i] = countText;
+            RectTransform countRect = countText.rectTransform;
+            countRect.anchorMin = new Vector2(0.55f, 0f);
+            countRect.anchorMax = new Vector2(1f, 0.45f);
+            countRect.pivot = new Vector2(1f, 0f);
+            countRect.offsetMin = new Vector2(2f, 2f);
+            countRect.offsetMax = new Vector2(-4f, 0f);
+        }
+        _inventorySlotsRoot = invRow;
+
         GameObject bg = new GameObject("StaminaBarBG");
         bg.transform.SetParent(canvas.transform, false);
         Image bgImage = bg.AddComponent<Image>();
@@ -698,7 +807,7 @@ public class PlayerController : MonoBehaviour
         bgRect.anchorMin = new Vector2(0.5f, 0f);
         bgRect.anchorMax = new Vector2(0.5f, 0f);
         bgRect.pivot = new Vector2(0.5f, 0f);
-        bgRect.anchoredPosition = new Vector2(0f, 30f);
+        bgRect.anchoredPosition = new Vector2(0f, staminaBarBottomY);
         bgRect.sizeDelta = new Vector2(304f, 24f);
         _staminaBarRoot = bg;
 
@@ -1049,128 +1158,60 @@ public class PlayerController : MonoBehaviour
         return true;
     }
 
-    void HandlePickupInput()
-    {
-        if (UseNetworkedFlashlightFlow)
-        {
-            TryPickupNetworkFlashlight();
-            return;
-        }
-
-        TryPickupFlashlight();
-    }
-
-    void HandleDropInput()
-    {
-        if (UseNetworkedFlashlightFlow)
-        {
-            TryDropNetworkFlashlight();
-            return;
-        }
-
-        DropFlashlight();
-    }
-
-    void HandleFlashlightToggleInput()
-    {
-        if (UseNetworkedFlashlightFlow)
-        {
-            _networkPlayerAvatar?.TryToggleHeldFlashlight();
-            return;
-        }
-
-        if (_heldFlashlight != null)
-            _heldFlashlight.ToggleLight();
-    }
-
-    void TryPickupNetworkFlashlight()
-    {
-        if (_networkPlayerAvatar == null || !TryFindInteractableFlashlight(out FlashlightItem flashlight))
-            return;
-
-        _networkPlayerAvatar.TryPickupFlashlight(flashlight);
-    }
-
-    void TryDropNetworkFlashlight()
-    {
-        if (_networkPlayerAvatar == null || !_networkPlayerAvatar.HasHeldFlashlight)
-            return;
-
-        Transform cam = CameraTransformForFacing;
-        Vector3 forward = cam != null ? cam.forward : transform.forward;
-        Vector3 dropPosition = flashlightHoldPoint != null ? flashlightHoldPoint.position : transform.position + forward * 0.75f;
-        Quaternion dropRotation = flashlightHoldPoint != null ? flashlightHoldPoint.rotation : transform.rotation;
-        _networkPlayerAvatar.TryDropHeldFlashlight(dropPosition, dropRotation, forward);
-    }
-
-    void TryPickupFlashlight()
-    {
-        if (_heldFlashlight != null || flashlightHoldPoint == null)
-            return;
-
-        if (!TryFindInteractableFlashlight(out FlashlightItem flashlight))
-            return;
-
-        _heldFlashlight = flashlight;
-        Transform holdFollowTransform = flashlightFollowsCameraPitch ? CameraTransformForFacing : flashlightHoldPoint;
-        _heldFlashlight.Pickup(flashlightHoldPoint, holdFollowTransform);
-        SetPickupPromptVisible(false);
-    }
-
-    void DropFlashlight()
-    {
-        if (_heldFlashlight == null)
-            return;
-
-        Transform cam = CameraTransformForFacing;
-        Vector3 impulse = (cam != null ? cam.forward : transform.forward) * dropForce;
-        _heldFlashlight.Drop(impulse);
-        _heldFlashlight = null;
-    }
-
     void UpdatePickupPrompt()
     {
         if (pickupPromptRoot == null)
             return;
 
-        bool shouldShow = ShouldShowPickupPrompt();
-        SetPickupPromptVisible(shouldShow);
-    }
-
-    bool ShouldShowPickupPrompt()
-    {
-        if ((UseNetworkedFlashlightFlow ? _networkPlayerAvatar != null && _networkPlayerAvatar.HasHeldFlashlight : _heldFlashlight != null)
-            || flashlightHoldPoint == null)
+        Transform cam = CameraTransformForFacing;
+        if (cam != null && TryFindInteractableMazeChest(cam, out _))
         {
-            return false;
+            SetPickupPromptVisible(true, chestPromptMessage);
+            return;
         }
 
-        return TryFindInteractableFlashlight(out _);
+        bool shouldShow = ShouldShowPickupPrompt();
+        SetPickupPromptVisible(shouldShow, pickupPromptMessage);
     }
 
-    bool TryFindInteractableFlashlight(out FlashlightItem flashlight)
+    bool TryFindInteractableMazeChest(Transform cam, out MazeChest chest)
     {
-        flashlight = null;
+        chest = null;
 
-        Transform cam = CameraTransformForFacing;
         if (cam == null)
             return false;
 
         int mask = interactMask.value == 0 ? Physics.DefaultRaycastLayers : interactMask.value;
-        if (!TryInteractCast(cam, mask, out RaycastHit hit))
+        int count = TryInteractCastNonAlloc(cam, mask);
+        if (count <= 0)
             return false;
 
-        flashlight = hit.collider.GetComponentInParent<FlashlightItem>();
-        if (flashlight == null)
-            return false;
+        SortInteractHitsByDistance(count);
 
-        if (UseNetworkedFlashlightFlow)
-            return _networkPlayerAvatar != null && _networkPlayerAvatar.CanPickupFlashlight(flashlight);
+        for (int i = 0; i < count; i++)
+        {
+            RaycastHit h = _interactCastHitBuffer[i];
+            if (InteractHitBelongsToOpenedChest(h))
+                continue;
 
-        return !flashlight.IsHeld;
+            MazeChest found = h.collider.GetComponentInParent<MazeChest>();
+            if (found != null && !found.IsOpened)
+            {
+                chest = found;
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    bool TryInteractCast(Transform cam, int mask, out RaycastHit hit)
+    static bool InteractHitBelongsToOpenedChest(RaycastHit hit)
+    {
+        MazeChest chest = hit.collider.GetComponentInParent<MazeChest>();
+        return chest != null && chest.IsOpened;
+    }
+
+    int TryInteractCastNonAlloc(Transform cam, int mask)
     {
         Vector3 origin = cam.position;
         Vector3 direction = cam.forward;
@@ -1182,38 +1223,50 @@ public class PlayerController : MonoBehaviour
             float backOffset = Mathf.Min(radius * 0.25f, 0.1f);
             origin -= direction * backOffset;
             distance += backOffset;
-            return Physics.SphereCast(
+            return Physics.SphereCastNonAlloc(
                 origin,
                 radius,
                 direction,
-                out hit,
+                _interactCastHitBuffer,
                 distance,
                 mask,
                 QueryTriggerInteraction.Ignore);
         }
 
-        return Physics.Raycast(
+        return Physics.RaycastNonAlloc(
             origin,
             direction,
-            out hit,
+            _interactCastHitBuffer,
             distance,
             mask,
             QueryTriggerInteraction.Ignore);
     }
 
-    void SetPickupPromptVisible(bool visible)
+    void SortInteractHitsByDistance(int count)
     {
-        if (pickupPromptRoot == null || _pickupPromptVisible == visible)
+        if (count <= 1)
             return;
 
-        _pickupPromptVisible = visible;
-        pickupPromptRoot.SetActive(visible);
+        Array.Sort(_interactCastHitBuffer, 0, count, Comparer<RaycastHit>.Create((a, b) => a.distance.CompareTo(b.distance)));
+    }
+
+    void SetPickupPromptVisible(bool visible, string messageForText = null)
+    {
+        if (pickupPromptRoot == null)
+            return;
+
+        if (_pickupPromptVisible != visible)
+        {
+            _pickupPromptVisible = visible;
+            pickupPromptRoot.SetActive(visible);
+        }
 
         if (!visible || pickupPromptText == null)
             return;
 
-        if (!string.IsNullOrEmpty(pickupPromptMessage))
-            pickupPromptText.text = pickupPromptMessage;
+        string msg = messageForText ?? pickupPromptMessage;
+        if (!string.IsNullOrEmpty(msg))
+            pickupPromptText.text = msg;
     }
 
     Vector3 GetFacingDirection(Transform cam, Vector3 groundMove)
