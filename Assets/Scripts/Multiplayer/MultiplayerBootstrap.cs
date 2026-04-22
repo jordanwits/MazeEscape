@@ -42,6 +42,9 @@ public class MultiplayerBootstrap : MonoBehaviour
 
         if (!TryGetComponent(out ProceduralMazeCoordinator _))
             gameObject.AddComponent<ProceduralMazeCoordinator>();
+
+        if (!TryGetComponent(out GameAudioManager _))
+            gameObject.AddComponent<GameAudioManager>();
     }
 
     void EnsureNetworkConfig(NetworkManager networkManager, UnityTransport transport)

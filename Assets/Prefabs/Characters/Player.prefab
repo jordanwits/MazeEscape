@@ -2008,6 +2008,8 @@ MonoBehaviour:
   runFootstepInterval: 0.36
   footstepVolume: 0.01
   minimumFootstepSpeed: 0.15
+  flashlightClickClip: {fileID: 8300000, guid: 06e885263fd95c644bb0d90350b95b2e, type: 3}
+  flashlightClickVolume: 0.05
   maxStamina: 100
   staminaDrainRate: 20
   staminaRegenRate: 15
@@ -2034,6 +2036,7 @@ MonoBehaviour:
   ragdollIdleCrossFadeSeconds: 0.08
   walkAnimationSpeed: 0.35
   runAnimationSpeed: 1
+  inventoryStashRoot: {fileID: 0}
 --- !u!95 &4205222711325704942
 Animator:
   serializedVersion: 7

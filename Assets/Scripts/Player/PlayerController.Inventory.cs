@@ -484,14 +484,41 @@ public partial class PlayerController
             {
                 return;
             }
-            _networkPlayerInventory?.TryToggleSelectedFlashlight();
+
+            ulong id = _networkPlayerInventory.GetSlotItemId(_networkPlayerInventory.SelectedSlotIndex);
+            if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || g is not FlashlightItem fl)
+                return;
+
+            bool wasOn = fl.IsLightOn;
+            _networkPlayerInventory.TryToggleSelectedFlashlight();
+
+            bool isServer = NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer;
+            if (isServer)
+            {
+                if (fl.IsLightOn != wasOn)
+                    PlayFlashlightClickSfx();
+            }
+            else
+                PlayFlashlightClickSfx();
+
             return;
         }
 
         if (TryGetSelectedLocalFlashlight(out FlashlightItem f))
         {
+            bool wasOn = f.IsLightOn;
             f.ToggleLight();
+            if (f.IsLightOn != wasOn)
+                PlayFlashlightClickSfx();
         }
+    }
+
+    void PlayFlashlightClickSfx()
+    {
+        if (flashlightClickClip == null || footstepAudioSource == null)
+            return;
+
+        footstepAudioSource.PlayOneShot(flashlightClickClip, Mathf.Max(0f, flashlightClickVolume));
     }
 
     bool HasSelectedFlashlightInWorld()

@@ -1,5 +1,8 @@
 using Unity.Netcode;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 /// <summary>
 /// Example trap: add a trigger collider, assign a force direction (world space) and magnitude.
@@ -32,10 +35,75 @@ public class RagdollTrap : MonoBehaviour
     [Tooltip("If set (or auto-found on a parent), hits only apply while that swing trap is swung out — not while it returns to rest.")]
     [SerializeField] PivotSwingTrap swingTrapDamageGate;
 
+    [Header("Audio")]
+    [SerializeField] AudioClip trapHitMetallicClip;
+    [SerializeField, Range(0f, 1f)] float trapHitMetallicVolume = 0.9f;
+    [Tooltip("Min seconds between hit sounds for the same collider (OnTriggerStay spam).")]
+    [SerializeField, Min(0.05f)] float trapHitSoundSameColliderCooldown = 0.32f;
+
+    AudioSource _hitAudio;
+    EntityId _lastMetallicColliderEntity;
+    float _nextMetallicSoundTime;
+
     void Awake()
     {
         if (swingTrapDamageGate == null)
             swingTrapDamageGate = GetComponentInParent<PivotSwingTrap>();
+
+        EnsureHitAudioSource();
+#if UNITY_EDITOR
+        AutoAssignTrapHitClipInEditor();
+#endif
+    }
+
+#if UNITY_EDITOR
+    void OnValidate()
+    {
+        AutoAssignTrapHitClipInEditor();
+    }
+
+    void AutoAssignTrapHitClipInEditor()
+    {
+        if (trapHitMetallicClip == null)
+            trapHitMetallicClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/MetalicWack.wav");
+    }
+#endif
+
+    void EnsureHitAudioSource()
+    {
+        if (_hitAudio != null)
+            return;
+
+        _hitAudio = GetComponent<AudioSource>();
+        if (_hitAudio == null)
+            _hitAudio = gameObject.AddComponent<AudioSource>();
+
+        _hitAudio.playOnAwake = false;
+        _hitAudio.loop = false;
+        _hitAudio.spatialBlend = 1f;
+        _hitAudio.minDistance = 0.5f;
+        _hitAudio.maxDistance = 35f;
+        _hitAudio.rolloffMode = AudioRolloffMode.Linear;
+    }
+
+    bool TryPlayTrapHitMetallic(Collider other)
+    {
+        if (trapHitMetallicClip == null || _hitAudio == null || other == null)
+            return false;
+
+        EntityId id = other.GetEntityId();
+        float now = Time.time;
+        if (now < _nextMetallicSoundTime && id == _lastMetallicColliderEntity)
+            return false;
+
+        _lastMetallicColliderEntity = id;
+        _nextMetallicSoundTime = now + trapHitSoundSameColliderCooldown;
+
+        if (GameAudioManager.Instance != null)
+            GameAudioManager.RouteSfxSource(_hitAudio);
+
+        _hitAudio.PlayOneShot(trapHitMetallicClip, Mathf.Max(0f, trapHitMetallicVolume));
+        return true;
     }
 
     void Reset()
@@ -78,6 +146,7 @@ public class RagdollTrap : MonoBehaviour
             {
                 if (networkManager.IsServer)
                 {
+                    TryPlayTrapHitMetallic(other);
                     zombieHealth.Die();
                     return;
                 }
@@ -87,10 +156,15 @@ public class RagdollTrap : MonoBehaviour
                     : GetComponentInParent<PivotSwingTrap>();
                 NetworkObject zombieNetObj = other.GetComponentInParent<NetworkObject>();
                 if (pivot != null && zombieNetObj != null)
+                {
+                    TryPlayTrapHitMetallic(other);
                     pivot.RequestZombieTrapKillServerRpc(zombieNetObj.NetworkObjectId);
+                }
+
                 return;
             }
 
+            TryPlayTrapHitMetallic(other);
             zombieHealth.Die();
             return;
         }
@@ -110,18 +184,29 @@ public class RagdollTrap : MonoBehaviour
         {
             if (net.IsServer)
             {
+                TryPlayTrapHitMetallic(other);
                 netRagdoll.RequestTrapHitFromServer(force, hitPoint, TrapDamageAmount, forceMode);
                 return;
             }
 
             NetworkObject playerNetObj = other.GetComponentInParent<NetworkObject>();
             if (playerNetObj != null && playerNetObj.IsOwner)
+            {
+                TryPlayTrapHitMetallic(other);
                 netRagdoll.RequestTrapHitServerRpc(force, hitPoint, TrapDamageAmount, (byte)forceMode);
+            }
 
             return;
         }
 
         PlayerHealth health = other.GetComponentInParent<PlayerHealth>();
+        if (health != null && health.IsDead)
+            return;
+
+        if (health == null && ragdoll == null)
+            return;
+
+        TryPlayTrapHitMetallic(other);
         health?.TakeDamage(TrapDamageAmount);
 
         if (ragdoll != null)

@@ -2500,7 +2500,11 @@ MonoBehaviour:
   attackHitDelay: 0.45
   screamsOnAlert: 1
   screamDuration: 2.5
-  screamVolume: 0.061
+  screamVolume: 0.8
+  screamLoudnessMultiplier: 1.8
+  screamSpatialBlend: 1
+  scream3DMinDistance: 1
+  scream3DMaxDistance: 85
   speedParameter: Speed
   groundedParameter: Grounded
   verticalVelocityParameter: VerticalVelocity
@@ -2718,6 +2722,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
+  zombieAnimator: {fileID: 0}
   zombieAI: {fileID: 7789726065268445036}
   zombieHealth: {fileID: 731013007641149117}
   navMeshAgent: {fileID: 1777899209754921520}

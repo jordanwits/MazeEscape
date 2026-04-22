@@ -71,7 +71,15 @@ public class ZombieAI : MonoBehaviour
     [Header("Alert")]
     [SerializeField] bool screamsOnAlert = true;
     [SerializeField] float screamDuration = 1.3f;
-    [SerializeField, Range(0f, 3f)] float screamVolume = 1f;
+    [SerializeField, Range(0f, 1f)] float screamVolume = 1f;
+    [Tooltip("Extra multiplier on top of Scream Volume. Use when the clip still feels quiet at volume 1.")]
+    [SerializeField, Range(0.5f, 2.5f)] float screamLoudnessMultiplier = 1.35f;
+    [Tooltip("0 = 2D (no position). 1 = full 3D: panning and volume follow the listener relative to the zombie.")]
+    [SerializeField, Range(0f, 1f)] float screamSpatialBlend = 1f;
+    [Tooltip("3D: distance at which the scream is still full volume (Unity rolloff).")]
+    [SerializeField, Min(0.01f)] float scream3DMinDistance = 2f;
+    [Tooltip("3D: past this distance the scream is inaudible (rolloff).")]
+    [SerializeField, Min(0.01f)] float scream3DMaxDistance = 70f;
 
     [Header("Animator")]
     [SerializeField] string speedParameter = "Speed";
@@ -354,8 +362,12 @@ public class ZombieAI : MonoBehaviour
 
         screamAudioSource.playOnAwake = false;
         screamAudioSource.loop = false;
-        screamAudioSource.spatialBlend = 0f;
+        screamAudioSource.spatialBlend = screamSpatialBlend;
+        screamAudioSource.minDistance = scream3DMinDistance;
+        screamAudioSource.maxDistance = scream3DMaxDistance;
+        screamAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
         screamAudioSource.dopplerLevel = 0f;
+        GameAudioManager.RouteSfxSource(screamAudioSource);
     }
 
     void ApplyAgentSettings()
@@ -620,7 +632,10 @@ public class ZombieAI : MonoBehaviour
 
         _hasPlayedAlertScream = true;
         screamAudioSource.clip = screamAudioClip;
-        screamAudioSource.volume = screamVolume;
+        // Unity often clamps AudioSource.volume to 0..1, but the multiplier still helps
+        // when the serialized scream volume is low, and nudges loudness on engines that allow >1.
+        float level = screamVolume * screamLoudnessMultiplier;
+        screamAudioSource.volume = Mathf.Clamp(level, 0f, 2f);
         screamAudioSource.Play();
     }
 

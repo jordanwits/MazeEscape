@@ -81,6 +81,8 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] float runFootstepInterval = 0.34f;
     [SerializeField] float footstepVolume = 0.5f;
     [SerializeField] float minimumFootstepSpeed = 0.15f;
+    [SerializeField] AudioClip flashlightClickClip;
+    [SerializeField, Range(0f, 1f)] float flashlightClickVolume = 0.65f;
 
     [Header("Stamina")]
     [SerializeField] float maxStamina = 100f;
@@ -118,6 +120,10 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] string speedParameter = "Speed";
     [SerializeField] string groundedParameter = "Grounded";
     [SerializeField] string verticalVelocityParameter = "VerticalVelocity";
+    [SerializeField] string strafeDirectionParameter = "StrafeDirection";
+    [SerializeField] string animSpeedParameter = "AnimSpeed";
+    [Tooltip("Smoothing factor for strafe direction transitions (higher = faster).")]
+    [SerializeField] float strafeDirectionSmoothSpeed = 8f;
     [Tooltip("After ragdoll/get-up, keep animator locomotion Speed at 0 for this long (covers GettingUp→Idle blend ~0.15s + margin).")]
     [SerializeField] float ragdollRecoverAnimatorSuppressSeconds = 0.28f;
     [Tooltip("If true, cross-fade base layer to Idle when ragdoll recovery ends so locomotion cannot flash during the transition.")]
@@ -178,6 +184,7 @@ public partial class PlayerController : MonoBehaviour
     float _footstepTimer;
     bool _playFootstep1Next = true;
     bool _hasLocalControl = true;
+    float _smoothedStrafeDirection;
 
     float _nextMeleeTime;
     readonly Collider[] _meleeHits = new Collider[16];
@@ -222,6 +229,7 @@ public partial class PlayerController : MonoBehaviour
         _currentHorizontalSpeed = 0f;
         _groundMoveThisFrame = Vector3.zero;
         _isSprinting = false;
+        _smoothedStrafeDirection = 0f;
         _verticalVelocity.y = characterController != null && characterController.isGrounded
             ? -groundedStickDown
             : 0f;
@@ -239,6 +247,8 @@ public partial class PlayerController : MonoBehaviour
         animator.SetFloat(speedParameter, 0f);
         animator.SetBool(groundedParameter, true);
         animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);
+        animator.SetFloat(strafeDirectionParameter, 0f);
+        animator.SetFloat(animSpeedParameter, 1f);
 
         _ragdollRecoverAnimatorSuppressUntil = Time.time + Mathf.Max(0f, ragdollRecoverAnimatorSuppressSeconds);
     }
@@ -486,10 +496,12 @@ public partial class PlayerController : MonoBehaviour
         _currentHorizontalSpeed = horizontal.magnitude;
         Vector3 motion = horizontal * Time.deltaTime;
         motion.y = _verticalVelocity.y * Time.deltaTime;
+        bool wasGroundedBeforeMove = characterController.isGrounded;
         characterController.Move(motion);
 
         _groundMoveThisFrame = horizontal.sqrMagnitude > 1e-6f ? horizontal.normalized : move;
 
+        TryPlayLandFootstep(wasGroundedBeforeMove, characterController.isGrounded);
         UpdateFootsteps(characterController.isGrounded);
 
         if (driveAnimator && animator != null)
@@ -502,9 +514,19 @@ public partial class PlayerController : MonoBehaviour
             if (Time.time < _ragdollRecoverAnimatorSuppressUntil)
                 speedForAnimator = 0f;
 
+            float targetStrafeDirection = ComputeStrafeDirection(_moveInput);
+            _smoothedStrafeDirection = Mathf.MoveTowards(
+                _smoothedStrafeDirection,
+                targetStrafeDirection,
+                strafeDirectionSmoothSpeed * Time.deltaTime);
+
+            float animSpeed = ComputeAnimationSpeed(_currentHorizontalSpeed, _isSprinting);
+
             animator.SetFloat(speedParameter, speedForAnimator);
             animator.SetBool(groundedParameter, characterController.isGrounded);
             animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);
+            animator.SetFloat(strafeDirectionParameter, _smoothedStrafeDirection);
+            animator.SetFloat(animSpeedParameter, animSpeed);
         }
 
         UpdatePickupPrompt();
@@ -581,17 +603,35 @@ public partial class PlayerController : MonoBehaviour
         if (_footstepTimer > 0f)
             return;
 
+        PlayFootstepOneShot();
+        _footstepTimer = interval;
+    }
+
+    void TryPlayLandFootstep(bool wasGroundedBeforeMove, bool groundedAfterMove)
+    {
+        if (footstepAudioSource == null || !groundedAfterMove || wasGroundedBeforeMove)
+            return;
+
+        PlayFootstepOneShot();
+
+        if (_currentHorizontalSpeed >= minimumFootstepSpeed)
+            _footstepTimer = Mathf.Max(0.05f, _isSprinting ? runFootstepInterval : walkFootstepInterval);
+    }
+
+    void PlayFootstepOneShot()
+    {
+        if (footstepAudioSource == null)
+            return;
+
         AudioClip clipToPlay = _playFootstep1Next ? footstepClip1 : footstepClip2;
         if (clipToPlay == null)
             clipToPlay = footstepClip1 != null ? footstepClip1 : footstepClip2;
 
-        if (clipToPlay != null)
-        {
-            footstepAudioSource.PlayOneShot(clipToPlay, Mathf.Max(0f, footstepVolume));
-            _playFootstep1Next = !_playFootstep1Next;
-        }
+        if (clipToPlay == null)
+            return;
 
-        _footstepTimer = interval;
+        footstepAudioSource.PlayOneShot(clipToPlay, Mathf.Max(0f, footstepVolume));
+        _playFootstep1Next = !_playFootstep1Next;
     }
 
     void ConfigureFootstepAudioSource()
@@ -603,6 +643,7 @@ public partial class PlayerController : MonoBehaviour
         footstepAudioSource.loop = false;
         footstepAudioSource.spatialBlend = 0f;
         footstepAudioSource.dopplerLevel = 0f;
+        GameAudioManager.RouteSfxSource(footstepAudioSource);
     }
 
     public void SetLocalControl(bool hasLocalControl)
@@ -710,6 +751,9 @@ public partial class PlayerController : MonoBehaviour
 
         if (footstepClip2 == null)
             footstepClip2 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/footstep2.mp3");
+
+        if (flashlightClickClip == null)
+            flashlightClickClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/FlashLightClick.wav");
     }
 #endif
 
@@ -1194,6 +1238,32 @@ public partial class PlayerController : MonoBehaviour
         if (x > 180f)
             x -= 360f;
         return x;
+    }
+
+    float ComputeStrafeDirection(Vector2 input)
+    {
+        if (input.sqrMagnitude < 0.01f)
+            return 0f;
+
+        float magnitude = input.magnitude;
+        if (magnitude < 0.01f)
+            return 0f;
+
+        Vector2 normalized = input / magnitude;
+        return Mathf.Clamp(normalized.x, -1f, 1f);
+    }
+
+    float ComputeAnimationSpeed(float currentSpeed, bool sprinting)
+    {
+        if (currentSpeed < 0.01f)
+            return 1f;
+
+        float referenceSpeed = sprinting ? runSpeed : walkSpeed;
+        if (referenceSpeed < 0.01f)
+            return 1f;
+
+        float ratio = currentSpeed / referenceSpeed;
+        return Mathf.Clamp(ratio, 0.5f, 2f);
     }
 
     public bool TryGetFlashlightAttachmentTargets(out Transform holdPoint, out Transform followTransform)

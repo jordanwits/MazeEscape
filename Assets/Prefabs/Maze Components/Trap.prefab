@@ -89,7 +89,7 @@ Transform:
   m_GameObject: {fileID: 1656790429510388933}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0.7071068, z: -0, w: 0.7071068}
-  m_LocalPosition: {x: 1.93, y: -1.52, z: 0.06}
+  m_LocalPosition: {x: 1.838, y: -1.52, z: 0.06}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -104,6 +104,8 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 3886348402493820834}
+  - component: {fileID: 7379161527267372024}
+  - component: {fileID: 9193672338363482994}
   m_Layer: 0
   m_Name: TrapMesh
   m_TagString: Untagged
@@ -128,6 +130,49 @@ Transform:
   - {fileID: 1017559634830085172}
   m_Father: {fileID: 1656992596894288447}
   m_LocalEulerAnglesHint: {x: 180, y: 0, z: 0}
+--- !u!65 &7379161527267372024
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1915406783667223592}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 2.0068722, y: 1.2280047, z: 0.48697644}
+  m_Center: {x: -0.5034363, y: 0.015810136, z: -0.04145655}
+--- !u!114 &9193672338363482994
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1915406783667223592}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d72f48d3c52a42341ad0f67ba32fe8d3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RagdollTrap
+  knockbackDirection: 3
+  impulseMagnitude: 6
+  forceDirectionWorld: {x: 0, y: 0, z: 1}
+  knockbackHorizontalOnly: 1
+  upwardImpulse: 5
+  forceMode: 2
+  swingTrapDamageGate: {fileID: 0}
+  trapHitMetallicClip: {fileID: 8300000, guid: a0fdb99451fe1a04c8137febdc563110, type: 3}
+  trapHitMetallicVolume: 0.6
+  trapHitSoundSameColliderCooldown: 0.32
 --- !u!1 &2022349335078714508
 GameObject:
   m_ObjectHideFlags: 0
@@ -223,6 +268,8 @@ MonoBehaviour:
   tripwireOmnidirectionalDetection: 1
   tripwireZone: {fileID: 0}
   autoCreateTripwireZone: 1
+  trapSwingSwooshClip: {fileID: 8300000, guid: a3514c7620787264db2f66773c382e25, type: 3}
+  trapSwingSwooshVolume: 0.6
 --- !u!1 &4074306220473695805
 GameObject:
   m_ObjectHideFlags: 0
@@ -236,8 +283,6 @@ GameObject:
   - component: {fileID: 2241297373953551533}
   - component: {fileID: 3214123067530463654}
   - component: {fileID: 5970155317393796947}
-  - component: {fileID: 7633846279372156476}
-  - component: {fileID: 8130679402416800117}
   m_Layer: 0
   m_Name: Cone
   m_TagString: Untagged
@@ -804,46 +849,6 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 4074306220473695805}
   m_Mesh: {fileID: 0}
---- !u!65 &7633846279372156476
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 4074306220473695805}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 1
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1.0000008, y: 0.26760527, z: 1.0000005}
-  m_Center: {x: -0.0000020920936, y: -0.49496403, z: 0.000234172}
---- !u!114 &8130679402416800117
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 4074306220473695805}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d72f48d3c52a42341ad0f67ba32fe8d3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::RagdollTrap
-  knockbackDirection: 3
-  impulseMagnitude: 6
-  forceDirectionWorld: {x: 0, y: 0, z: 1}
-  knockbackHorizontalOnly: 1
-  upwardImpulse: 5
-  forceMode: 2
-  swingTrapDamageGate: {fileID: 0}
 --- !u!1 &5240975874543596632
 GameObject:
   m_ObjectHideFlags: 0
@@ -855,8 +860,6 @@ GameObject:
   - component: {fileID: 8393410057750246678}
   - component: {fileID: 2861133144419535669}
   - component: {fileID: 3990995734294643398}
-  - component: {fileID: 2577493091266453409}
-  - component: {fileID: 359755731155165374}
   m_Layer: 0
   m_Name: Cube
   m_TagString: Untagged
@@ -936,43 +939,3 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!65 &2577493091266453409
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5240975874543596632}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 1
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1.0000005, y: 2.0603201, z: 1.0000005}
-  m_Center: {x: -0.000007603439, y: 0.015992284, z: 0.00000049589494}
---- !u!114 &359755731155165374
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5240975874543596632}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d72f48d3c52a42341ad0f67ba32fe8d3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::RagdollTrap
-  knockbackDirection: 3
-  impulseMagnitude: 6
-  forceDirectionWorld: {x: 0, y: 0, z: 1}
-  knockbackHorizontalOnly: 1
-  upwardImpulse: 5
-  forceMode: 2
-  swingTrapDamageGate: {fileID: 0}

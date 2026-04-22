@@ -1,5 +1,8 @@
 using Unity.Netcode;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 /// <summary>
 /// Rotates a pivot (pad-on-a-stick) between a rest pose and a swung pose when a living player
@@ -53,6 +56,10 @@ public class PivotSwingTrap : NetworkBehaviour
     [Tooltip("If no Tripwire Zone is assigned, auto-create one on the Detection Origin at Awake using Trigger Distance / Trip Wire Vertical Half Extent / Trip Wire In-Plane Radius to size the box volume. Existing prefabs keep their configured numbers.")]
     [SerializeField] bool autoCreateTripwireZone = true;
 
+    [Header("Audio")]
+    [SerializeField] AudioClip trapSwingSwooshClip;
+    [SerializeField, Range(0f, 1f)] float trapSwingSwooshVolume = 0.85f;
+
     const float BlendEpsilon = 0.001f;
     const int OverlapBufferSize = 128;
 
@@ -72,6 +79,10 @@ public class PivotSwingTrap : NetworkBehaviour
     bool _detectionClearSinceLastSwingActivation = true;
     float _fullSwingHoldTimer;
     readonly Collider[] _overlapHits = new Collider[OverlapBufferSize];
+
+    float _previousSwingBlend;
+    bool _clientSwingBlendPrimed;
+    AudioSource _trapAudio;
 
     static bool IsNetworkActive =>
         NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
@@ -97,6 +108,54 @@ public class PivotSwingTrap : NetworkBehaviour
         _baseLocalRotation = pivot.localRotation;
 
         EnsureTripwireZone();
+        EnsureTrapAudioSource();
+#if UNITY_EDITOR
+        AutoAssignTrapSwingClipInEditor();
+#endif
+    }
+
+#if UNITY_EDITOR
+    void OnValidate()
+    {
+        AutoAssignTrapSwingClipInEditor();
+    }
+
+    void AutoAssignTrapSwingClipInEditor()
+    {
+        if (trapSwingSwooshClip == null)
+            trapSwingSwooshClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Swoosh.wav");
+    }
+#endif
+
+    void EnsureTrapAudioSource()
+    {
+        if (_trapAudio != null)
+            return;
+
+        _trapAudio = GetComponent<AudioSource>();
+        if (_trapAudio == null)
+            _trapAudio = gameObject.AddComponent<AudioSource>();
+
+        _trapAudio.playOnAwake = false;
+        _trapAudio.loop = false;
+        _trapAudio.spatialBlend = 1f;
+        _trapAudio.minDistance = 1f;
+        _trapAudio.maxDistance = 45f;
+        _trapAudio.rolloffMode = AudioRolloffMode.Linear;
+    }
+
+    void MaybePlaySwingSwoosh(float previousBlend, float nextBlend)
+    {
+        if (trapSwingSwooshClip == null || _trapAudio == null)
+            return;
+
+        if (previousBlend > BlendEpsilon || nextBlend <= BlendEpsilon)
+            return;
+
+        if (GameAudioManager.Instance != null)
+            GameAudioManager.RouteSfxSource(_trapAudio);
+
+        _trapAudio.PlayOneShot(trapSwingSwooshClip, Mathf.Max(0f, trapSwingSwooshVolume));
     }
 
     void EnsureTripwireZone()
@@ -121,9 +180,12 @@ public class PivotSwingTrap : NetworkBehaviour
     {
         if (!IsNetworkActive)
         {
+            float prev = _offlineBlend;
             float targetBlend = ComputeTargetBlendAuthoritative(_offlineBlend);
             float moveSpeed = targetBlend > _offlineBlend ? swingMoveSpeed : returnMoveSpeed;
-            _offlineBlend = Mathf.MoveTowards(_offlineBlend, targetBlend, Time.deltaTime * moveSpeed);
+            float next = Mathf.MoveTowards(_offlineBlend, targetBlend, Time.deltaTime * moveSpeed);
+            MaybePlaySwingSwoosh(prev, next);
+            _offlineBlend = next;
             ApplyRotation(_offlineBlend);
             return;
         }
@@ -138,12 +200,20 @@ public class PivotSwingTrap : NetworkBehaviour
             _networkReturning.Value = _isReturning;
             float moveSpeed = targetBlend > current ? swingMoveSpeed : returnMoveSpeed;
             float next = Mathf.MoveTowards(current, targetBlend, Time.deltaTime * moveSpeed);
+            MaybePlaySwingSwoosh(current, next);
             _networkBlend.Value = next;
             ApplyRotation(next);
             return;
         }
 
-        ApplyRotation(_networkBlend.Value);
+        float clientBlend = _networkBlend.Value;
+        if (_clientSwingBlendPrimed)
+            MaybePlaySwingSwoosh(_previousSwingBlend, clientBlend);
+        else
+            _clientSwingBlendPrimed = true;
+
+        _previousSwingBlend = clientBlend;
+        ApplyRotation(clientBlend);
     }
 
     bool TryGetQualifyingPlayerPresent()

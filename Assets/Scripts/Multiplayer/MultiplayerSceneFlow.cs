@@ -12,7 +12,7 @@ using UnityEngine.SceneManagement;
 public class MultiplayerSceneFlow : MonoBehaviour
 {
     public const string MenuSceneName = "Menu";
-    public const string GameSceneName = "MazeGenerator";
+    public const string GameSceneName = "Level01";
 
     [SerializeField] MultiplayerSessionController session;
 
