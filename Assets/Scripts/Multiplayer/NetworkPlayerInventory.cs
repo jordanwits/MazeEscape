@@ -671,4 +671,196 @@ public class NetworkPlayerInventory : NetworkBehaviour
 
         playerController?.RefreshInventoryViewFromNetwork();
     }
+
+    public bool ServerTryConsumeKeyItem()
+    {
+        if (!IsServer || !IsSpawned)
+            return false;
+
+        for (int i = 0; i < 3; i++)
+        {
+            ulong id = GetSlotItemId(i);
+            if (id == 0UL)
+                continue;
+            if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || g is not KeyItem)
+                continue;
+
+            SetSlotItemId(i, 0UL);
+            SetSlotStackCount(i, 0);
+            Object.Destroy(g.gameObject);
+            SelectAfterDrop();
+            RaiseChangedAndRefresh();
+            return true;
+        }
+
+        return false;
+    }
+
+    public void RequestUnlockHingeDoor(HingeInteractDoor door)
+    {
+        if (door == null)
+            return;
+        if (!IsSpawned)
+            return;
+
+        if (!door.TryGetComponent(out NetworkObject doorNet) || !doorNet.IsSpawned)
+        {
+            ulong doorId = door.DoorId;
+            Vector3 hintPosition = door.IdentityHintPosition;
+            if (IsServer)
+            {
+                if (!TryGetConnectedPlayerPosition(OwnerClientId, out Vector3 playerPosition))
+                    return;
+                if (!door.IsLocked || !door.IsInInteractRange(playerPosition))
+                    return;
+                if (!ServerTryConsumeKeyItem())
+                    return;
+                door.ApplyProceduralRemoteUnlock();
+                ApplyProceduralDoorUnlockClientRpc(doorId, hintPosition);
+                return;
+            }
+
+            RequestUnlockProceduralHingeDoorServerRpc(doorId, hintPosition);
+            return;
+        }
+
+        if (IsServer)
+        {
+            if (!NetworkManager.Singleton.ConnectedClients.TryGetValue(OwnerClientId, out NetworkClient client)
+                || client.PlayerObject == null)
+            {
+                return;
+            }
+            if (!door.IsInInteractRange(client.PlayerObject.transform.position))
+                return;
+            if (!ServerTryConsumeKeyItem())
+                return;
+            door.ServerUnlockFromKey();
+            return;
+        }
+
+        RequestUnlockHingeDoorServerRpc(doorNet.NetworkObjectId);
+    }
+
+    public void RequestToggleHingeDoor(HingeInteractDoor door)
+    {
+        if (door == null || !IsSpawned)
+            return;
+
+        if (door.TryGetComponent(out NetworkObject doorNet) && doorNet.IsSpawned)
+        {
+            // Spawned doors already synchronize themselves through HingeInteractDoor's RPC flow.
+            door.TryRequestToggle(transform.position);
+            return;
+        }
+
+        ulong doorId = door.DoorId;
+        Vector3 hintPosition = door.IdentityHintPosition;
+        if (IsServer)
+        {
+            if (!TryGetConnectedPlayerPosition(OwnerClientId, out Vector3 playerPosition))
+                return;
+            if (door.IsLocked || door.IsBusy || door.IsPostUnlockOpenDelayActive || !door.IsInInteractRange(playerPosition))
+                return;
+
+            bool open = !door.IsOpen;
+            door.ApplyProceduralRemoteOpenState(open);
+            ApplyProceduralDoorOpenStateClientRpc(doorId, hintPosition, open);
+            return;
+        }
+
+        RequestToggleProceduralHingeDoorServerRpc(doorId, hintPosition);
+    }
+
+    [ServerRpc]
+    void RequestUnlockHingeDoorServerRpc(ulong doorNetworkObjectId, ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+        if (!NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(doorNetworkObjectId, out NetworkObject doorObject)
+            || doorObject == null)
+        {
+            return;
+        }
+        if (!doorObject.TryGetComponent(out HingeInteractDoor door) || !door.IsLocked)
+            return;
+        if (!NetworkManager.Singleton.ConnectedClients.TryGetValue(serverRpcParams.Receive.SenderClientId, out NetworkClient client)
+            || client.PlayerObject == null)
+        {
+            return;
+        }
+        if (!door.IsInInteractRange(client.PlayerObject.transform.position))
+            return;
+        if (!ServerTryConsumeKeyItem())
+            return;
+        door.ServerUnlockFromKey();
+    }
+
+    [ServerRpc]
+    void RequestUnlockProceduralHingeDoorServerRpc(ulong doorId, Vector3 hintPosition, ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null || !door.IsLocked)
+            return;
+        if (!TryGetConnectedPlayerPosition(serverRpcParams.Receive.SenderClientId, out Vector3 playerPosition))
+            return;
+        if (!door.IsInInteractRange(playerPosition))
+            return;
+        if (!ServerTryConsumeKeyItem())
+            return;
+
+        door.ApplyProceduralRemoteUnlock();
+        ApplyProceduralDoorUnlockClientRpc(door.DoorId, door.IdentityHintPosition);
+    }
+
+    [ServerRpc]
+    void RequestToggleProceduralHingeDoorServerRpc(ulong doorId, Vector3 hintPosition, ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
+            return;
+        if (!TryGetConnectedPlayerPosition(serverRpcParams.Receive.SenderClientId, out Vector3 playerPosition))
+            return;
+        if (door.IsLocked || door.IsBusy || door.IsPostUnlockOpenDelayActive || !door.IsInInteractRange(playerPosition))
+            return;
+
+        bool open = !door.IsOpen;
+        door.ApplyProceduralRemoteOpenState(open);
+        ApplyProceduralDoorOpenStateClientRpc(door.DoorId, door.IdentityHintPosition, open);
+    }
+
+    [ClientRpc]
+    void ApplyProceduralDoorUnlockClientRpc(ulong doorId, Vector3 hintPosition)
+    {
+        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
+            return;
+
+        door.ApplyProceduralRemoteUnlock();
+    }
+
+    [ClientRpc]
+    void ApplyProceduralDoorOpenStateClientRpc(ulong doorId, Vector3 hintPosition, bool open)
+    {
+        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
+            return;
+
+        door.ApplyProceduralRemoteOpenState(open);
+    }
+
+    bool TryGetConnectedPlayerPosition(ulong clientId, out Vector3 playerPosition)
+    {
+        playerPosition = transform.position;
+        NetworkManager manager = NetworkManager.Singleton;
+        if (manager == null
+            || !manager.ConnectedClients.TryGetValue(clientId, out NetworkClient client)
+            || client.PlayerObject == null)
+        {
+            return false;
+        }
+
+        playerPosition = client.PlayerObject.transform.position;
+        return true;
+    }
 }

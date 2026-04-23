@@ -423,6 +423,37 @@ public partial class PlayerController
             return;
         }
 
+        if (cam != null && TryFindInteractableHingeDoor(cam, out HingeInteractDoor hingeDoor) && hingeDoor != null)
+        {
+            if (hingeDoor.IsLocked)
+            {
+                if (PlayerHasKeyInInventory())
+                {
+                    if (IsUsingNetworkedInventory)
+                    {
+                        if (_networkPlayerInventory != null)
+                            _networkPlayerInventory.RequestUnlockHingeDoor(hingeDoor);
+                    }
+                    else
+                    {
+                        TryUnlockHingeDoorWithKeyLocal(hingeDoor);
+                    }
+                }
+                return;
+            }
+
+            if (IsUsingNetworkedInventory
+                && _networkPlayerInventory != null
+                && (!hingeDoor.TryGetComponent(out NetworkObject doorNet) || !doorNet.IsSpawned))
+            {
+                _networkPlayerInventory.RequestToggleHingeDoor(hingeDoor);
+                return;
+            }
+
+            hingeDoor.TryRequestToggle(cam.position);
+            return;
+        }
+
         if (IsUsingNetworkedInventory)
         {
             TryPickupNetwork();
@@ -519,6 +550,27 @@ public partial class PlayerController
             return;
 
         footstepAudioSource.PlayOneShot(flashlightClickClip, Mathf.Max(0f, flashlightClickVolume));
+    }
+
+    void TryUnlockHingeDoorWithKeyLocal(HingeInteractDoor door)
+    {
+        if (door == null || !door.IsLocked)
+            return;
+        Transform cam = CameraTransformForFacing;
+        if (cam == null || !door.IsInInteractRange(cam.position))
+            return;
+        for (int i = 0; i < 3; i++)
+        {
+            if (_localInventorySlots[i] is not KeyItem k)
+                continue;
+            _localInventorySlots[i] = null;
+            _localSlotStacks[i] = 0;
+            SelectAfterDropLocal();
+            Destroy(k.gameObject);
+            RefreshLocalInventoryView();
+            door.ApplyLocalUnlock();
+            return;
+        }
     }
 
     bool HasSelectedFlashlightInWorld()

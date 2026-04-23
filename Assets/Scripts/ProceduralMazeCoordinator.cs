@@ -102,6 +102,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     const string TrapMountPointName = "MountPoint";
     const string ChestAnchorName = "ChestAnchor";
     const string ChestMountPointName = "ChestMount";
+    const string LightSpawnNamePrefix = "LightSpawn";
 
     static readonly DirectionStep[] Steps =
     {
@@ -156,6 +157,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         RegisterRuntimeNetworkPrefab(mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab);
         RegisterRuntimeNetworkPrefab(_config.MazeTrapPrefab);
         RegisterRuntimeNetworkPrefab(_config.MazeChestPrefab);
+        RegisterRuntimeNetworkPrefab(_config.MazeStartFlashlightPrefab);
     }
 
     void RegisterRuntimeNetworkPrefab(GameObject prefab)
@@ -428,7 +430,41 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         Vector2Int exit = FindFarthestCell(grid, start);
         int width = grid.GetLength(0);
         int height = grid.GetLength(1);
-        InteriorRoomBuildPlan interiorPlan = SelectInteriorRoomPlacements(grid, start, exit, seed, width, height);
+        bool multiStartWanted = TryPrepareMultiCellForcedStart(
+            grid, start, exit, width, height, seed,
+            out HashSet<Vector2Int> reservedForForcedStart,
+            out Vector2Int multiStartFootprint);
+
+        if (!multiStartWanted)
+        {
+            reservedForForcedStart = null;
+            multiStartFootprint = Vector2Int.one;
+        }
+
+        // Apply forced multi-cell start before interior room stamping mutates the grid; otherwise
+        // TryResolve can fail vs TryPrepare, SkipCells never get added, and pieces at (1,0)… overlap MG_Start.
+        Dictionary<Vector2Int, InteriorRoomPlacementEntry> forcedStartAnchors = new();
+        HashSet<Vector2Int> forcedStartSkips = new();
+        bool startAttached = false;
+        if (multiStartWanted)
+        {
+            InteriorRoomBuildPlan forcedStartPlan = new(forcedStartAnchors, forcedStartSkips);
+            if (TryAttachForcedStartAsInteriorRoom(
+                    forcedStartPlan, grid, start, exit, seed, multiStartFootprint))
+                startAttached = true;
+            else
+                multiStartFootprint = Vector2Int.one;
+        }
+
+        InteriorRoomBuildPlan interiorPlan = SelectInteriorRoomPlacements(
+            grid, start, exit, seed, width, height, reservedForForcedStart);
+        if (startAttached)
+        {
+            foreach (KeyValuePair<Vector2Int, InteriorRoomPlacementEntry> a in forcedStartAnchors)
+                interiorPlan.Anchors[a.Key] = a.Value;
+            foreach (Vector2Int skip in forcedStartSkips)
+                interiorPlan.SkipCells.Add(skip);
+        }
 
         Transform cellsRoot = CreateChild(root.transform, "Cells");
         Dictionary<Vector2Int, Transform> builtCellRoots = new();
@@ -470,11 +506,173 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         TrySpawnMazeTraps(root.transform, grid, builtCellRoots, start, exit, seed, cellSize);
         TrySpawnMazeChests(root.transform, builtCellRoots, seed);
-        CreateSpawnPoints(root.transform, start, cellSize);
+        TrySpawnMazeStartFlashlights(root.transform);
+        CreateSpawnPoints(root.transform, start, cellSize, multiStartFootprint);
         MultiplayerSpawnRegistry.Instance?.RefreshSpawnPoints();
         TryRebuildRuntimeNavMesh(root);
         TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);
+    }
+
+    /// <summary>
+    /// When the forced start prefab has a multi-cell <see cref="MazePieceDefinition.interiorGridFootprint"/>,
+    /// reserves the rectangle and blocks other interior rooms from overlapping it, then
+    /// <see cref="TryAttachForcedStartAsInteriorRoom"/> places it as an interior room (centered + skip cells).
+    /// </summary>
+    bool TryPrepareMultiCellForcedStart(
+        MazeCell[,] grid,
+        Vector2Int start,
+        Vector2Int exit,
+        int width,
+        int height,
+        int seed,
+        out HashSet<Vector2Int> reserved,
+        out Vector2Int footprint)
+    {
+        reserved = null;
+        footprint = Vector2Int.one;
+
+        if (_config == null || _config.ForcedStartPiecePrefab == null)
+            return false;
+
+        if (!MazePieceDefinition.TryGetDefinitionForResolution(_config.ForcedStartPiecePrefab, out MazePieceDefinition def)
+            || def.OpenFaces == MazeFaceMask.None)
+        {
+            return false;
+        }
+
+        footprint = def.ResolveInteriorGridFootprint(_config.InteriorRoomGridFootprint);
+        if (footprint.x <= 1 && footprint.y <= 1)
+            return false;
+
+        if (start.x + footprint.x > width || start.y + footprint.y > height)
+        {
+            LogMazeWarningOnce(
+                "forced-start-footprint-bounds",
+                $"[Maze] Forced start footprint {footprint.x}x{footprint.y} does not fit the maze; using single-cell placement.",
+                this);
+            return false;
+        }
+
+        if (ExitLiesInFootprint(exit, start, footprint))
+        {
+            LogMazeWarningOnce(
+                "forced-start-footprint-contains-exit",
+                "[Maze] Forced start multi-cell footprint contains the exit cell; other interior room rules apply. Using single-cell start placement for this build.",
+                this);
+            return false;
+        }
+
+        for (int ly = 0; ly < footprint.y; ly++)
+        {
+            for (int lx = 0; lx < footprint.x; lx++)
+            {
+                int x = start.x + lx;
+                int y = start.y + ly;
+                if (grid[x, y].Openings == MazeFaceMask.None)
+                {
+                    LogMazeWarningOnce(
+                        "forced-start-footprint-has-void",
+                        "[Maze] Forced start multi-cell footprint includes a void cell; using single-cell start placement.",
+                        this);
+                    return false;
+                }
+            }
+        }
+
+        bool isExitCell = start == exit;
+        if (!MazePieceResolver.TryResolve(
+                _config,
+                grid[start.x, start.y].Openings,
+                isStart: true,
+                isExit: isExitCell,
+                seed,
+                start,
+                out _,
+                out string resolveReason))
+        {
+            LogMazeWarningOnce(
+                "forced-start-multicell-resolve",
+                $"[Maze] Forced start multi-cell: could not resolve piece ({resolveReason ?? "unknown"}); using single-cell start placement.",
+                this);
+            return false;
+        }
+
+        reserved = new HashSet<Vector2Int>(footprint.x * footprint.y);
+        for (int ly = 0; ly < footprint.y; ly++)
+        {
+            for (int lx = 0; lx < footprint.x; lx++)
+                reserved.Add(new Vector2Int(start.x + lx, start.y + ly));
+        }
+
+        return true;
+    }
+
+    static bool ExitLiesInFootprint(Vector2Int exit, Vector2Int anchor, Vector2Int fp)
+    {
+        return exit.x >= anchor.x && exit.x < anchor.x + fp.x
+            && exit.y >= anchor.y && exit.y < anchor.y + fp.y;
+    }
+
+    bool TryAttachForcedStartAsInteriorRoom(
+        InteriorRoomBuildPlan plan,
+        MazeCell[,] grid,
+        Vector2Int start,
+        Vector2Int exit,
+        int seed,
+        Vector2Int footprint)
+    {
+        GameObject prefab = _config != null ? _config.ForcedStartPiecePrefab : null;
+        if (prefab == null
+            || !MazePieceDefinition.TryGetDefinitionForResolution(prefab, out MazePieceDefinition definition))
+        {
+            LogMazeWarningOnce(
+                "forced-start-attach-failed",
+                "[Maze] Forced start interior anchor: prefab is missing a MazePieceDefinition.",
+                this);
+            return false;
+        }
+
+        int width = grid.GetLength(0);
+        int height = grid.GetLength(1);
+        if (!TryStampInteriorRoomWithPrefab(
+                grid,
+                start,
+                exit,
+                start,
+                footprint,
+                prefab,
+                definition,
+                width,
+                height,
+                out InteriorRoomPlacementEntry entry,
+                out Dictionary<Vector2Int, MazeFaceMask> gridChanges,
+                out _,
+                out string failureReason))
+        {
+            LogMazeWarningOnce(
+                "forced-start-attach-failed",
+                $"[Maze] Forced start interior anchor: stamp failed ({failureReason ?? "unknown"}).",
+                this);
+            return false;
+        }
+
+        foreach (KeyValuePair<Vector2Int, MazeFaceMask> kvp in gridChanges)
+            grid[kvp.Key.x, kvp.Key.y].Openings = kvp.Value;
+
+        for (int ly = 0; ly < footprint.y; ly++)
+        {
+            for (int lx = 0; lx < footprint.x; lx++)
+            {
+                if (lx == 0 && ly == 0)
+                    continue;
+
+                plan.SkipCells.Add(new Vector2Int(start.x + lx, start.y + ly));
+            }
+        }
+
+        plan.Anchors[start] = entry;
+        return true;
     }
 
     bool IsDuplicateServerMazeBuild(Scene scene, int seed)
@@ -888,7 +1086,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         Vector2Int exit,
         int seed,
         int width,
-        int height)
+        int height,
+        HashSet<Vector2Int> cellsReservedByForcedStart)
     {
         Dictionary<Vector2Int, InteriorRoomPlacementEntry> anchors = new();
         HashSet<Vector2Int> skipCells = new();
@@ -927,7 +1126,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 if (x == exit.x && y == exit.y)
                     continue;
 
-                if (!HasAnchorWithFittingPrefab(grid, start, exit, x, y, pool, configFootprint, width, height))
+                if (!HasAnchorWithFittingPrefab(
+                        grid, start, exit, x, y, pool, configFootprint, width, height, cellsReservedByForcedStart))
                     continue;
 
                 candidateAnchors.Add(new Vector2Int(x, y));
@@ -989,6 +1189,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                         seed,
                         width,
                         height,
+                        cellsReservedByForcedStart,
                         out InteriorRoomPlacementEntry entry,
                         out Vector2Int footprint,
                         out Dictionary<Vector2Int, MazeFaceMask> gridChanges,
@@ -1073,7 +1274,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         GameObject[] pool,
         Vector2Int configFootprint,
         int width,
-        int height)
+        int height,
+        HashSet<Vector2Int> cellsReservedByForcedStart)
     {
         for (int i = 0; i < pool.Length; i++)
         {
@@ -1085,7 +1287,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 continue;
 
             Vector2Int fp = definition.ResolveInteriorGridFootprint(configFootprint);
-            if (IsRectangleStampable(grid, anchorX, anchorY, fp.x, fp.y, width, height, start, exit))
+            if (IsRectangleStampable(
+                    grid, anchorX, anchorY, fp.x, fp.y, width, height, start, exit, cellsReservedByForcedStart))
                 return true;
         }
 
@@ -1107,7 +1310,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int width,
         int height,
         Vector2Int start,
-        Vector2Int exit)
+        Vector2Int exit,
+        HashSet<Vector2Int> cellsReservedByForcedStart)
     {
         if (fw < 1 || fh < 1 || minX < 0 || minY < 0 || minX + fw > width || minY + fh > height)
             return false;
@@ -1123,6 +1327,9 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                     return false;
 
                 if (x == exit.x && y == exit.y)
+                    return false;
+
+                if (cellsReservedByForcedStart != null && cellsReservedByForcedStart.Contains(new Vector2Int(x, y)))
                     return false;
             }
         }
@@ -1146,6 +1353,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int seed,
         int width,
         int height,
+        HashSet<Vector2Int> cellsReservedByForcedStart,
         out InteriorRoomPlacementEntry entry,
         out Vector2Int footprintUsed,
         out Dictionary<Vector2Int, MazeFaceMask> gridChanges,
@@ -1183,7 +1391,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             }
 
             Vector2Int fp = definition.ResolveInteriorGridFootprint(configFootprint);
-            if (!IsRectangleStampable(grid, anchor.x, anchor.y, fp.x, fp.y, width, height, start, exit))
+            if (!IsRectangleStampable(
+                    grid, anchor.x, anchor.y, fp.x, fp.y, width, height, start, exit, cellsReservedByForcedStart))
             {
                 rejectionReason = $"footprint {fp.x}x{fp.y} for prefab \"{prefab.name}\" runs out of bounds or overlaps the start/exit cell";
                 continue;
@@ -1931,13 +2140,17 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         Debug.LogWarning(message, context);
     }
 
-    void CreateSpawnPoints(Transform root, Vector2Int startCell, float cellSize)
+    void CreateSpawnPoints(Transform root, Vector2Int startCell, float cellSize, Vector2Int startAreaFootprint)
     {
         if (_config.SpawnPointCount <= 0)
             return;
 
         Transform spawnRoot = CreateChild(root, "GeneratedSpawnPoints");
-        Vector3 center = CellToWorld(startCell.x, startCell.y, cellSize) + Vector3.up * _config.SpawnHeight;
+        bool useStartRect = startAreaFootprint.x > 1 || startAreaFootprint.y > 1;
+        Vector3 center = (useStartRect
+                ? CellRectCenterWorld(startCell.x, startCell.y, startAreaFootprint.x, startAreaFootprint.y, cellSize)
+                : CellToWorld(startCell.x, startCell.y, cellSize))
+            + Vector3.up * _config.SpawnHeight;
 
         for (int i = 0; i < _config.SpawnPointCount; i++)
         {
@@ -2177,6 +2390,97 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
     }
 
+    void TrySpawnMazeStartFlashlights(Transform mazeRoot)
+    {
+        GameObject prefab = _config.MazeStartFlashlightPrefab;
+        if (prefab == null || mazeRoot == null)
+            return;
+
+        if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
+            return;
+
+        List<Transform> spawns = new(8);
+        CollectLightSpawnTransforms(mazeRoot, spawns);
+        if (spawns.Count == 0)
+            return;
+
+        int want = Mathf.Min(ResolveMazeBuildPlayerCount(), spawns.Count);
+        if (want <= 0)
+            return;
+
+        // World-space only: parenting under GeneratedMaze would require a NetworkObject on the parent, and
+        // Netcode also rejects reparenting under non-NO hand bones if AutoObjectParentSync is on the item.
+        bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
+        for (int i = 0; i < want; i++)
+        {
+            Transform t = spawns[i];
+            GameObject instance = Instantiate(prefab, t.position, t.rotation);
+            SceneManager.MoveGameObjectToScene(instance, mazeRoot.gameObject.scene);
+
+            if (spawnWithNetcode)
+            {
+                if (instance.TryGetComponent(out NetworkObject networkObject) && networkObject != null)
+                    networkObject.Spawn();
+                else
+                {
+                    LogMazeWarningOnce(
+                        "maze-start-flashlight-no-network-object",
+                        "[Maze] Maze start flashlight prefab has no NetworkObject. Flashlights will not appear on clients; add NetworkObject to the pickup prefab.",
+                        this);
+                }
+            }
+        }
+    }
+
+    int ResolveMazeBuildPlayerCount()
+    {
+        if (IsServerListening() && _networkManager != null)
+            return Mathf.Max(1, _networkManager.ConnectedClients.Count);
+        return 1;
+    }
+
+    static void CollectLightSpawnTransforms(Transform mazeRoot, List<Transform> into)
+    {
+        Transform[] all = mazeRoot.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < all.Length; i++)
+        {
+            Transform t = all[i];
+            if (t == null)
+                continue;
+            if (t.name.StartsWith(LightSpawnNamePrefix, StringComparison.Ordinal))
+                into.Add(t);
+        }
+
+        into.Sort(CompareLightSpawnTransforms);
+    }
+
+    static int CompareLightSpawnTransforms(Transform a, Transform b)
+    {
+        int ka = GetLightSpawnSortKey(a != null ? a.name : null);
+        int kb = GetLightSpawnSortKey(b != null ? b.name : null);
+        if (ka != kb)
+            return ka.CompareTo(kb);
+        if (a == null || b == null)
+            return 0;
+        return a.GetSiblingIndex().CompareTo(b.GetSiblingIndex());
+    }
+
+    static int GetLightSpawnSortKey(string transformName)
+    {
+        if (string.IsNullOrEmpty(transformName)
+            || !transformName.StartsWith(LightSpawnNamePrefix, StringComparison.Ordinal))
+        {
+            return 9999;
+        }
+
+        string suffix = transformName.Substring(LightSpawnNamePrefix.Length);
+        if (string.IsNullOrEmpty(suffix))
+            return 0;
+        if (int.TryParse(suffix, out int n))
+            return n;
+        return 5000 + (Mathf.Abs(transformName.GetHashCode()) & 0x3fff);
+    }
+
     void TrySpawnMazeChests(Transform mazeRoot, IReadOnlyDictionary<Vector2Int, Transform> cellRoots, int mazeSeed)
     {
         GameObject prefab = _config.MazeChestPrefab;
@@ -2345,7 +2649,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         float jz = (float)(jitterRng.NextDouble() * 2d - 1d) * jitterRadius;
         Vector3 xzOnGrid = cellCenter + new Vector3(jx, 0f, jz);
 
-        if (!TryFindLowestWalkableSurfaceBelow(xzOnGrid, cellSize, out Vector3 floorPoint))
+        if (!TryFindMazeEnemySpawnFloor(xzOnGrid, cellSize, out Vector3 floorPoint))
             floorPoint = xzOnGrid;
 
         Vector3 sampleFrom = floorPoint + Vector3.up * 0.35f;
@@ -2367,42 +2671,147 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         return floorPoint + Vector3.up * yOffset;
     }
 
-    static bool TryFindLowestWalkableSurfaceBelow(Vector3 xzOnGrid, float cellSize, out Vector3 floorPoint)
+    /// <summary>
+    /// Finds a floor under <paramref name="xzOnGrid"/> for enemy spawns. A long down-ray can hit
+    /// several upward-facing colliders: exterior roof, corridor floor, pit floor, etc. We pick
+    /// the one that is actually the corridor floor (not the min-Y pit bottom, not the max-Y roof).
+    /// </summary>
+    static bool TryFindMazeEnemySpawnFloor(Vector3 xzOnGrid, float cellSize, out Vector3 floorPoint)
     {
         floorPoint = default;
         float rayStartY = xzOnGrid.y + Mathf.Max(24f, cellSize * 2f);
         Vector3 origin = new(xzOnGrid.x, rayStartY, xzOnGrid.z);
         float rayLength = Mathf.Max(80f, cellSize * 5f);
 
-        RaycastHit[] hits = Physics.RaycastAll(
+        RaycastHit[] raw = Physics.RaycastAll(
             origin,
             Vector3.down,
             rayLength,
             Physics.DefaultRaycastLayers,
             QueryTriggerInteraction.Ignore);
 
-        if (hits == null || hits.Length == 0)
+        if (raw == null || raw.Length == 0)
             return false;
 
         const float minFloorNormalY = 0.55f;
-        float bestY = float.MaxValue;
-        bool found = false;
+        if (!TryBuildUpFacingHitList(raw, minFloorNormalY, out var list) || list.Count == 0)
+            return false;
 
-        for (int i = 0; i < hits.Length; i++)
+        list.Sort(CompareHitByYDesc);
+
+        if (list.Count == 1)
         {
-            RaycastHit hit = hits[i];
-            if (hit.normal.y < minFloorNormalY)
-                continue;
-
-            if (hit.point.y < bestY)
+            RaycastHit only = list[0];
+            if (only.point.y > 2.25f
+                && TryFindFloorFromInteriorProbe(xzOnGrid, only.point.y, minFloorNormalY, out Vector3 fromProbe))
             {
-                bestY = hit.point.y;
-                floorPoint = hit.point;
-                found = true;
+                floorPoint = fromProbe;
+                return true;
+            }
+
+            floorPoint = only.point;
+            return true;
+        }
+
+        floorPoint = SelectSpawnFloorFromGapsInSortedDescList(list);
+        return true;
+    }
+
+    static readonly float[] MazeEnemyInteriorProbeDropsY =
+    {
+        1.1f, 2.0f, 3.2f, 4.5f, 6.5f
+    };
+
+    static int CompareHitByYDesc(RaycastHit a, RaycastHit b) =>
+        b.point.y.CompareTo(a.point.y);
+
+    static bool TryBuildUpFacingHitList(
+        RaycastHit[] raw,
+        float minFloorNormalY,
+        out System.Collections.Generic.List<RaycastHit> list)
+    {
+        list = new System.Collections.Generic.List<RaycastHit>(raw.Length);
+        for (int i = 0; i < raw.Length; i++)
+        {
+            if (raw[i].normal.y >= minFloorNormalY)
+                list.Add(raw[i]);
+        }
+
+        return list.Count > 0;
+    }
+
+    static Vector3 SelectSpawnFloorFromGapsInSortedDescList(
+        System.Collections.Generic.List<RaycastHit> sortedDesc)
+    {
+        const float deepPitY = -2.5f;
+        if (sortedDesc.Count < 2)
+            return sortedDesc[0].point;
+
+        int bestIndex = 0;
+        float bestGap = 0f;
+        for (int i = 0; i < sortedDesc.Count - 1; i++)
+        {
+            float gap = sortedDesc[i].point.y - sortedDesc[i + 1].point.y;
+            if (gap > bestGap)
+            {
+                bestGap = gap;
+                bestIndex = i;
             }
         }
 
-        return found;
+        float hiY = sortedDesc[bestIndex].point.y;
+        float loY = sortedDesc[bestIndex + 1].point.y;
+        if (loY < deepPitY)
+            return sortedDesc[bestIndex].point;
+
+        return sortedDesc[bestIndex + 1].point;
+    }
+
+    static bool TryFindFloorFromInteriorProbe(
+        Vector3 xzOnGrid,
+        float topSurfaceY,
+        float minFloorNormalY,
+        out Vector3 floorPoint)
+    {
+        floorPoint = default;
+        float x = xzOnGrid.x;
+        float z = xzOnGrid.z;
+        for (int d = 0; d < MazeEnemyInteriorProbeDropsY.Length; d++)
+        {
+            float yStart = topSurfaceY - MazeEnemyInteriorProbeDropsY[d];
+            if (yStart < -60f)
+                break;
+
+            Vector3 origin = new(x, yStart, z);
+            RaycastHit[] raw = Physics.RaycastAll(
+                origin,
+                Vector3.down,
+                100f,
+                Physics.DefaultRaycastLayers,
+                QueryTriggerInteraction.Ignore);
+
+            if (raw == null || raw.Length == 0)
+                continue;
+
+            if (!TryBuildUpFacingHitList(raw, minFloorNormalY, out var list) || list.Count == 0)
+                continue;
+
+            if (list.Count == 1)
+            {
+                floorPoint = list[0].point;
+                if (floorPoint.y < topSurfaceY - 0.35f)
+                    return true;
+            }
+            else
+            {
+                list.Sort(CompareHitByYDesc);
+                floorPoint = SelectSpawnFloorFromGapsInSortedDescList(list);
+                if (floorPoint.y < topSurfaceY - 0.35f)
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     int?[,] ComputeMazeCellDistances(MazeCell[,] cells, Vector2Int start)

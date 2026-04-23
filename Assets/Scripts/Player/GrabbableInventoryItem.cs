@@ -13,6 +13,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     public const byte TypeIdNone = 0;
     public const byte TypeIdFlashlight = 1;
     public const byte TypeIdGlowstick = 2;
+    public const byte TypeIdKey = 3;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -43,6 +44,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhDefault;
     static Sprite s_hudPhFlash;
     static Sprite s_hudPhGlow;
+    static Sprite s_hudPhKey;
 
     /// <summary>Inspector <see cref="_slotIcon"/> if set; otherwise a simple circular runtime glyph (transparent outside the disk).</summary>
     public Sprite GetEffectiveSlotIconForHud()
@@ -60,6 +62,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdFlashlight;
         if (GetComponent<GlowstickItem>() != null)
             return TypeIdGlowstick;
+        if (GetComponent<KeyItem>() != null)
+            return TypeIdKey;
         return TypeIdNone;
     }
 
@@ -69,6 +73,7 @@ public class GrabbableInventoryItem : MonoBehaviour
         {
             TypeIdFlashlight => s_hudPhFlash ??= CreatePlaceholderSprite(0.95f, 0.9f, 0.5f),
             TypeIdGlowstick => s_hudPhGlow ??= CreatePlaceholderSprite(0.35f, 1f, 0.35f),
+            TypeIdKey => s_hudPhKey ??= CreatePlaceholderSprite(0.92f, 0.75f, 0.2f),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
     }

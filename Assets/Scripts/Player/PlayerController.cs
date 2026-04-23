@@ -57,6 +57,8 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] Text pickupPromptText;
     [SerializeField] string pickupPromptMessage = "Press E to pick up";
     [SerializeField] string chestPromptMessage = "Press E to open";
+    [SerializeField] string doorUnlockPromptMessage = "Press E to unlock";
+    [SerializeField] string doorOpenPromptMessage = "Press E to open";
     [Tooltip("Optional mask for interactable items. If empty, Unity default raycast layers are used.")]
     [SerializeField] LayerMask interactMask;
     [NonSerialized] RaycastHit[] _interactCastHitBuffer = new RaycastHit[32];
@@ -1314,6 +1316,29 @@ public partial class PlayerController : MonoBehaviour
             return;
         }
 
+        if (cam != null
+            && TryFindInteractableHingeDoor(cam, out HingeInteractDoor wantUnlockDoor)
+            && wantUnlockDoor != null
+            && wantUnlockDoor.UseKeyToUnlock
+            && wantUnlockDoor.IsLocked
+            && PlayerHasKeyInInventory())
+        {
+            SetPickupPromptVisible(true, doorUnlockPromptMessage);
+            return;
+        }
+
+        if (cam != null
+            && TryFindInteractableHingeDoor(cam, out HingeInteractDoor openDoor)
+            && openDoor != null
+            && !openDoor.IsLocked
+            && !openDoor.IsOpen
+            && !openDoor.IsPostUnlockOpenDelayActive
+            && openDoor.ShowOpenInteractionPrompt)
+        {
+            SetPickupPromptVisible(true, doorOpenPromptMessage);
+            return;
+        }
+
         bool shouldShow = ShouldShowPickupPrompt();
         SetPickupPromptVisible(shouldShow, pickupPromptMessage);
     }
@@ -1346,6 +1371,62 @@ public partial class PlayerController : MonoBehaviour
             }
         }
 
+        return false;
+    }
+
+    bool TryFindInteractableHingeDoor(Transform cam, out HingeInteractDoor door)
+    {
+        door = null;
+
+        if (cam == null)
+            return false;
+
+        int mask = interactMask.value == 0 ? Physics.DefaultRaycastLayers : interactMask.value;
+        int count = TryInteractCastNonAlloc(cam, mask);
+        if (count <= 0)
+            return false;
+
+        SortInteractHitsByDistance(count);
+
+        for (int i = 0; i < count; i++)
+        {
+            RaycastHit h = _interactCastHitBuffer[i];
+            if (InteractHitBelongsToOpenedChest(h))
+                continue;
+
+            HingeInteractDoor found = h.collider.GetComponentInParent<HingeInteractDoor>();
+            if (found == null || found.IsBusy || !found.IsInInteractRange(cam.position))
+                continue;
+
+            door = found;
+            return true;
+        }
+
+        return false;
+    }
+
+    bool PlayerHasKeyInInventory()
+    {
+        if (IsUsingNetworkedInventory)
+        {
+            if (_networkPlayerInventory == null)
+                return false;
+            for (int i = 0; i < 3; i++)
+            {
+                ulong id = _networkPlayerInventory.GetSlotItemId(i);
+                if (id == 0UL)
+                    continue;
+                if (GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) && g is KeyItem)
+                    return true;
+            }
+            return false;
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            if (_localInventorySlots[i] is KeyItem)
+                return true;
+        }
         return false;
     }
 

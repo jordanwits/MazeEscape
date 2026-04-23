@@ -113,6 +113,10 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Prefab spawned at each child transform named ChestAnchor on generated maze pieces. Use a NetworkObject prefab for multiplayer.")]
     [SerializeField] GameObject mazeChestPrefab;
 
+    [Header("Maze start flashlights (optional)")]
+    [Tooltip("Placed on children named LightSpawn, LightSpawn1, LightSpawn2, … on the start piece. At maze build, spawns one per connected player, in order, up to the number of those transforms. Use a NetworkObject prefab in multiplayer.")]
+    [SerializeField] GameObject mazeStartFlashlightPrefab;
+
     public bool EnableGeneration => enableGeneration;
     public string TargetSceneName => targetSceneName;
     public bool BuildOfflineInPlayMode => buildOfflineInPlayMode;
@@ -177,6 +181,7 @@ public class ProceduralMazeConfig : ScriptableObject
     public bool MazeTrapExcludeExitCell => mazeTrapExcludeExitCell;
     public float MazeTrapMinSeparation => mazeTrapMinSeparation;
     public GameObject MazeChestPrefab => mazeChestPrefab;
+    public GameObject MazeStartFlashlightPrefab => mazeStartFlashlightPrefab;
 
     public bool HasMinimumStarterSet => HasAssignedForCategory(MazePieceCategory.Cross)
         && HasAssignedForCategory(MazePieceCategory.Straight)
