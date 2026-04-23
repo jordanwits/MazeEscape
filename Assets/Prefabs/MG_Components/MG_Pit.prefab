@@ -5550,6 +5550,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PitKillZone
   destroyIfNoZombieHealth: 0
   addKinematicRigidbody: 1
+  spikeStabClip: {fileID: 8300000, guid: 389e1c5c1af60c541ae3a7c26818d05d, type: 3}
+  spikeStabVolume: 0.2
+  spikeSoundSameColliderCooldown: 0.35
 --- !u!54 &5229029579350982879
 Rigidbody:
   m_ObjectHideFlags: 0

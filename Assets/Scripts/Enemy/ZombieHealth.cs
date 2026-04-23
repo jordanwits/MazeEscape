@@ -14,7 +14,7 @@ public class ZombieHealth : MonoBehaviour
     [SerializeField] Rigidbody zombieRigidbody;
     [SerializeField] Collider[] zombieColliders;
     [SerializeField] float disableColliderDelay = 0.35f;
-    [SerializeField] float destroyDelay = 10f;
+    [SerializeField] float destroyDelay = 60f;
     [SerializeField] string isDeadParameter = "IsDead";
     [SerializeField] string deathIndexParameter = "DeathIndex";
 

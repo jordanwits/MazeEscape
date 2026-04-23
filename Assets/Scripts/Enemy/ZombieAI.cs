@@ -2,13 +2,19 @@ using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 [DisallowMultipleComponent]
-[RequireComponent(typeof(AudioSource))]
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(CharacterController))]
 public class ZombieAI : MonoBehaviour
 {
+    const string ScreamAudioChildName = "Zombie_Scream";
+    const string VoiceAudioChildName = "Zombie_Voice";
+    const string FootstepAudioChildName = "Zombie_Footsteps";
+
     enum ZombieState
     {
         Idle,
@@ -26,6 +32,25 @@ public class ZombieAI : MonoBehaviour
     [SerializeField] ZombieHealth zombieHealth;
     [SerializeField] AudioSource screamAudioSource;
     [SerializeField] AudioClip screamAudioClip;
+
+    [Header("Voice SFX")]
+    [SerializeField] AudioSource voiceAudioSource;
+    [SerializeField] AudioClip zombieGrowlClip;
+    [SerializeField] AudioClip zombieMoanClip;
+    [SerializeField] AudioClip zombieGruntClip;
+    [SerializeField] AudioClip zombieDeathClip;
+    [SerializeField, Min(0.1f)] float ambientVoiceInterval = 4f;
+    [SerializeField, Range(0f, 1f)] float ambientVoiceVolume = 1f;
+    [SerializeField, Range(0f, 1f)] float deathVoiceVolume = 1f;
+
+    [Header("Footsteps")]
+    [SerializeField] AudioSource footstepAudioSource;
+    [SerializeField] AudioClip footstepClip1;
+    [SerializeField] AudioClip footstepClip2;
+    [SerializeField] float walkFootstepInterval = 0.48f;
+    [SerializeField] float runFootstepInterval = 0.34f;
+    [SerializeField] float footstepVolume = 0.6f;
+    [SerializeField] float minimumFootstepSpeed = 0.15f;
 
     [Header("Detection")]
     [SerializeField] LayerMask detectionMask;
@@ -66,6 +91,8 @@ public class ZombieAI : MonoBehaviour
     [Header("Combat")]
     [SerializeField] float damage = 25f;
     [SerializeField] float attackRate = 1.5f;
+    [Tooltip("Extra distance before Attack starts so the zombie begins the swing before NavMesh settling causes foot jitter.")]
+    [SerializeField] float attackStartDistancePadding = 0.35f;
     [Tooltip("If the zombie is punched again before this window expires, it immediately counters with Attack2 instead of taking another hit.")]
     [SerializeField] float counterAttackQuickSuccessionWindow = 1f;
     [Tooltip("Seconds between the attack start and the frame where the swipe should actually deal damage.")]
@@ -135,6 +162,11 @@ public class ZombieAI : MonoBehaviour
     float _pitDropUnlockTime;
     float _rapidPunchCounterWindowEndTime;
     bool _isCounterAttackInvincible;
+    float _nextAmbientVoiceTime;
+    int _lastAmbientVoiceIndex = -1;
+    bool _ambientVoiceUnlocked;
+    float _footstepTimer;
+    bool _playFootstep1Next = true;
 
     float _currentStamina;
     bool _staminaFull;
@@ -146,22 +178,46 @@ public class ZombieAI : MonoBehaviour
     {
         CacheReferences();
         ConfigureScreamAudioSource();
+        ConfigureVoiceAudioSource();
+        ConfigureFootstepAudioSource();
+        RemoveOrphanedRootAudioSources();
         ApplyAgentSettings();
+#if UNITY_EDITOR
+        AutoAssignAudioClipsInEditor();
+#endif
     }
 
     void Awake()
     {
         CacheReferences();
         ConfigureScreamAudioSource();
+        ConfigureVoiceAudioSource();
+        ConfigureFootstepAudioSource();
+        RemoveOrphanedRootAudioSources();
         ApplyAgentSettings();
         _currentStamina = 0f;
         _staminaFull = false;
+#if UNITY_EDITOR
+        AutoAssignAudioClipsInEditor();
+#endif
     }
 
     void OnEnable()
     {
         TrySnapToNavMesh();
+        ResetAmbientVoiceTimer(resetLastPlayedClip: true);
     }
+
+#if UNITY_EDITOR
+    void OnValidate()
+    {
+        CacheReferences();
+        ConfigureScreamAudioSource(allowCreate: false);
+        ConfigureVoiceAudioSource(allowCreate: false);
+        ConfigureFootstepAudioSource(allowCreate: false);
+        AutoAssignAudioClipsInEditor();
+    }
+#endif
 
     void Update()
     {
@@ -178,6 +234,7 @@ public class ZombieAI : MonoBehaviour
         if (_state == ZombieState.Dead)
             return;
 
+        UpdateAmbientVoiceAudio();
         RefreshTarget();
 
         Vector3 desiredHorizontalVelocity = Vector3.zero;
@@ -226,6 +283,7 @@ public class ZombieAI : MonoBehaviour
         }
 
         ApplyMovement(desiredHorizontalVelocity);
+        UpdateFootsteps();
         UpdateAnimatorParameters();
         UpdateStaminaBar();
     }
@@ -266,6 +324,20 @@ public class ZombieAI : MonoBehaviour
         _hasPlayedAlertScream = false;
         _rapidPunchCounterWindowEndTime = 0f;
         _isCounterAttackInvincible = false;
+        _ambientVoiceUnlocked = false;
+        _nextAmbientVoiceTime = 0f;
+        _footstepTimer = 0f;
+
+        if (screamAudioSource != null)
+            screamAudioSource.Stop();
+
+        if (voiceAudioSource != null)
+            voiceAudioSource.Stop();
+
+        if (footstepAudioSource != null)
+            footstepAudioSource.Stop();
+
+        PlayDeathVoice();
     }
 
     public bool TryHandleIncomingMeleeHit(Transform attacker, PlayerHealth attackerHealth)
@@ -424,13 +496,85 @@ public class ZombieAI : MonoBehaviour
             zombieHealth = GetComponent<ZombieHealth>();
 
         if (screamAudioSource == null)
-            screamAudioSource = GetComponent<AudioSource>();
+        {
+            screamAudioSource = GetOrCreateChildAudioSource(ScreamAudioChildName, allowCreate: false);
+            if (screamAudioSource == null)
+                screamAudioSource = GetComponent<AudioSource>();
+        }
+
+        if (voiceAudioSource == null)
+            voiceAudioSource = GetOrCreateChildAudioSource(VoiceAudioChildName, allowCreate: false);
+
+        if (footstepAudioSource == null)
+            footstepAudioSource = GetOrCreateChildAudioSource(FootstepAudioChildName, allowCreate: false);
     }
 
-    void ConfigureScreamAudioSource()
+    AudioSource GetOrCreateChildAudioSource(string childName, bool allowCreate)
     {
-        if (screamAudioSource == null)
-            screamAudioSource = gameObject.AddComponent<AudioSource>();
+        Transform child = null;
+        for (int i = 0; i < transform.childCount; i++)
+        {
+            Transform c = transform.GetChild(i);
+            if (c.name == childName)
+            {
+                child = c;
+                break;
+            }
+        }
+
+        if (child == null)
+        {
+            if (!allowCreate)
+                return null;
+
+            var go = new GameObject(childName);
+            go.transform.SetParent(transform, false);
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localRotation = Quaternion.identity;
+            go.transform.localScale = Vector3.one;
+            child = go.transform;
+        }
+
+        AudioSource audio = child.GetComponent<AudioSource>();
+        if (audio == null)
+        {
+            if (!allowCreate)
+                return null;
+            audio = child.gameObject.AddComponent<AudioSource>();
+        }
+
+        return audio;
+    }
+
+    void RemoveOrphanedRootAudioSources()
+    {
+        AudioSource[] onRoot = GetComponents<AudioSource>();
+        for (int i = onRoot.Length - 1; i >= 0; i--)
+        {
+            AudioSource a = onRoot[i];
+            if (a == null)
+                continue;
+            if (a == screamAudioSource || a == voiceAudioSource || a == footstepAudioSource)
+                continue;
+
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+            {
+                DestroyImmediate(a, true);
+                continue;
+            }
+#endif
+            Destroy(a);
+        }
+    }
+
+    void ConfigureScreamAudioSource(bool allowCreate = true)
+    {
+        AudioSource resolved = GetOrCreateChildAudioSource(ScreamAudioChildName, allowCreate);
+        if (resolved == null)
+            return;
+
+        screamAudioSource = resolved;
 
         screamAudioSource.playOnAwake = false;
         screamAudioSource.loop = false;
@@ -440,6 +584,42 @@ public class ZombieAI : MonoBehaviour
         screamAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
         screamAudioSource.dopplerLevel = 0f;
         GameAudioManager.RouteSfxSource(screamAudioSource);
+    }
+
+    void ConfigureVoiceAudioSource(bool allowCreate = true)
+    {
+        AudioSource resolved = GetOrCreateChildAudioSource(VoiceAudioChildName, allowCreate);
+        if (resolved == null)
+            return;
+
+        voiceAudioSource = resolved;
+
+        voiceAudioSource.playOnAwake = false;
+        voiceAudioSource.loop = false;
+        voiceAudioSource.spatialBlend = screamSpatialBlend;
+        voiceAudioSource.minDistance = scream3DMinDistance;
+        voiceAudioSource.maxDistance = scream3DMaxDistance;
+        voiceAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
+        voiceAudioSource.dopplerLevel = 0f;
+        GameAudioManager.RouteSfxSource(voiceAudioSource);
+    }
+
+    void ConfigureFootstepAudioSource(bool allowCreate = true)
+    {
+        AudioSource resolved = GetOrCreateChildAudioSource(FootstepAudioChildName, allowCreate);
+        if (resolved == null)
+            return;
+
+        footstepAudioSource = resolved;
+
+        footstepAudioSource.playOnAwake = false;
+        footstepAudioSource.loop = false;
+        footstepAudioSource.spatialBlend = 1f;
+        footstepAudioSource.minDistance = 1.5f;
+        footstepAudioSource.maxDistance = 25f;
+        footstepAudioSource.rolloffMode = AudioRolloffMode.Linear;
+        footstepAudioSource.dopplerLevel = 0f;
+        GameAudioManager.RouteSfxSource(footstepAudioSource);
     }
 
     void ApplyAgentSettings()
@@ -572,7 +752,8 @@ public class ZombieAI : MonoBehaviour
             return Vector3.zero;
         }
 
-        if (distanceToTarget <= attackRadius)
+        float attackStartDistance = attackRadius + Mathf.Max(0f, attackStartDistancePadding);
+        if (distanceToTarget <= attackStartDistance)
         {
             if (Time.time >= _nextAttackTime && _attackRoutine == null)
                 _attackRoutine = StartCoroutine(AttackRoutine());
@@ -688,6 +869,8 @@ public class ZombieAI : MonoBehaviour
         _pitDropActive = false;
         _hasPlayedAlertScream = false;
         _rapidPunchCounterWindowEndTime = 0f;
+        _ambientVoiceUnlocked = false;
+        _footstepTimer = 0f;
     }
 
     void ClearTarget()
@@ -697,6 +880,8 @@ public class ZombieAI : MonoBehaviour
         _hasAlertedTarget = false;
         _hasPlayedAlertScream = false;
         _rapidPunchCounterWindowEndTime = 0f;
+        _ambientVoiceUnlocked = false;
+        _footstepTimer = 0f;
     }
 
     public void PlayScreamAudio()
@@ -705,6 +890,8 @@ public class ZombieAI : MonoBehaviour
             return;
 
         _hasPlayedAlertScream = true;
+        _ambientVoiceUnlocked = true;
+        ResetAmbientVoiceTimer(resetLastPlayedClip: true);
         screamAudioSource.clip = screamAudioClip;
         // Unity often clamps AudioSource.volume to 0..1, but the multiplier still helps
         // when the serialized scream volume is low, and nudges loudness on engines that allow >1.
@@ -712,6 +899,177 @@ public class ZombieAI : MonoBehaviour
         screamAudioSource.volume = Mathf.Clamp(level, 0f, 2f);
         screamAudioSource.Play();
     }
+
+    void UpdateAmbientVoiceAudio()
+    {
+        if (voiceAudioSource == null || ambientVoiceInterval <= 0f)
+            return;
+
+        if (!_ambientVoiceUnlocked || !_hasAlertedTarget || !_hasPlayedAlertScream)
+            return;
+
+        if (screamAudioSource != null && screamAudioSource.isPlaying)
+            return;
+
+        if (Time.time < _nextAmbientVoiceTime)
+            return;
+
+        bool playedVoice = TryPlayRandomAmbientVoice();
+        float retryDelay = playedVoice ? ambientVoiceInterval : 1f;
+        _nextAmbientVoiceTime = Time.time + Mathf.Max(0.1f, retryDelay);
+    }
+
+    void UpdateFootsteps()
+    {
+        if (footstepAudioSource == null || characterController == null || _state == ZombieState.Dead)
+            return;
+
+        float horizontalSpeed = _horizontalVelocity.magnitude;
+        bool grounded = characterController.isGrounded;
+        if (!grounded || horizontalSpeed < minimumFootstepSpeed)
+        {
+            _footstepTimer = 0f;
+            return;
+        }
+
+        bool isRunning = _intendedMoveSpeed > walkSpeed + 0.01f;
+        float interval = Mathf.Max(
+            0.05f,
+            isRunning ? runFootstepInterval : walkFootstepInterval * 2f);
+        _footstepTimer -= Time.deltaTime;
+        if (_footstepTimer > 0f)
+            return;
+
+        PlayFootstepOneShot();
+        _footstepTimer = interval;
+    }
+
+    void PlayFootstepOneShot()
+    {
+        if (footstepAudioSource == null)
+            return;
+
+        AudioClip clipToPlay = _playFootstep1Next ? footstepClip1 : footstepClip2;
+        if (clipToPlay == null)
+            clipToPlay = footstepClip1 != null ? footstepClip1 : footstepClip2;
+
+        if (clipToPlay == null)
+            return;
+
+        footstepAudioSource.PlayOneShot(clipToPlay, Mathf.Max(0f, footstepVolume));
+        _playFootstep1Next = !_playFootstep1Next;
+    }
+
+    bool TryPlayRandomAmbientVoice()
+    {
+        int availableClipCount = 0;
+        for (int i = 0; i < 3; i++)
+        {
+            if (GetAmbientVoiceClip(i) != null)
+                availableClipCount++;
+        }
+
+        if (availableClipCount == 0)
+            return false;
+
+        int clipIndex = GetRandomAmbientVoiceIndex(availableClipCount);
+        AudioClip clipToPlay = GetAmbientVoiceClip(clipIndex);
+        if (clipToPlay == null)
+            return false;
+
+        voiceAudioSource.PlayOneShot(clipToPlay, Mathf.Max(0f, ambientVoiceVolume));
+        _lastAmbientVoiceIndex = clipIndex;
+        return true;
+    }
+
+    int GetRandomAmbientVoiceIndex(int availableClipCount)
+    {
+        if (availableClipCount <= 1)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                if (GetAmbientVoiceClip(i) != null)
+                    return i;
+            }
+        }
+
+        for (int attempt = 0; attempt < 8; attempt++)
+        {
+            int candidateIndex = Random.Range(0, 3);
+            if (candidateIndex == _lastAmbientVoiceIndex || GetAmbientVoiceClip(candidateIndex) == null)
+                continue;
+
+            return candidateIndex;
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            if (i != _lastAmbientVoiceIndex && GetAmbientVoiceClip(i) != null)
+                return i;
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            if (GetAmbientVoiceClip(i) != null)
+                return i;
+        }
+
+        return -1;
+    }
+
+    AudioClip GetAmbientVoiceClip(int index)
+    {
+        switch (index)
+        {
+            case 0:
+                return zombieGrowlClip;
+            case 1:
+                return zombieMoanClip;
+            case 2:
+                return zombieGruntClip;
+            default:
+                return null;
+        }
+    }
+
+    void ResetAmbientVoiceTimer(bool resetLastPlayedClip)
+    {
+        if (resetLastPlayedClip)
+            _lastAmbientVoiceIndex = -1;
+
+        _nextAmbientVoiceTime = Time.time + Mathf.Max(0.1f, ambientVoiceInterval);
+    }
+
+    void PlayDeathVoice()
+    {
+        if (voiceAudioSource == null || zombieDeathClip == null)
+            return;
+
+        voiceAudioSource.PlayOneShot(zombieDeathClip, Mathf.Max(0f, deathVoiceVolume));
+    }
+
+#if UNITY_EDITOR
+    void AutoAssignAudioClipsInEditor()
+    {
+        if (zombieGrowlClip == null)
+            zombieGrowlClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieGrowl.wav");
+
+        if (zombieMoanClip == null)
+            zombieMoanClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieMoan.wav");
+
+        if (zombieGruntClip == null)
+            zombieGruntClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieGrunt.wav");
+
+        if (zombieDeathClip == null)
+            zombieDeathClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieDeath.wav");
+
+        if (footstepClip1 == null)
+            footstepClip1 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/footstep1.mp3");
+
+        if (footstepClip2 == null)
+            footstepClip2 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/footstep2.mp3");
+    }
+#endif
 
     IEnumerator AttackRoutine(bool useCounterAttack = false)
     {
