@@ -54,6 +54,11 @@ public class GrabbableInventoryItem : MonoBehaviour
         return GetPlaceholderForItemType(ResolveTypeForPlaceholder());
     }
 
+    public static Sprite GetPlaceholderSlotIcon(byte typeId)
+    {
+        return GetPlaceholderForItemType(typeId);
+    }
+
     byte ResolveTypeForPlaceholder()
     {
         if (_itemTypeId != TypeIdNone)
@@ -162,8 +167,11 @@ public class GrabbableInventoryItem : MonoBehaviour
     protected Transform _heldRotationSource;
     protected Quaternion _heldLocalRotation;
     protected ulong _holderNetworkObjectId;
+    NetworkObject _networkObject;
     ulong _cachedItemId;
     bool _hasCachedItemId;
+    bool _hasExplicitItemId;
+    ulong _explicitItemId;
     Vector3 _identityHintPosition;
     Quaternion _identityHintRotation;
     Vector3 _authoredLocalScale;
@@ -194,11 +202,36 @@ public class GrabbableInventoryItem : MonoBehaviour
         return TryFindNearestRegistered(hintPosition, null, out item);
     }
 
+    public static bool TryResolveForStateByType(ulong itemId, Vector3 hintPosition, byte itemTypeId, out GrabbableInventoryItem item)
+    {
+        if (TryGetRegistered(itemId, out item) && item != null)
+        {
+            if (itemTypeId == TypeIdNone || item.ItemTypeId == itemTypeId)
+                return true;
+        }
+
+        return TryFindNearestRegisteredByType(hintPosition, null, itemTypeId, out item);
+    }
+
+    public void AssignNetworkItemId(ulong itemId)
+    {
+        if (itemId == 0UL)
+            return;
+
+        UnregisterCurrentItemId();
+        _explicitItemId = itemId;
+        _hasExplicitItemId = true;
+        _cachedItemId = itemId;
+        _hasCachedItemId = true;
+        Registered[itemId] = this;
+    }
+
     protected virtual void Awake()
     {
         RebuildCachedHoldRotation();
         CacheIdentityHint();
         _authoredLocalScale = transform.localScale;
+        _networkObject = GetComponent<NetworkObject>();
 
         if (itemRigidbody == null)
             itemRigidbody = GetComponent<Rigidbody>();
@@ -214,13 +247,13 @@ public class GrabbableInventoryItem : MonoBehaviour
 
     protected void OnEnable()
     {
+        TryUseSpawnedNetworkObjectId();
         Registered[ItemId] = this;
     }
 
     protected void OnDisable()
     {
-        if (Registered.TryGetValue(ItemId, out GrabbableInventoryItem existing) && existing == this)
-            Registered.Remove(ItemId);
+        UnregisterCurrentItemId();
     }
 
     /// <summary>Single-player or non-networked pickup.</summary>
@@ -249,6 +282,8 @@ public class GrabbableInventoryItem : MonoBehaviour
 
     void LateUpdate()
     {
+        TryUseSpawnedNetworkObjectId();
+
         if (!IsHeld)
             return;
 
@@ -466,8 +501,42 @@ public class GrabbableInventoryItem : MonoBehaviour
         return item != null;
     }
 
+    static bool TryFindNearestRegisteredByType(Vector3 hintPosition, bool? requireHeldState, byte itemTypeId, out GrabbableInventoryItem item)
+    {
+        const float maxMatchDistance = 8f;
+        item = null;
+        float bestDistanceSquared = maxMatchDistance * maxMatchDistance;
+
+        foreach (GrabbableInventoryItem candidate in Registered.Values)
+        {
+            if (candidate == null)
+                continue;
+
+            if (itemTypeId != TypeIdNone && candidate.ItemTypeId != itemTypeId)
+                continue;
+
+            if (requireHeldState.HasValue && candidate.IsHeld != requireHeldState.Value)
+                continue;
+
+            float distanceSquared = (candidate.transform.position - hintPosition).sqrMagnitude;
+            if (distanceSquared > bestDistanceSquared)
+                continue;
+
+            bestDistanceSquared = distanceSquared;
+            item = candidate;
+        }
+
+        return item != null;
+    }
+
     ulong ComputeStableItemId()
     {
+        if (_hasExplicitItemId)
+            return _explicitItemId;
+
+        if (_networkObject != null && _networkObject.IsSpawned)
+            return ComputeHash($"network-object:{_networkObject.NetworkObjectId}");
+
         StringBuilder builder = new StringBuilder();
         builder.Append(gameObject.scene.buildIndex);
         builder.Append('|');
@@ -491,10 +560,14 @@ public class GrabbableInventoryItem : MonoBehaviour
             builder.Append(']');
         }
 
+        return ComputeHash(builder.ToString());
+    }
+
+    static ulong ComputeHash(string key)
+    {
         const ulong fnvOffset = 14695981039346656037UL;
         const ulong fnvPrime = 1099511628211UL;
         ulong hash = fnvOffset;
-        string key = builder.ToString();
         for (int i = 0; i < key.Length; i++)
         {
             hash ^= key[i];
@@ -502,6 +575,35 @@ public class GrabbableInventoryItem : MonoBehaviour
         }
 
         return hash;
+    }
+
+    void TryUseSpawnedNetworkObjectId()
+    {
+        if (_hasExplicitItemId)
+            return;
+
+        if (_networkObject == null)
+            _networkObject = GetComponent<NetworkObject>();
+        if (_networkObject == null || !_networkObject.IsSpawned)
+            return;
+
+        ulong networkItemId = ComputeHash($"network-object:{_networkObject.NetworkObjectId}");
+        if (_hasCachedItemId && _cachedItemId == networkItemId)
+            return;
+
+        UnregisterCurrentItemId();
+        _cachedItemId = networkItemId;
+        _hasCachedItemId = true;
+        Registered[networkItemId] = this;
+    }
+
+    void UnregisterCurrentItemId()
+    {
+        if (!_hasCachedItemId)
+            return;
+
+        if (Registered.TryGetValue(_cachedItemId, out GrabbableInventoryItem existing) && existing == this)
+            Registered.Remove(_cachedItemId);
     }
 
     void SetCollidersEnabled(bool enabled)

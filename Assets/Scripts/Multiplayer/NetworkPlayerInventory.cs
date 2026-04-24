@@ -11,6 +11,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
     [SerializeField] float dropThrowImpulse = 0.65f;
 
     NetworkPlayerAvatar _avatar;
+    uint _runtimeDropSequence;
 
     readonly NetworkVariable<ulong> _slot0ItemId = new NetworkVariable<ulong>(
         0UL,
@@ -24,6 +25,21 @@ public class NetworkPlayerInventory : NetworkBehaviour
 
     readonly NetworkVariable<ulong> _slot2ItemId = new NetworkVariable<ulong>(
         0UL,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    readonly NetworkVariable<byte> _slot0ItemType = new NetworkVariable<byte>(
+        GrabbableInventoryItem.TypeIdNone,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    readonly NetworkVariable<byte> _slot1ItemType = new NetworkVariable<byte>(
+        GrabbableInventoryItem.TypeIdNone,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    readonly NetworkVariable<byte> _slot2ItemType = new NetworkVariable<byte>(
+        GrabbableInventoryItem.TypeIdNone,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
@@ -83,6 +99,21 @@ public class NetworkPlayerInventory : NetworkBehaviour
         if (index == 0) _slot0ItemId.Value = value;
         else if (index == 1) _slot1ItemId.Value = value;
         else if (index == 2) _slot2ItemId.Value = value;
+    }
+
+    public byte GetSlotItemTypeId(int index)
+    {
+        if (index == 0) return _slot0ItemType.Value;
+        if (index == 1) return _slot1ItemType.Value;
+        if (index == 2) return _slot2ItemType.Value;
+        return GrabbableInventoryItem.TypeIdNone;
+    }
+
+    void SetSlotItemTypeId(int index, byte value)
+    {
+        if (index == 0) _slot0ItemType.Value = value;
+        else if (index == 1) _slot1ItemType.Value = value;
+        else if (index == 2) _slot2ItemType.Value = value;
     }
 
     public int GetSlotStackCount(int index)
@@ -165,6 +196,9 @@ public class NetworkPlayerInventory : NetworkBehaviour
         _slot0ItemId.OnValueChanged += OnSlot0Changed;
         _slot1ItemId.OnValueChanged += OnSlot1Changed;
         _slot2ItemId.OnValueChanged += OnSlot2Changed;
+        _slot0ItemType.OnValueChanged += OnTypeChanged;
+        _slot1ItemType.OnValueChanged += OnTypeChanged;
+        _slot2ItemType.OnValueChanged += OnTypeChanged;
         _selectedSlot.OnValueChanged += OnSelectedChanged;
         _selectedFlashlightLightOn.OnValueChanged += OnFlashlightLightChanged;
         _slot0Stack.OnValueChanged += OnStackChanged;
@@ -182,6 +216,9 @@ public class NetworkPlayerInventory : NetworkBehaviour
         _slot0ItemId.OnValueChanged -= OnSlot0Changed;
         _slot1ItemId.OnValueChanged -= OnSlot1Changed;
         _slot2ItemId.OnValueChanged -= OnSlot2Changed;
+        _slot0ItemType.OnValueChanged -= OnTypeChanged;
+        _slot1ItemType.OnValueChanged -= OnTypeChanged;
+        _slot2ItemType.OnValueChanged -= OnTypeChanged;
         _selectedSlot.OnValueChanged -= OnSelectedChanged;
         _selectedFlashlightLightOn.OnValueChanged -= OnFlashlightLightChanged;
         _slot0Stack.OnValueChanged -= OnStackChanged;
@@ -221,6 +258,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
     }
 
     void OnStackChanged(byte previous, byte current) { RaiseChangedAndRefresh(); }
+    void OnTypeChanged(byte previous, byte current) { RaiseChangedAndRefresh(); }
 
     void OnSlot0Changed(ulong previous, ulong current) { RaiseChangedAndRefresh(); }
     void OnSlot1Changed(ulong previous, ulong current) { RaiseChangedAndRefresh(); }
@@ -300,8 +338,10 @@ public class NetworkPlayerInventory : NetworkBehaviour
                 return;
             _selectedSlot.Value = (byte)empty;
             SetSlotItemId(empty, item.ItemId);
+            SetSlotItemTypeId(empty, item.ItemTypeId);
             SetSlotStackCount(empty, 1);
             _selectedFlashlightLightOn.Value = f0.IsLightOn;
+            ApplyItemStateWithTypeClientRpc(item.ItemId, item.ItemTypeId, true, NetworkObjectId, item.transform.position, item.transform.rotation, default);
             return;
         }
 
@@ -322,10 +362,12 @@ public class NetworkPlayerInventory : NetworkBehaviour
                 int add = Mathf.Min(w, space);
                 inSlot.SetStackCount(c + add);
                 SetSlotStackCount(i, (byte)inSlot.StackCount);
+                SetSlotItemTypeId(i, inSlot.ItemTypeId);
                 w -= add;
             }
             if (w <= 0)
             {
+                RemoveWorldItemClientRpc(pickup.ItemId);
                 Object.Destroy(pickup.gameObject);
                 return;
             }
@@ -338,8 +380,10 @@ public class NetworkPlayerInventory : NetworkBehaviour
             pickup.SetStackCount(w);
             _selectedSlot.Value = (byte)emptyG;
             SetSlotItemId(emptyG, pickup.ItemId);
+            SetSlotItemTypeId(emptyG, pickup.ItemTypeId);
             SetSlotStackCount(emptyG, (byte)w);
             _selectedFlashlightLightOn.Value = false;
+            ApplyItemStateWithTypeClientRpc(pickup.ItemId, pickup.ItemTypeId, true, NetworkObjectId, pickup.transform.position, pickup.transform.rotation, default);
             return;
         }
 
@@ -348,8 +392,10 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
         _selectedSlot.Value = (byte)emptyOther;
         SetSlotItemId(emptyOther, item.ItemId);
+        SetSlotItemTypeId(emptyOther, item.ItemTypeId);
         SetSlotStackCount(emptyOther, 1);
         _selectedFlashlightLightOn.Value = false;
+        ApplyItemStateWithTypeClientRpc(item.ItemId, item.ItemTypeId, true, NetworkObjectId, item.transform.position, item.transform.rotation, default);
     }
 
     public void TryDropSelectedItem(Vector3 dropPosition, Quaternion dropRotation, Vector3 dropForward)
@@ -387,6 +433,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem item) || item == null)
         {
             SetSlotItemId(sel, 0UL);
+            SetSlotItemTypeId(sel, GrabbableInventoryItem.TypeIdNone);
             SetSlotStackCount(sel, 0);
             SelectAfterDrop();
             return;
@@ -409,11 +456,13 @@ public class NetworkPlayerInventory : NetworkBehaviour
             glowStack.SetStackCount(next);
             SetSlotStackCount(sel, (byte)next);
             ulong templateId = glowStack.ItemId;
-            SpawnSingleGlowstickDropClientRpc(templateId, finalDropPosition, finalDropRotation, throwImpulse);
+            ulong droppedItemId = ComputeRuntimeDroppedItemId(templateId, ++_runtimeDropSequence);
+            SpawnSingleGlowstickDropClientRpc(templateId, droppedItemId, finalDropPosition, finalDropRotation, throwImpulse);
             return;
         }
 
         SetSlotItemId(sel, 0UL);
+        SetSlotItemTypeId(sel, GrabbableInventoryItem.TypeIdNone);
         SetSlotStackCount(sel, 0);
         SelectAfterDrop();
         _selectedFlashlightLightOn.Value = false;
@@ -426,7 +475,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
             else
                 flashlight.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, lightOn, default);
 
-            ApplyItemStateClientRpc(flashlight.ItemId, false, 0UL, finalDropPosition, finalDropRotation, throwImpulse);
+            ApplyItemStateWithTypeClientRpc(flashlight.ItemId, flashlight.ItemTypeId, false, 0UL, finalDropPosition, finalDropRotation, throwImpulse);
         }
         else
         {
@@ -436,12 +485,12 @@ public class NetworkPlayerInventory : NetworkBehaviour
             if (item is GlowstickItem gForVis)
                 gForVis.SetWorldDroppedVisual();
 
-            ApplyItemStateClientRpc(item.ItemId, false, 0UL, finalDropPosition, finalDropRotation, default);
+            ApplyItemStateWithTypeClientRpc(item.ItemId, item.ItemTypeId, false, 0UL, finalDropPosition, finalDropRotation, default);
         }
     }
 
     [ClientRpc]
-    void SpawnSingleGlowstickDropClientRpc(ulong templateGlowstickItemId, Vector3 worldPosition, Quaternion worldRotation, Vector3 throwImpulse)
+    void SpawnSingleGlowstickDropClientRpc(ulong templateGlowstickItemId, ulong droppedItemId, Vector3 worldPosition, Quaternion worldRotation, Vector3 throwImpulse)
     {
         if (!GrabbableInventoryItem.TryGetRegistered(templateGlowstickItemId, out GrabbableInventoryItem template)
             || template is not GlowstickItem)
@@ -455,9 +504,29 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
         }
 
+        dropped.AssignNetworkItemId(droppedItemId);
         dropped.SetStackCount(1);
         dropped.ApplyNetworkWorldState(worldPosition, worldRotation, throwImpulse);
         dropped.SetWorldDroppedVisual();
+    }
+
+    ulong ComputeRuntimeDroppedItemId(ulong templateItemId, uint sequence)
+    {
+        return ComputeStableHash($"runtime-drop:{NetworkObjectId}:{OwnerClientId}:{templateItemId}:{sequence}");
+    }
+
+    static ulong ComputeStableHash(string key)
+    {
+        const ulong fnvOffset = 14695981039346656037UL;
+        const ulong fnvPrime = 1099511628211UL;
+        ulong hash = fnvOffset;
+        for (int i = 0; i < key.Length; i++)
+        {
+            hash ^= key[i];
+            hash *= fnvPrime;
+        }
+
+        return hash;
     }
 
     void SelectAfterDrop()
@@ -585,13 +654,13 @@ public class NetworkPlayerInventory : NetworkBehaviour
                     break;
                 _selectedSlot.Value = (byte)s;
                 UpdateFlashlightSyncFromSelected();
-                if (playerController == null
-                    || !playerController.TryGetFlashlightAttachmentTargets(out Transform holdPoint, out Transform follow))
-                {
-                    break;
-                }
-                Vector3 pos = holdPoint.position;
-                Quaternion rot = follow != null ? follow.rotation : holdPoint.rotation;
+                Transform holdPoint = null;
+                Transform follow = null;
+                if (playerController != null)
+                    playerController.TryGetFlashlightAttachmentTargets(out holdPoint, out follow);
+
+                Vector3 pos = holdPoint != null ? holdPoint.position : transform.position + transform.forward * 0.6f;
+                Quaternion rot = follow != null ? follow.rotation : transform.rotation;
                 ServerDropSelectedItem(pos, rot, forward);
             }
         }
@@ -616,8 +685,9 @@ public class NetworkPlayerInventory : NetworkBehaviour
             ulong holder = g.HolderNetworkObjectId;
             Vector3 p = g.transform.position;
             Quaternion r = g.transform.rotation;
-            ApplyItemStateClientRpc(
+            ApplyItemStateWithTypeClientRpc(
                 g.ItemId,
+                g.ItemTypeId,
                 held,
                 holder,
                 p,
@@ -637,8 +707,43 @@ public class NetworkPlayerInventory : NetworkBehaviour
         Vector3 worldDropImpulse,
         ClientRpcParams clientRpcParams = default)
     {
-        if (!GrabbableInventoryItem.TryResolveForState(itemId, worldPosition, out GrabbableInventoryItem g) || g == null)
+        ApplyItemStateClientRpcWithType(itemId, GrabbableInventoryItem.TypeIdNone, isHeld, holderNetworkObjectId, worldPosition, worldRotation, worldDropImpulse, clientRpcParams);
+    }
+
+    [ClientRpc]
+    void ApplyItemStateWithTypeClientRpc(
+        ulong itemId,
+        byte itemTypeId,
+        bool isHeld,
+        ulong holderNetworkObjectId,
+        Vector3 worldPosition,
+        Quaternion worldRotation,
+        Vector3 worldDropImpulse,
+        ClientRpcParams clientRpcParams = default)
+    {
+        ApplyItemStateClientRpcWithType(itemId, itemTypeId, isHeld, holderNetworkObjectId, worldPosition, worldRotation, worldDropImpulse, clientRpcParams);
+    }
+
+    void ApplyItemStateClientRpcWithType(
+        ulong itemId,
+        byte itemTypeId,
+        bool isHeld,
+        ulong holderNetworkObjectId,
+        Vector3 worldPosition,
+        Quaternion worldRotation,
+        Vector3 worldDropImpulse,
+        ClientRpcParams clientRpcParams = default)
+    {
+        GrabbableInventoryItem g = null;
+        bool found = itemTypeId != GrabbableInventoryItem.TypeIdNone
+            ? GrabbableInventoryItem.TryResolveForStateByType(itemId, worldPosition, itemTypeId, out g)
+            : GrabbableInventoryItem.TryResolveForState(itemId, worldPosition, out g);
+
+        if (!found || g == null)
             return;
+
+        if (g.ItemId != itemId)
+            g.AssignNetworkItemId(itemId);
 
         if (isHeld)
         {
@@ -680,20 +785,56 @@ public class NetworkPlayerInventory : NetworkBehaviour
         for (int i = 0; i < 3; i++)
         {
             ulong id = GetSlotItemId(i);
-            if (id == 0UL)
+            bool slotSaysKey = GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdKey;
+            if (id == 0UL && !slotSaysKey)
                 continue;
-            if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || g is not KeyItem)
+
+            GrabbableInventoryItem g = null;
+            bool resolvedKey = id != 0UL
+                && GrabbableInventoryItem.TryGetRegistered(id, out g)
+                && g is KeyItem;
+            if (!slotSaysKey && !resolvedKey)
                 continue;
 
             SetSlotItemId(i, 0UL);
+            SetSlotItemTypeId(i, GrabbableInventoryItem.TypeIdNone);
             SetSlotStackCount(i, 0);
-            Object.Destroy(g.gameObject);
+            if (g != null)
+            {
+                ConsumeItemClientRpc(id);
+                Object.Destroy(g.gameObject);
+            }
             SelectAfterDrop();
             RaiseChangedAndRefresh();
             return true;
         }
 
         return false;
+    }
+
+    [ClientRpc]
+    void ConsumeItemClientRpc(ulong itemId)
+    {
+        DestroyRegisteredItem(itemId);
+        playerController?.RefreshInventoryViewFromNetwork();
+    }
+
+    [ClientRpc]
+    void RemoveWorldItemClientRpc(ulong itemId)
+    {
+        DestroyRegisteredItem(itemId);
+        playerController?.RefreshInventoryViewFromNetwork();
+    }
+
+    static void DestroyRegisteredItem(ulong itemId)
+    {
+        if (itemId == 0UL)
+            return;
+
+        if (!GrabbableInventoryItem.TryGetRegistered(itemId, out GrabbableInventoryItem item) || item == null)
+            return;
+
+        Object.Destroy(item.gameObject);
     }
 
     public void RequestUnlockHingeDoor(HingeInteractDoor door)

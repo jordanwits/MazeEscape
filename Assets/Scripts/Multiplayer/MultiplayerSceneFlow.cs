@@ -4,7 +4,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 
 /// <summary>
-/// Loads the gameplay scene before starting NGO host/client so the player spawns in the right level.
+/// Keeps host/client connections in the menu lobby, then lets the host start a synchronized NGO scene load.
 /// Returning to the menu shuts down the session and loads the menu scene (bootstrap stays alive).
 /// </summary>
 [DisallowMultipleComponent]
@@ -17,23 +17,32 @@ public class MultiplayerSceneFlow : MonoBehaviour
     [SerializeField] MultiplayerSessionController session;
 
     bool _sceneOpInProgress;
+    SteamLobbyService _steamLobby;
 
     void Awake()
     {
         if (session == null)
             session = GetComponent<MultiplayerSessionController>();
+        if (_steamLobby == null)
+            _steamLobby = GetComponent<SteamLobbyService>();
     }
 
     void OnEnable()
     {
         if (NetworkManager.Singleton != null)
             NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnectedFromSession;
+        if (_steamLobby == null)
+            _steamLobby = GetComponent<SteamLobbyService>();
+        if (_steamLobby != null)
+            _steamLobby.LobbyJoinRequested += OnSteamLobbyJoinRequested;
     }
 
     void OnDisable()
     {
         if (NetworkManager.Singleton != null)
             NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnectedFromSession;
+        if (_steamLobby != null)
+            _steamLobby.LobbyJoinRequested -= OnSteamLobbyJoinRequested;
     }
 
     void OnClientDisconnectedFromSession(ulong clientId)
@@ -58,21 +67,81 @@ public class MultiplayerSceneFlow : MonoBehaviour
 
     public void RequestHostThenGame(ushort port)
     {
+        RequestHostLobby(port);
+    }
+
+    public void RequestJoinThenGame(string address, ushort port)
+    {
+        RequestJoinLobby(address, port);
+    }
+
+    public void RequestSteamHostThenGame()
+    {
+        RequestSteamHostLobby();
+    }
+
+    public void RequestSteamJoinThenGame(ulong hostSteamId)
+    {
+        RequestSteamJoinLobby(hostSteamId);
+    }
+
+    public void RequestSteamLobbyJoinThenGame(ulong lobbyId)
+    {
+        RequestSteamLobbyJoin(lobbyId);
+    }
+
+    public void RequestHostLobby(ushort port)
+    {
         if (_sceneOpInProgress || session == null)
             return;
 
         StopAllCoroutines();
-        StartCoroutine(LoadGameSceneThenHost(port));
+        session.StartHost(port);
     }
 
-    public void RequestJoinThenGame(string address, ushort port)
+    public void RequestJoinLobby(string address, ushort port)
     {
         if (_sceneOpInProgress || session == null)
             return;
 
         StopAllCoroutines();
         string trimmed = string.IsNullOrWhiteSpace(address) ? session.DefaultAddress : address.Trim();
-        StartCoroutine(LoadGameSceneThenJoin(trimmed, port));
+        session.StartClient(trimmed, port);
+    }
+
+    public void RequestSteamHostLobby()
+    {
+        if (_sceneOpInProgress || session == null)
+            return;
+
+        StopAllCoroutines();
+        session.StartSteamHost();
+    }
+
+    public void RequestSteamJoinLobby(ulong hostSteamId)
+    {
+        if (_sceneOpInProgress || session == null)
+            return;
+
+        StopAllCoroutines();
+        session.StartSteamClient(hostSteamId);
+    }
+
+    public void RequestSteamLobbyJoin(ulong lobbyId)
+    {
+        if (_sceneOpInProgress || session == null)
+            return;
+
+        StopAllCoroutines();
+        session.JoinSteamLobby(lobbyId);
+    }
+
+    public void RequestStartGameFromLobby()
+    {
+        if (_sceneOpInProgress || session == null)
+            return;
+
+        session.StartGameFromLobby();
     }
 
     public void ReturnToMainMenu()
@@ -131,6 +200,72 @@ public class MultiplayerSceneFlow : MonoBehaviour
         }
     }
 
+    IEnumerator LoadGameSceneThenSteamHost()
+    {
+        _sceneOpInProgress = true;
+        try
+        {
+            yield return LoadGameSceneIfNeeded();
+            if (!IsActiveSceneGameScene())
+            {
+                Debug.LogError(
+                    $"[Multiplayer] Still not in \"{GameSceneName}\" after load — Steam host not started. " +
+                    $"Check File → Build Settings lists that scene and the name matches exactly.");
+                yield break;
+            }
+
+            session.StartSteamHost();
+        }
+        finally
+        {
+            _sceneOpInProgress = false;
+        }
+    }
+
+    IEnumerator LoadGameSceneThenSteamJoin(ulong hostSteamId)
+    {
+        _sceneOpInProgress = true;
+        try
+        {
+            yield return LoadGameSceneIfNeeded();
+            if (!IsActiveSceneGameScene())
+            {
+                Debug.LogError(
+                    $"[Multiplayer] Still not in \"{GameSceneName}\" after load — Steam client not started. " +
+                    $"Check File → Build Settings lists that scene and the name matches exactly.");
+                yield break;
+            }
+
+            session.StartSteamClient(hostSteamId);
+        }
+        finally
+        {
+            _sceneOpInProgress = false;
+        }
+    }
+
+    IEnumerator LoadGameSceneThenSteamLobbyJoin(ulong lobbyId)
+    {
+        _sceneOpInProgress = true;
+        try
+        {
+            yield return LoadGameSceneIfNeeded();
+            if (!IsActiveSceneGameScene())
+            {
+                Debug.LogError(
+                    $"[Multiplayer] Still not in \"{GameSceneName}\" after load — Steam lobby join not started. " +
+                    $"Check File → Build Settings lists that scene and the name matches exactly.");
+                yield break;
+            }
+
+            session.JoinSteamLobby(lobbyId);
+        }
+        finally
+        {
+            _sceneOpInProgress = false;
+        }
+    }
+
     static bool IsActiveSceneGameScene()
     {
         Scene active = SceneManager.GetActiveScene();
@@ -155,5 +290,10 @@ public class MultiplayerSceneFlow : MonoBehaviour
 
         while (!load.isDone)
             yield return null;
+    }
+
+    void OnSteamLobbyJoinRequested(ulong lobbyId)
+    {
+        RequestSteamLobbyJoin(lobbyId);
     }
 }

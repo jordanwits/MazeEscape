@@ -1414,6 +1414,8 @@ public partial class PlayerController : MonoBehaviour
             for (int i = 0; i < 3; i++)
             {
                 ulong id = _networkPlayerInventory.GetSlotItemId(i);
+                if (_networkPlayerInventory.GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdKey)
+                    return true;
                 if (id == 0UL)
                     continue;
                 if (GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) && g is KeyItem)
@@ -1529,11 +1531,28 @@ public partial class PlayerController : MonoBehaviour
             float dist = toAim.magnitude;
             if (dist > 0.04f)
             {
-                if (Physics.Raycast(o, toAim / dist, out RaycastHit rh, dist - 0.03f, mask, QueryTriggerInteraction.Ignore))
+                int lineHitCount = Physics.RaycastNonAlloc(
+                    o,
+                    toAim / dist,
+                    _interactCastHitBuffer,
+                    dist - 0.03f,
+                    mask,
+                    QueryTriggerInteraction.Ignore);
+                bool blocked = false;
+                for (int i = 0; i < lineHitCount; i++)
                 {
-                    if (rh.collider.GetComponentInParent<GrabbableInventoryItem>() != g)
+                    RaycastHit rh = _interactCastHitBuffer[i];
+                    if (rh.collider.GetComponentInParent<GrabbableInventoryItem>() == g)
                         continue;
+                    if (InteractHitBelongsToOpenedChest(rh))
+                        continue;
+
+                    blocked = true;
+                    break;
                 }
+
+                if (blocked)
+                    continue;
             }
 
             if (t < bestAlong)

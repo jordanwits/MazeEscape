@@ -2,6 +2,7 @@ using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using UnityEngine;
 using System.Collections.Generic;
+using Netcode.Transports;
 
 [DisallowMultipleComponent]
 public class MultiplayerBootstrap : MonoBehaviour
@@ -23,8 +24,17 @@ public class MultiplayerBootstrap : MonoBehaviour
 
     void EnsureCoreComponents()
     {
+        if (!TryGetComponent(out SteamworksBootstrap _))
+            gameObject.AddComponent<SteamworksBootstrap>();
+
+        if (!TryGetComponent(out SteamLobbyService _))
+            gameObject.AddComponent<SteamLobbyService>();
+
         if (!TryGetComponent(out UnityTransport transport))
             transport = gameObject.AddComponent<UnityTransport>();
+
+        if (!TryGetComponent(out SteamNetworkingSocketsTransport _))
+            gameObject.AddComponent<SteamNetworkingSocketsTransport>();
 
         if (!TryGetComponent(out NetworkManager networkManager))
             networkManager = gameObject.AddComponent<NetworkManager>();

@@ -80,6 +80,10 @@ public class PitKillZone : MonoBehaviour
             if (playerHealth.IsDead)
                 return;
 
+            NetworkPlayerRespawn playerRespawn = playerHealth.GetComponent<NetworkPlayerRespawn>();
+            if (playerRespawn != null && playerRespawn.ShouldIgnorePitKill())
+                return;
+
             TryPlaySpikeStabSfx(other);
             playerHealth.TakeDamage(playerHealth.MaxHealth);
             return;

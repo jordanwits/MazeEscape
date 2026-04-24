@@ -128,7 +128,7 @@ public class MainMenuCanvasActions : MonoBehaviour
         if (_flow == null || _session == null)
             return;
 
-        _flow.RequestHostThenGame(_session.DefaultPort);
+        _flow.RequestHostLobby(_session.DefaultPort);
     }
 
     void OnJoinClicked()
@@ -136,7 +136,7 @@ public class MainMenuCanvasActions : MonoBehaviour
         if (_flow == null || _session == null)
             return;
 
-        _flow.RequestJoinThenGame(_session.DefaultAddress, _session.DefaultPort);
+        _flow.RequestJoinLobby(_session.DefaultAddress, _session.DefaultPort);
     }
 
     void OnQuitClicked()

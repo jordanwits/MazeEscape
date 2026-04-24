@@ -14,6 +14,7 @@ public class NetworkZombieAvatar : NetworkBehaviour
     [SerializeField] NavMeshAgent navMeshAgent;
     [SerializeField] CharacterController characterController;
     ServerNetworkAnimator _serverNetworkAnimator;
+    readonly NetworkVariable<bool> _isDead = new(false);
 
     void Awake()
     {
@@ -33,7 +34,23 @@ public class NetworkZombieAvatar : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        _isDead.OnValueChanged += HandleDeadStateChanged;
         ApplyAuthorityState();
+        ApplyDeadState(_isDead.Value);
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        _isDead.OnValueChanged -= HandleDeadStateChanged;
+    }
+
+    void Update()
+    {
+        if (!IsServer || zombieHealth == null)
+            return;
+
+        if (_isDead.Value != zombieHealth.IsDead)
+            _isDead.Value = zombieHealth.IsDead;
     }
 
     void ApplyAuthorityState()
@@ -48,6 +65,19 @@ public class NetworkZombieAvatar : NetworkBehaviour
 
         if (characterController != null)
             characterController.enabled = shouldSimulate;
+    }
+
+    void HandleDeadStateChanged(bool previousValue, bool currentValue)
+    {
+        ApplyDeadState(currentValue);
+    }
+
+    void ApplyDeadState(bool isDead)
+    {
+        if (!isDead || zombieAI == null)
+            return;
+
+        zombieAI.HandleDeath();
     }
 
     void EnsureAnimationSync()

@@ -237,12 +237,61 @@ public class MazeChest : NetworkBehaviour
             Vector3 spawnPos = anchor.position + lootSpawnWorldOffset;
             GameObject instance = Instantiate(prefab, spawnPos, anchor.rotation);
             instance.transform.SetParent(null, true);
+            if (instance.TryGetComponent(out GrabbableInventoryItem grabbable))
+                grabbable.AssignNetworkItemId(ComputeLootItemId(seed, i, idx));
             if (instance.TryGetComponent(out GlowstickItem glow))
                 glow.SetStackCount(GlowstickItem.MaxStack);
             ApplyChestLootAtRest(instance);
         }
 
         _lootSpawned = true;
+    }
+
+    ulong ComputeLootItemId(int seed, int anchorIndex, int prefabIndex)
+    {
+        string chestIdentity = IsSpawned ? $"network:{NetworkObjectId}" : $"scene:{BuildHierarchyPath(transform)}";
+        return ComputeStableHash($"chest-loot:{chestIdentity}:{seed}:{anchorIndex}:{prefabIndex}");
+    }
+
+    static string BuildHierarchyPath(Transform root)
+    {
+        if (root == null)
+            return "missing";
+
+        Stack<Transform> hierarchy = new Stack<Transform>();
+        Transform current = root;
+        while (current != null)
+        {
+            hierarchy.Push(current);
+            current = current.parent;
+        }
+
+        System.Text.StringBuilder builder = new System.Text.StringBuilder();
+        while (hierarchy.Count > 0)
+        {
+            Transform next = hierarchy.Pop();
+            builder.Append('/');
+            builder.Append(next.name);
+            builder.Append('[');
+            builder.Append(next.GetSiblingIndex());
+            builder.Append(']');
+        }
+
+        return builder.ToString();
+    }
+
+    static ulong ComputeStableHash(string key)
+    {
+        const ulong fnvOffset = 14695981039346656037UL;
+        const ulong fnvPrime = 1099511628211UL;
+        ulong hash = fnvOffset;
+        for (int i = 0; i < key.Length; i++)
+        {
+            hash ^= key[i];
+            hash *= fnvPrime;
+        }
+
+        return hash;
     }
 
     /// <summary>

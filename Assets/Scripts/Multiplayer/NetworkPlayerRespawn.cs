@@ -11,6 +11,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     [SerializeField] CharacterController characterController;
     [SerializeField] NetworkPlayerInventory networkPlayerInventory;
     [SerializeField] PlayerRagdollController ragdollController;
+    [SerializeField, Min(0f)] float respawnPitKillGraceSeconds = 1.5f;
     NetworkPlayerAvatar _networkPlayerAvatar;
 
     readonly NetworkVariable<bool> _isDead = new(false);
@@ -18,6 +19,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
 
     MultiplayerProjectSettings _projectSettings;
     Coroutine _respawnRoutine;
+    float _ignorePitKillsUntil;
 
     void Awake()
     {
@@ -83,6 +85,11 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         });
     }
 
+    public bool ShouldIgnorePitKill()
+    {
+        return IsSpawned && Time.time < _ignorePitKillsUntil;
+    }
+
     void HandlePlayerDied()
     {
         if (!IsServer || _isDead.Value)
@@ -124,9 +131,12 @@ public class NetworkPlayerRespawn : NetworkBehaviour
             respawnRotation = registryRotation;
         }
 
+        BeginRespawnPitKillGrace();
+        playerHealth?.RestoreFullHealth();
+        _isDead.Value = false;
+
         GetComponent<NetworkPlayerRagdoll>()?.ForceExitRagdollFromServer();
         ApplyRespawnTransform(respawnPosition, respawnRotation);
-        playerHealth?.RestoreFullHealth();
 
         RespawnOwnerClientRpc(respawnPosition, respawnRotation, new ClientRpcParams
         {
@@ -136,7 +146,6 @@ public class NetworkPlayerRespawn : NetworkBehaviour
             }
         });
 
-        _isDead.Value = false;
         _respawnRoutine = null;
     }
 
@@ -146,8 +155,8 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         if (IsServer)
             return;
 
-        ApplyRespawnTransform(respawnPosition, respawnRotation);
         playerHealth?.RestoreFullHealth();
+        ApplyRespawnTransform(respawnPosition, respawnRotation);
     }
 
     void HandleDeadStateChanged(bool previousValue, bool currentValue)
@@ -180,7 +189,16 @@ public class NetworkPlayerRespawn : NetworkBehaviour
 
         transform.SetPositionAndRotation(respawnPosition, respawnRotation);
 
-        if (characterController != null && !(_isDead.Value))
+        bool isDead = playerHealth != null ? playerHealth.IsDead : _isDead.Value;
+        if (characterController != null && !isDead)
             characterController.enabled = true;
+    }
+
+    void BeginRespawnPitKillGrace()
+    {
+        if (respawnPitKillGraceSeconds <= 0f)
+            return;
+
+        _ignorePitKillsUntil = Mathf.Max(_ignorePitKillsUntil, Time.time + respawnPitKillGraceSeconds);
     }
 }

@@ -59,11 +59,22 @@ public partial class PlayerController
             for (int i = 0; i < 3; i++)
             {
                 ulong id = _networkPlayerInventory.GetSlotItemId(i);
-                if (id == 0UL)
+                byte itemType = _networkPlayerInventory.GetSlotItemTypeId(i);
+                if (id == 0UL && itemType == GrabbableInventoryItem.TypeIdNone)
                     continue;
 
-                if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || g == null)
+                GrabbableInventoryItem g = null;
+                bool found = GrabbableInventoryItem.TryGetRegistered(id, out g) && g != null;
+                if (!found && itemType != GrabbableInventoryItem.TypeIdNone)
+                {
+                    Vector3 hintPos = transform.position;
+                    found = GrabbableInventoryItem.TryResolveForStateByType(id, hintPos, itemType, out g);
+                }
+                if (!found || g == null)
                     continue;
+
+                if (g.ItemId != id && id != 0UL)
+                    g.AssignNetworkItemId(id);
 
                 int selected = _networkPlayerInventory.SelectedSlotIndex;
                 bool isStash = i != selected;
@@ -82,11 +93,50 @@ public partial class PlayerController
                 }
             }
 
+            DetachItemsNoLongerInNetworkInventory(holderId);
             RefreshInventorySlotHud();
             return;
         }
 
         RefreshLocalInventoryView();
+    }
+
+    void DetachItemsNoLongerInNetworkInventory(ulong holderId)
+    {
+        if (holderId == 0UL || _networkPlayerInventory == null)
+            return;
+
+        foreach (GrabbableInventoryItem g in GrabbableInventoryItem.GetRegisteredItems())
+        {
+            if (g == null || g.HolderNetworkObjectId != holderId)
+                continue;
+            if (IsItemStillInNetworkInventory(g.ItemId))
+                continue;
+
+            if (g is FlashlightItem flashlight)
+            {
+                flashlight.ApplyNetworkWorldState(g.transform.position, g.transform.rotation, false, default);
+                continue;
+            }
+
+            g.ApplyNetworkWorldState(g.transform.position, g.transform.rotation, default);
+            if (g is GlowstickItem glowstick)
+                glowstick.SetWorldDroppedVisual();
+        }
+    }
+
+    bool IsItemStillInNetworkInventory(ulong itemId)
+    {
+        if (itemId == 0UL || _networkPlayerInventory == null)
+            return false;
+
+        for (int i = 0; i < 3; i++)
+        {
+            if (_networkPlayerInventory.GetSlotItemId(i) == itemId)
+                return true;
+        }
+
+        return false;
     }
 
     void RefreshLocalInventoryView()
@@ -327,19 +377,39 @@ public partial class PlayerController
             if (IsUsingNetworkedInventory)
             {
                 ulong id = _networkPlayerInventory.GetSlotItemId(i);
-                if (id == 0UL)
+                byte itemType = _networkPlayerInventory.GetSlotItemTypeId(i);
+                if (id == 0UL && itemType == GrabbableInventoryItem.TypeIdNone)
                 {
                     icon.sprite = null;
                     icon.enabled = false;
                     SetSlotStackText(i, 0, false);
                 }
-                else if (GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) && g != null)
+                else
                 {
-                    icon.sprite = g.GetEffectiveSlotIconForHud();
-                    icon.color = Color.white;
-                    icon.enabled = true;
-                    bool isGlow = g is GlowstickItem;
-                    SetSlotStackText(i, isGlow ? _networkPlayerInventory.GetSlotStackCount(i) : 0, isGlow);
+                    GrabbableInventoryItem g = null;
+                    bool found = GrabbableInventoryItem.TryGetRegistered(id, out g) && g != null;
+                    if (!found && itemType != GrabbableInventoryItem.TypeIdNone)
+                    {
+                        Vector3 hintPos = transform.position;
+                        found = GrabbableInventoryItem.TryResolveForStateByType(id, hintPos, itemType, out g);
+                    }
+
+                    if (found && g != null)
+                    {
+                        icon.sprite = g.GetEffectiveSlotIconForHud();
+                        icon.color = Color.white;
+                        icon.enabled = true;
+                        bool isGlow = g is GlowstickItem;
+                        SetSlotStackText(i, isGlow ? _networkPlayerInventory.GetSlotStackCount(i) : 0, isGlow);
+                    }
+                    else
+                    {
+                        icon.sprite = GrabbableInventoryItem.GetPlaceholderSlotIcon(itemType);
+                        icon.color = Color.white;
+                        icon.enabled = icon.sprite != null;
+                        bool isGlow = itemType == GrabbableInventoryItem.TypeIdGlowstick;
+                        SetSlotStackText(i, isGlow ? _networkPlayerInventory.GetSlotStackCount(i) : 0, isGlow);
+                    }
                 }
             }
             else
@@ -615,7 +685,7 @@ public partial class PlayerController
         int count = TryInteractCastNonAlloc(cam, mask);
         if (count <= 0)
         {
-            return false;
+            return TryFindInteractableGrabbableInViewFallback(cam, mask, out grabbable);
         }
 
         SortInteractHitsByDistance(count);
