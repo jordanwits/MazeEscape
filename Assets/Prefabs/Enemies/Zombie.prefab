@@ -176,7 +176,7 @@ AudioSource:
   m_PlayOnAwake: 0
   m_Volume: 1
   m_Pitch: 1
-  Loop: 0
+  Loop: 1
   Mute: 0
   Spatialize: 0
   SpatializePostEffects: 0
@@ -2696,15 +2696,15 @@ MonoBehaviour:
   characterController: {fileID: 2122988434391096662}
   zombieHealth: {fileID: 731013007641149117}
   screamAudioSource: {fileID: 9011111110000003}
-  screamAudioClip: {fileID: 8300000, guid: 40b42c5e51d1f654892349218f826579, type: 3}
   voiceAudioSource: {fileID: 9022222220000003}
-  zombieGrowlClip: {fileID: 8300000, guid: 7a6db2ccd239a3a43bf76091b923c269, type: 3}
-  zombieMoanClip: {fileID: 8300000, guid: 95e5842a76403184a989b525660ed667, type: 3}
-  zombieGruntClip: {fileID: 8300000, guid: 2b58a3bd4aa7eca45bf33e98d42b7068, type: 3}
+  zombieBreathingClip: {fileID: 8300000, guid: 839dbe142b370d64dac91ca35882f977, type: 3}
+  zombieScreamClip1: {fileID: 8300000, guid: 2904fef1c3a1e094182746dc5cdc17c7, type: 3}
+  zombieScreamClip2: {fileID: 8300000, guid: 891b0bc062e5de141b370da5c3efe3d4, type: 3}
+  zombieScreamClip3: {fileID: 8300000, guid: 4af497261bb844a448f3f8c3463c78e0, type: 3}
+  periodicScreamIntervalSeconds: 8
+  breathingVolume: 0.2
   zombieDeathClip: {fileID: 8300000, guid: 429e7db698fa074458d8b910dc36adbe, type: 3}
-  ambientVoiceInterval: 4
-  ambientVoiceVolume: 0.3
-  deathVoiceVolume: 0.3
+  deathVoiceVolume: 0.7
   footstepAudioSource: {fileID: 9033333330000003}
   footstepClip1: {fileID: 8300000, guid: 4da1bc539b3bc154b8a33b44a2304c1c, type: 3}
   footstepClip2: {fileID: 8300000, guid: 510199d7fcb4bff4fa1af1098c837530, type: 3}
@@ -2719,6 +2719,11 @@ MonoBehaviour:
   loseTargetRadiusMultiplier: 4
   attackRadius: 2
   targetNavMeshSampleRadius: 3
+  requireDetectionLineOfSight: 1
+  detectionLineOfSightMask:
+    serializedVersion: 2
+    m_Bits: 115
+  detectionLineOfSightHeight: 1.1
   walkSpeed: 2
   runSpeed: 6
   rotationSpeed: 720
@@ -2914,8 +2919,8 @@ MonoBehaviour:
   attackLineOfSightHeight: 1.1
   screamsOnAlert: 1
   screamDuration: 2.5
-  screamVolume: 0.8
-  screamLoudnessMultiplier: 1.8
+  screamVolume: 0.6
+  screamLoudnessMultiplier: 1.4
   screamSpatialBlend: 1
   scream3DMinDistance: 1
   scream3DMaxDistance: 85

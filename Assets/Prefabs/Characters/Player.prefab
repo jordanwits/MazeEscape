@@ -1979,13 +1979,15 @@ MonoBehaviour:
   attachCameraPitchToHeadDuringRagdollRecovery: 1
   flashlightHoldPoint: {fileID: 7134374883248310731}
   flashlightFollowsCameraPitch: 1
-  interactDistance: 5
+  interactDistance: 1.5
   interactSphereRadius: 0.3
   dropForce: 1.5
   pickupPromptRoot: {fileID: 8805300011000001}
   pickupPromptText: {fileID: 8805300011000013}
   pickupPromptMessage: Press E to pick up
   chestPromptMessage: Press E to open
+  doorUnlockPromptMessage: Press E to unlock
+  doorOpenPromptMessage: Press E to open
   interactMask:
     serializedVersion: 2
     m_Bits: 0
