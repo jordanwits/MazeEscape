@@ -131,7 +131,11 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] string groundedParameter = "Grounded";
     [SerializeField] string verticalVelocityParameter = "VerticalVelocity";
     [SerializeField] string strafeDirectionParameter = "StrafeDirection";
+    [SerializeField] string moveXParameter = "MoveX";
+    [SerializeField] string moveYParameter = "MoveY";
     [SerializeField] string animSpeedParameter = "AnimSpeed";
+    [Tooltip("Damping time for animator locomotion parameters, in seconds.")]
+    [SerializeField] float locomotionBlendDampTime = 0.12f;
     [Tooltip("Smoothing factor for strafe direction transitions (higher = faster).")]
     [SerializeField] float strafeDirectionSmoothSpeed = 8f;
     [Tooltip("After ragdoll/get-up, keep animator locomotion Speed at 0 for this long (covers GettingUp→Idle blend ~0.15s + margin).")]
@@ -217,6 +221,8 @@ public partial class PlayerController : MonoBehaviour
     public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
     public bool HasLocalControl => _hasLocalControl;
     public Transform LookPitchTransform => cameraTransform;
+    public bool UsesFirstPersonLook => firstPersonLook;
+    public Transform CameraPitchNode => cameraPitchTransform;
 
     public void RestoreFullStamina()
     {
@@ -259,6 +265,8 @@ public partial class PlayerController : MonoBehaviour
         animator.SetBool(groundedParameter, true);
         animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);
         animator.SetFloat(strafeDirectionParameter, 0f);
+        animator.SetFloat(moveXParameter, 0f);
+        animator.SetFloat(moveYParameter, 0f);
         animator.SetFloat(animSpeedParameter, 1f);
 
         _ragdollRecoverAnimatorSuppressUntil = Time.time + Mathf.Max(0f, ragdollRecoverAnimatorSuppressSeconds);
@@ -530,13 +538,16 @@ public partial class PlayerController : MonoBehaviour
                 _smoothedStrafeDirection,
                 targetStrafeDirection,
                 strafeDirectionSmoothSpeed * Time.deltaTime);
+            Vector2 targetLocomotionBlend = ComputeLocomotionBlend(_moveInput);
 
             float animSpeed = ComputeAnimationSpeed(_currentHorizontalSpeed, _isSprinting);
 
-            animator.SetFloat(speedParameter, speedForAnimator);
+            animator.SetFloat(speedParameter, speedForAnimator, locomotionBlendDampTime, Time.deltaTime);
             animator.SetBool(groundedParameter, characterController.isGrounded);
             animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);
             animator.SetFloat(strafeDirectionParameter, _smoothedStrafeDirection);
+            animator.SetFloat(moveXParameter, targetLocomotionBlend.x, locomotionBlendDampTime, Time.deltaTime);
+            animator.SetFloat(moveYParameter, targetLocomotionBlend.y, locomotionBlendDampTime, Time.deltaTime);
             animator.SetFloat(animSpeedParameter, animSpeed);
         }
 
@@ -1274,6 +1285,16 @@ public partial class PlayerController : MonoBehaviour
 
         Vector2 normalized = input / magnitude;
         return Mathf.Clamp(normalized.x, -1f, 1f);
+    }
+
+    Vector2 ComputeLocomotionBlend(Vector2 input)
+    {
+        if (input.sqrMagnitude < 0.01f)
+            return Vector2.zero;
+
+        return new Vector2(
+            Mathf.Clamp(input.x, -1f, 1f),
+            Mathf.Clamp(input.y, -1f, 1f));
     }
 
     float ComputeAnimationSpeed(float currentSpeed, bool sprinting)

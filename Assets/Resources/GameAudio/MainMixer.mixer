@@ -55,11 +55,14 @@ AudioMixerController:
     name: MusicVolume
   - guid: f119979047de3a9459045f4e3b02976e
     name: SfxVolume
+  - guid: c119979047de3a9459045f4e3b029771
+    name: VoiceVolume
   m_AudioMixerGroupViews:
   - guids:
     - 612e2547c59f10c44bbb73b7171af82a
     - 8e78c2cde764d00478145e15b58cf361
     - ad0be9e6cb4063d408013b17607b7e4c
+    - c0b0a0908070605040302010001020304
     name: View
   m_CurrentViewIndex: 0
   m_TargetSnapshot: {fileID: 24500006}
@@ -75,6 +78,7 @@ AudioMixerGroupController:
   m_Children:
   - {fileID: 1780934651363208089}
   - {fileID: -2078747760537998667}
+  - {fileID: -6001000000000000001}
   m_Volume: 740a13e9785bf6048bd19cbba8c70029
   m_Pitch: 3d8db5094b1316547ba02bf933675e02
   m_Send: 00000000000000000000000000000000
@@ -109,7 +113,41 @@ AudioMixerSnapshotController:
   m_SnapshotID: 21951f093b0c0b842bbbcfb7941ad763
   m_FloatValues:
     f119979047de3a9459045f4e3b02976e: 4.648096
+    c119979047de3a9459045f4e3b029771: 0
   m_TransitionOverrides: {}
+--- !u!243 &-6001000000000000001
+AudioMixerGroupController:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: Voice
+  m_AudioMixer: {fileID: 24100000}
+  m_GroupID: c0b0a0908070605040302010001020304
+  m_Children: []
+  m_Volume: c119979047de3a9459045f4e3b029771
+  m_Pitch: 825e7bba8ffdf5b4f90701e08ef5a00a
+  m_Send: 00000000000000000000000000000000
+  m_Effects:
+  - {fileID: -6001000000000000002}
+  m_UserColorIndex: 0
+  m_Mute: 0
+  m_Solo: 0
+  m_BypassEffects: 0
+--- !u!244 &-6001000000000000002
+AudioMixerEffectController:
+  m_ObjectHideFlags: 3
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: 
+  m_EffectID: 4a46f5788c7f2304494a2626d9f0f4e2
+  m_EffectName: Attenuation
+  m_MixLevel: f68e8ac7ac3a5e04ca09bbb5806317d0
+  m_Parameters: []
+  m_SendTarget: {fileID: 0}
+  m_EnableWetMix: 0
+  m_Bypass: 0
 --- !u!243 &1780934651363208089
 AudioMixerGroupController:
   m_ObjectHideFlags: 0

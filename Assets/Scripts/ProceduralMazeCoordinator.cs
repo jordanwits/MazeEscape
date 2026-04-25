@@ -508,7 +508,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         TrySpawnMazeChests(root.transform, builtCellRoots, seed);
         TrySpawnMazeStartFlashlights(root.transform);
         CreateSpawnPoints(root.transform, start, cellSize, multiStartFootprint);
-        MultiplayerSpawnRegistry.Instance?.RefreshSpawnPoints();
+        if (MultiplayerSpawnRegistry.Instance != null)
+        {
+            MultiplayerSpawnRegistry.Instance.RefreshSpawnPoints();
+            MultiplayerSpawnRegistry.Instance.ResetInitialJoinRoundRobin();
+        }
         TryRebuildRuntimeNavMesh(root);
         TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);

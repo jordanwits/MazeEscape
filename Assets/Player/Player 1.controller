@@ -508,6 +508,18 @@ AnimatorController:
     m_DefaultInt: 0
     m_DefaultBool: 0
     m_Controller: {fileID: 9100000}
+  - m_Name: MoveX
+    m_Type: 1
+    m_DefaultFloat: 0
+    m_DefaultInt: 0
+    m_DefaultBool: 0
+    m_Controller: {fileID: 9100000}
+  - m_Name: MoveY
+    m_Type: 1
+    m_DefaultFloat: 0
+    m_DefaultInt: 0
+    m_DefaultBool: 0
+    m_Controller: {fileID: 9100000}
   - m_Name: AnimSpeed
     m_Type: 1
     m_DefaultFloat: 1
@@ -524,7 +536,7 @@ AnimatorController:
     m_BlendingMode: 0
     m_SyncedLayerIndex: -1
     m_DefaultWeight: 0
-    m_IKPass: 0
+    m_IKPass: 1
     m_SyncedLayerAffectsTiming: 0
     m_Controller: {fileID: 9100000}
   m_EvaluateTransitionsOnStart: 1
@@ -758,12 +770,36 @@ BlendTree:
     m_DirectBlendParameter: StrafeDirection
     m_Mirror: 0
   - serializedVersion: 2
-    m_Motion: {fileID: 7400000, guid: c6464c7ee26ce3a45a6afcabbbb1e566, type: 2}
+    m_Motion: {fileID: 7400000, guid: 7d4d47fa485467e48b5d92595dc85984, type: 2}
     m_Threshold: 0
-    m_Position: {x: 0, y: 0}
+    m_Position: {x: 0, y: -1}
+    m_TimeScale: 1.1935483
+    m_CycleOffset: 0
+    m_DirectBlendParameter: MoveY
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 7400000, guid: 7d4d47fa485467e48b5d92595dc85984, type: 2}
+    m_Threshold: 0
+    m_Position: {x: -1, y: -1}
+    m_TimeScale: 1.1935483
+    m_CycleOffset: 0
+    m_DirectBlendParameter: MoveY
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 7400000, guid: 7d4d47fa485467e48b5d92595dc85984, type: 2}
+    m_Threshold: 0
+    m_Position: {x: 1, y: -1}
+    m_TimeScale: 1.1935483
+    m_CycleOffset: 0
+    m_DirectBlendParameter: MoveY
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 7400000, guid: c6464c7ee26ce3a45a6afcabbbb1e566, type: 2}
+    m_Threshold: 0.5
+    m_Position: {x: 0, y: 1}
     m_TimeScale: 1
     m_CycleOffset: 0
-    m_DirectBlendParameter: StrafeDirection
+    m_DirectBlendParameter: MoveY
     m_Mirror: 0
   - serializedVersion: 2
     m_Motion: {fileID: 7400000, guid: dfbe0e26b10c60f4ea8ea10832471b3f, type: 2}
@@ -773,13 +809,13 @@ BlendTree:
     m_CycleOffset: 0
     m_DirectBlendParameter: StrafeDirection
     m_Mirror: 0
-  m_BlendParameter: StrafeDirection
-  m_BlendParameterY: StrafeDirection
+  m_BlendParameter: MoveX
+  m_BlendParameterY: MoveY
   m_MinThreshold: -1
   m_MaxThreshold: 1
   m_UseAutomaticThresholds: 0
   m_NormalizedBlendValues: 0
-  m_BlendType: 0
+  m_BlendType: 3
 --- !u!206 &8111111111111111113
 BlendTree:
   m_ObjectHideFlags: 1
@@ -797,12 +833,36 @@ BlendTree:
     m_DirectBlendParameter: StrafeDirection
     m_Mirror: 0
   - serializedVersion: 2
-    m_Motion: {fileID: 7400000, guid: 26ac9a14f1a91a94dbc30299014ec40a, type: 2}
+    m_Motion: {fileID: 7400000, guid: 8e91b336fed0a5a4e8012d0e056c445a, type: 2}
     m_Threshold: 0
-    m_Position: {x: 0, y: 0}
+    m_Position: {x: 0, y: -1}
+    m_TimeScale: 0.8636364
+    m_CycleOffset: 0
+    m_DirectBlendParameter: MoveY
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 7400000, guid: 8e91b336fed0a5a4e8012d0e056c445a, type: 2}
+    m_Threshold: 0
+    m_Position: {x: -1, y: -1}
+    m_TimeScale: 0.8636364
+    m_CycleOffset: 0
+    m_DirectBlendParameter: MoveY
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 7400000, guid: 8e91b336fed0a5a4e8012d0e056c445a, type: 2}
+    m_Threshold: 0
+    m_Position: {x: 1, y: -1}
+    m_TimeScale: 0.8636364
+    m_CycleOffset: 0
+    m_DirectBlendParameter: MoveY
+    m_Mirror: 0
+  - serializedVersion: 2
+    m_Motion: {fileID: 7400000, guid: 26ac9a14f1a91a94dbc30299014ec40a, type: 2}
+    m_Threshold: 0.5
+    m_Position: {x: 0, y: 1}
     m_TimeScale: 1
     m_CycleOffset: 0
-    m_DirectBlendParameter: StrafeDirection
+    m_DirectBlendParameter: MoveY
     m_Mirror: 0
   - serializedVersion: 2
     m_Motion: {fileID: 7400000, guid: ff262317720d55b4dbaedf9d5ec004e0, type: 2}
@@ -812,10 +872,10 @@ BlendTree:
     m_CycleOffset: 0
     m_DirectBlendParameter: StrafeDirection
     m_Mirror: 0
-  m_BlendParameter: StrafeDirection
-  m_BlendParameterY: StrafeDirection
+  m_BlendParameter: MoveX
+  m_BlendParameterY: MoveY
   m_MinThreshold: -1
   m_MaxThreshold: 1
   m_UseAutomaticThresholds: 0
   m_NormalizedBlendValues: 0
-  m_BlendType: 0
+  m_BlendType: 3

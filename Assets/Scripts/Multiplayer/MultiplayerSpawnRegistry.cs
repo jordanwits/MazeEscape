@@ -18,6 +18,8 @@ public class MultiplayerSpawnRegistry : MonoBehaviour
 
     public int SpawnPointCount => _points.Length;
 
+    const string GeneratedSpawnRootName = "GeneratedSpawnPoints";
+
     void Awake()
     {
         if (Instance != null && Instance != this)
@@ -42,8 +44,38 @@ public class MultiplayerSpawnRegistry : MonoBehaviour
     {
         MultiplayerSpawnPoint[] found = FindObjectsByType<MultiplayerSpawnPoint>(FindObjectsInactive.Include);
 
-        Array.Sort(found, (a, b) => a.Priority.CompareTo(b.Priority));
+        // Procedurally created spawn points and the MG start prefab both use
+        // small priority values (0,1,2…), so a plain priority sort is unstable. Underlying FindObjects
+        // order and tie-breaking can differ between frames or network latency, so the "second" player
+        // could be sent to a different point than expected (e.g. outside the start area).
+        Array.Sort(found, (a, b) =>
+        {
+            int c = a.Priority.CompareTo(b.Priority);
+            if (c != 0)
+                return c;
+            c = IsUnderName(a.transform, GeneratedSpawnRootName).CompareTo(
+                IsUnderName(b.transform, GeneratedSpawnRootName));
+            if (c != 0)
+                return -c;
+            return a.GetEntityId().CompareTo(b.GetEntityId());
+        });
         _points = found;
+    }
+
+    public void ResetInitialJoinRoundRobin()
+    {
+        _nextInitialSpawnIndex = 0;
+    }
+
+    static bool IsUnderName(Transform t, string nodeName)
+    {
+        for (; t != null; t = t.parent)
+        {
+            if (t.name == nodeName)
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>Round-robin among spawn points; used when players first join.</summary>

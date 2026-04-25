@@ -1880,6 +1880,7 @@ GameObject:
   - component: {fileID: 8025695549591612232}
   - component: {fileID: 2408966858996660808}
   - component: {fileID: 4205222711325704942}
+  - component: {fileID: 8123456789012345678}
   - component: {fileID: 173290369037602801}
   - component: {fileID: 7659817465885413634}
   - component: {fileID: 640123456789012341}
@@ -1891,6 +1892,7 @@ GameObject:
   - component: {fileID: 640123456789012347}
   - component: {fileID: 7861290197597770154}
   - component: {fileID: 6032481290049715040}
+  - component: {fileID: 9030000000000000001}
   m_Layer: 0
   m_Name: Player
   m_TagString: Player
@@ -2072,6 +2074,27 @@ Animator:
   m_AllowConstantClipSamplingOptimization: 1
   m_KeepAnimatorStateOnDisable: 0
   m_WriteDefaultValuesOnDisable: 0
+--- !u!114 &8123456789012345678
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4447047592272457077}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f7e3c9d2a81b4c6e9f0d1e2a3b4c5d6e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerHeadLook
+  animator: {fileID: 4205222711325704942}
+  lookDirectionSource: {fileID: 3623829882816591901}
+  globalWeight: 1
+  bodyWeight: 0.18
+  headWeight: 0.92
+  eyesWeight: 0
+  clampWeight: 0.55
+  lookDistance: 2
+  ragdollController: {fileID: 640123456789012341}
 --- !u!114 &173290369037602801
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2403,6 +2426,24 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   ragdoll: {fileID: 7861290197597770154}
   playerHealth: {fileID: 0}
+--- !u!114 &9030000000000000001
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4447047592272457077}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f1e2d3c4b5a6978877665544332211fd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::NetworkPlayerVoice
+  voiceAnchor: {fileID: 3623829882816591901}
+  minHearingDistance: 1.2
+  maxHearingDistance: 22
+  inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+  playerMapName: Player
+  pushToTalkActionName: PushToTalk
 --- !u!1 &4494487397500983202
 GameObject:
   m_ObjectHideFlags: 0

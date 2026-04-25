@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using UnityEngine;
 using Steamworks;
 
@@ -57,6 +59,8 @@ public class SteamworksBootstrap : MonoBehaviour
 
         try
         {
+            PrepareSteamAppIdForLocalBuild();
+
             if (!Packsize.Test())
             {
                 s_Status = "Steamworks pack size check failed.";
@@ -74,7 +78,8 @@ public class SteamworksBootstrap : MonoBehaviour
             s_IsReady = SteamAPI.Init();
             if (!s_IsReady)
             {
-                s_Status = "SteamAPI.Init failed. Start Steam and make sure steam_appid.txt contains 480.";
+                s_Status =
+                    $"SteamAPI.Init failed. Run the Steam client, and make sure steam_appid.txt with {SpacewarAppId} is next to the game .exe.";
                 Debug.LogWarning($"[Steam] {s_Status}", this);
                 return;
             }
@@ -89,6 +94,40 @@ public class SteamworksBootstrap : MonoBehaviour
             s_IsReady = false;
             s_Status = $"Steamworks initialization failed: {ex.Message}";
             Debug.LogError($"[Steam] {s_Status}", this);
+        }
+    }
+
+    static void PrepareSteamAppIdForLocalBuild()
+    {
+        string appId = SpacewarAppId.ToString();
+
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SteamAppId")))
+            Environment.SetEnvironmentVariable("SteamAppId", appId);
+
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SteamGameId")))
+            Environment.SetEnvironmentVariable("SteamGameId", appId);
+
+        WriteSteamAppIdIfMissing(AppContext.BaseDirectory, appId);
+        WriteSteamAppIdIfMissing(Directory.GetCurrentDirectory(), appId);
+    }
+
+    static void WriteSteamAppIdIfMissing(string folder, string appId)
+    {
+        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+            return;
+
+        string path = Path.Combine(folder, "steam_appid.txt");
+        if (File.Exists(path))
+            return;
+
+        try
+        {
+            File.WriteAllText(path, appId);
+            Debug.Log($"[Steam] Created development steam_appid.txt at {path}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[Steam] Could not create development steam_appid.txt at {path}: {ex.Message}");
         }
     }
 }

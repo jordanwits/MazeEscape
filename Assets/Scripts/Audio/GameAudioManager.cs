@@ -13,10 +13,12 @@ public sealed class GameAudioManager : MonoBehaviour
     public const string ExposedMasterVolume = "MasterVolume";
     public const string ExposedMusicVolume = "MusicVolume";
     public const string ExposedSfxVolume = "SfxVolume";
+    public const string ExposedVoiceVolume = "VoiceVolume";
 
     const string PrefsMaster = "GameAudio.MasterLinear";
     const string PrefsMusic = "GameAudio.MusicLinear";
     const string PrefsSfx = "GameAudio.SfxLinear";
+    const string PrefsVoice = "GameAudio.VoiceLinear";
 
     public static GameAudioManager Instance { get; private set; }
 
@@ -26,18 +28,22 @@ public sealed class GameAudioManager : MonoBehaviour
     AudioMixer _mixer;
     AudioMixerGroup _musicGroup;
     AudioMixerGroup _sfxGroup;
+    AudioMixerGroup _voiceGroup;
 
     float _masterLinear = 1f;
     float _musicLinear = 1f;
     float _sfxLinear = 1f;
+    float _voiceLinear = 1f;
 
     public AudioMixer MainMixer => _mixer;
     public AudioMixerGroup MusicGroup => _musicGroup;
     public AudioMixerGroup SfxGroup => _sfxGroup;
+    public AudioMixerGroup VoiceGroup => _voiceGroup;
 
     public float MasterVolumeLinear => _masterLinear;
     public float MusicVolumeLinear => _musicLinear;
     public float SfxVolumeLinear => _sfxLinear;
+    public float VoiceVolumeLinear => _voiceLinear;
 
     void Awake()
     {
@@ -73,6 +79,7 @@ public sealed class GameAudioManager : MonoBehaviour
     {
         _musicGroup = FindGroup("Music");
         _sfxGroup = FindGroup("Sfx");
+        _voiceGroup = FindGroup("Voice");
     }
 
     AudioMixerGroup FindGroup(string name)
@@ -89,6 +96,7 @@ public sealed class GameAudioManager : MonoBehaviour
         _masterLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsMaster, 1f));
         _musicLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsMusic, 1f));
         _sfxLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsSfx, 1f));
+        _voiceLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsVoice, 1f));
     }
 
     void SavePrefs()
@@ -96,6 +104,7 @@ public sealed class GameAudioManager : MonoBehaviour
         PlayerPrefs.SetFloat(PrefsMaster, _masterLinear);
         PlayerPrefs.SetFloat(PrefsMusic, _musicLinear);
         PlayerPrefs.SetFloat(PrefsSfx, _sfxLinear);
+        PlayerPrefs.SetFloat(PrefsVoice, _voiceLinear);
         PlayerPrefs.Save();
     }
 
@@ -120,6 +129,13 @@ public sealed class GameAudioManager : MonoBehaviour
         ApplyBus(ExposedSfxVolume, _sfxLinear);
     }
 
+    public void SetVoiceVolumeLinear(float linear01)
+    {
+        _voiceLinear = Mathf.Clamp01(linear01);
+        SavePrefs();
+        ApplyBus(ExposedVoiceVolume, _voiceLinear);
+    }
+
     void ApplyAllToMixer()
     {
         if (_mixer == null)
@@ -128,6 +144,7 @@ public sealed class GameAudioManager : MonoBehaviour
         ApplyBus(ExposedMasterVolume, _masterLinear);
         ApplyBus(ExposedMusicVolume, _musicLinear);
         ApplyBus(ExposedSfxVolume, _sfxLinear);
+        ApplyBus(ExposedVoiceVolume, _voiceLinear);
     }
 
     void ApplyBus(string exposedName, float linear01)
@@ -147,6 +164,14 @@ public sealed class GameAudioManager : MonoBehaviour
             return;
 
         source.outputAudioMixerGroup = Instance._sfxGroup;
+    }
+
+    public static void RouteVoiceSource(AudioSource source)
+    {
+        if (source == null || Instance == null || Instance._voiceGroup == null)
+            return;
+
+        source.outputAudioMixerGroup = Instance._voiceGroup;
     }
 
     public static float LinearToDecibels(float linear)
