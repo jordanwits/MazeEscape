@@ -95,8 +95,13 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     }
 
     const string ConfigResourceName = "ProceduralMazeConfig";
-    const string SeedRequestMessageName = "maze-seed-request";
-    const string SeedResponseMessageName = "maze-seed-response";
+
+    /// <summary>
+    /// False while a <b>client</b> (not host) has loaded the target maze scene but the procedural
+    /// floor/colliders are not built yet. Steam/P2P latency makes this window longer than local IP,
+    /// so the local <see cref="CharacterController"/> must not simulate until this becomes true.
+    /// </summary>
+    public static bool IsLocalMazeCollidersReady { get; private set; } = true;
     const string TrapAnchorName = "TrapAnchor";
     const string TrapAnchor2Name = "TrapAnchor2";
     const string TrapMountPointName = "MountPoint";
@@ -126,7 +131,6 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
     ProceduralMazeConfig _config;
     NetworkManager _networkManager;
-    bool _handlersRegistered;
     bool _hasCurrentSeed;
     int _currentSeed;
     Coroutine _sceneRoutine;
@@ -181,13 +185,17 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     {
         SceneManager.sceneLoaded -= HandleSceneLoaded;
         UnhookNetworkEvents();
-        UnregisterMessageHandlers();
     }
 
     void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         if (!ShouldManageScene(scene))
             return;
+
+        // Before any other Update/FixedUpdate: pure clients have no walkable colliders until the
+        // seed round-trip finishes and BuildMazeInScene runs (host already has a synchronous build).
+        if (IsPureNetworkClient())
+            IsLocalMazeCollidersReady = false;
 
         RestartSceneRoutine(HandleSceneLoadedRoutine(scene));
     }
@@ -201,7 +209,6 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         if (IsServerListening())
         {
-            EnsureMessageHandlersRegistered();
             if (_hasCurrentSeed)
                 BuildMazeInScene(scene, _currentSeed);
             yield break;
@@ -209,8 +216,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         if (IsClientConnected())
         {
-            EnsureMessageHandlersRegistered();
-            yield return RequestSeedFromServer();
+            // Maze seed is sent via NetworkPlayerAvatar ServerRpc/ClientRpc (reliable on Steam; custom
+            // named messages to the host were not being received in practice).
             yield break;
         }
 
@@ -253,7 +260,6 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         if (_config == null || !_config.EnableGeneration)
             return;
 
-        EnsureMessageHandlersRegistered();
         _currentSeed = _config.RandomizeHostSeed ? UnityEngine.Random.Range(int.MinValue, int.MaxValue) : _config.OfflineSeed;
         _hasCurrentSeed = true;
 
@@ -264,21 +270,16 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
     void HandleClientConnected(ulong clientId)
     {
-        EnsureMessageHandlersRegistered();
-
         if (_networkManager == null || !_networkManager.IsListening)
             return;
 
         if (_networkManager.IsServer)
         {
             if (clientId != _networkManager.LocalClientId && _hasCurrentSeed)
-                SendSeedToClient(clientId);
+                TryDeliverMazeSeedToClientPlayer(clientId);
 
             return;
         }
-
-        if (clientId == _networkManager.LocalClientId)
-            RestartSceneRoutine(RequestSeedFromServer());
     }
 
     void HandleClientDisconnected(ulong clientId)
@@ -287,63 +288,38 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             return;
 
         if (!_networkManager.IsServer && clientId == _networkManager.LocalClientId)
+        {
             _hasCurrentSeed = false;
+            IsLocalMazeCollidersReady = true;
+        }
     }
 
-    IEnumerator RequestSeedFromServer()
+    public bool TryGetServerMazeSeed(out int seed)
     {
-        yield return null;
-
-        if (_networkManager == null || !_networkManager.IsListening || _networkManager.IsServer)
-            yield break;
-
-        EnsureMessageHandlersRegistered();
-        if (_networkManager.CustomMessagingManager == null)
-            yield break;
-
-        using FastBufferWriter writer = new(sizeof(byte), Allocator.Temp);
-        writer.WriteValueSafe((byte)1);
-        _networkManager.CustomMessagingManager.SendNamedMessage(
-            SeedRequestMessageName,
-            NetworkManager.ServerClientId,
-            writer,
-            NetworkDelivery.ReliableSequenced);
+        seed = 0;
+        if (!IsServerListening() || _networkManager == null || !_hasCurrentSeed)
+            return false;
+        seed = _currentSeed;
+        return true;
     }
 
-    void EnsureMessageHandlersRegistered()
+    public static void TryApplyMazeSeedAsClientFromRpc(int seed)
     {
-        if (_handlersRegistered || _networkManager == null || _networkManager.CustomMessagingManager == null)
+        if (NetworkManager.Singleton == null || NetworkManager.Singleton.IsServer)
+            return;
+        if (!NetworkManager.Singleton.TryGetComponent(out ProceduralMazeCoordinator coordinator) || coordinator == null)
+            return;
+        coordinator.ApplyMazeSeedFromNetworkOnClient(seed);
+    }
+
+    void ApplyMazeSeedFromNetworkOnClient(int seed)
+    {
+        if (_networkManager == null)
             return;
 
-        _networkManager.CustomMessagingManager.RegisterNamedMessageHandler(SeedRequestMessageName, HandleSeedRequest);
-        _networkManager.CustomMessagingManager.RegisterNamedMessageHandler(SeedResponseMessageName, HandleSeedResponse);
-        _handlersRegistered = true;
-    }
-
-    void UnregisterMessageHandlers()
-    {
-        if (!_handlersRegistered || _networkManager == null || _networkManager.CustomMessagingManager == null)
+        if (_hasCurrentSeed && _currentSeed == seed)
             return;
 
-        _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(SeedRequestMessageName);
-        _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(SeedResponseMessageName);
-        _handlersRegistered = false;
-    }
-
-    void HandleSeedRequest(ulong senderClientId, FastBufferReader _)
-    {
-        if (_networkManager == null || !_networkManager.IsServer || !_hasCurrentSeed)
-            return;
-
-        SendSeedToClient(senderClientId);
-    }
-
-    void HandleSeedResponse(ulong _, FastBufferReader reader)
-    {
-        if (_networkManager == null || _networkManager.IsServer)
-            return;
-
-        reader.ReadValueSafe(out int seed);
         _currentSeed = seed;
         _hasCurrentSeed = true;
 
@@ -352,18 +328,42 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             BuildMazeInScene(activeScene, seed);
     }
 
-    void SendSeedToClient(ulong clientId)
+    void TryDeliverMazeSeedToClientPlayer(ulong clientId)
     {
-        if (_networkManager == null || _networkManager.CustomMessagingManager == null)
+        if (_networkManager == null || !IsServerListening() || !_hasCurrentSeed)
+            return;
+        if (!_networkManager.ConnectedClients.TryGetValue(clientId, out NetworkClient client) || client == null)
+            return;
+        if (client.PlayerObject == null
+            || !client.PlayerObject.TryGetComponent(out NetworkPlayerAvatar playerAvatar)
+            || playerAvatar == null)
+        {
+            return;
+        }
+
+        playerAvatar.DeliverMazeSeedToOwnerFromServer(_currentSeed);
+    }
+
+    void BroadcastMazeSeedToRemotePlayerAvatars(int seed)
+    {
+        if (_networkManager == null || !IsServerListening() || !_hasCurrentSeed)
             return;
 
-        using FastBufferWriter writer = new(sizeof(int), Allocator.Temp);
-        writer.WriteValueSafe(_currentSeed);
-        _networkManager.CustomMessagingManager.SendNamedMessage(
-            SeedResponseMessageName,
-            clientId,
-            writer,
-            NetworkDelivery.ReliableSequenced);
+        foreach (KeyValuePair<ulong, NetworkClient> pair in _networkManager.ConnectedClients)
+        {
+            if (pair.Key == _networkManager.LocalClientId)
+                continue;
+            if (pair.Value == null)
+                continue;
+            if (pair.Value.PlayerObject == null
+                || !pair.Value.PlayerObject.TryGetComponent(out NetworkPlayerAvatar avatar)
+                || avatar == null)
+            {
+                continue;
+            }
+
+            avatar.DeliverMazeSeedToOwnerFromServer(seed);
+        }
     }
 
     bool ShouldManageScene(Scene scene)
@@ -516,6 +516,49 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         TryRebuildRuntimeNavMesh(root);
         TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);
+
+        MarkLocalMazeCollidersReadyAndResyncClientPlayer();
+        if (IsServerListening())
+            BroadcastMazeSeedToRemotePlayerAvatars(seed);
+    }
+
+    static bool IsPureNetworkClient() =>
+        NetworkManager.Singleton != null
+        && NetworkManager.Singleton.IsListening
+        && !NetworkManager.Singleton.IsServer;
+
+    public static bool ShouldBlockLocalPlayerUntilMazeReady()
+    {
+        if (IsLocalMazeCollidersReady)
+            return false;
+        return IsPureNetworkClient();
+    }
+
+    void MarkLocalMazeCollidersReadyAndResyncClientPlayer()
+    {
+        IsLocalMazeCollidersReady = true;
+
+        if (!IsPureNetworkClient())
+            return;
+        if (_networkManager == null
+            || !_networkManager.ConnectedClients.TryGetValue(
+                _networkManager.LocalClientId, out NetworkClient client)
+            || client.PlayerObject == null)
+            return;
+
+        CharacterController characterController = client.PlayerObject.GetComponent<CharacterController>();
+        if (characterController == null)
+            return;
+
+        Vector3 p = client.PlayerObject.transform.position;
+        Quaternion r = client.PlayerObject.transform.rotation;
+        characterController.enabled = false;
+        client.PlayerObject.transform.SetPositionAndRotation(p, r);
+        Physics.SyncTransforms();
+        characterController.enabled = true;
+
+        PlayerController playerController = client.PlayerObject.GetComponent<PlayerController>();
+        playerController?.OnClientMazeCollidersBecameReady();
     }
 
     /// <summary>
@@ -2188,9 +2231,9 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         if (!rebuildNavMeshAfterMaze || mazeRoot == null || !Application.isPlaying)
             return;
 
-        if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
-            return;
-
+        // Clients build the same maze from the synced seed, so they have the same colliders. Bake here too:
+        // replicated enemies use NavMeshAgent; the agent briefly needs a valid NavMesh on OnEnable (before
+        // NetworkZombieAvatar disables the agent for non-server), and this avoids "no valid NavMesh" spam.
         NavMeshSurface surface = mazeRoot.GetComponent<NavMeshSurface>();
         if (surface == null)
             surface = mazeRoot.AddComponent<NavMeshSurface>();

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -6,6 +7,8 @@ using UnityEngine;
 [RequireComponent(typeof(PlayerController))]
 public class NetworkPlayerCombat : NetworkBehaviour
 {
+    static readonly List<ulong> s_MeleeSwooshObserverClientIds = new List<ulong>(16);
+
     [SerializeField] PlayerController playerController;
 
     void Awake()
@@ -24,7 +27,7 @@ public class NetworkPlayerCombat : NetworkBehaviour
 
         if (IsServer)
         {
-            playerController?.ApplyServerAuthoritativeMeleeDamage();
+            ServerApplyMeleeWithObserverSwoosh();
             return;
         }
 
@@ -37,25 +40,60 @@ public class NetworkPlayerCombat : NetworkBehaviour
         if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
             return;
 
+        ServerApplyMeleeWithObserverSwoosh();
+    }
+
+    void ServerApplyMeleeWithObserverSwoosh()
+    {
+        PlayMeleeSwooshForNonOwnerClients();
         playerController?.ApplyServerAuthoritativeMeleeDamage();
     }
 
-    /// <summary>Server-only: tells the owning client to play melee hit feedback after a confirmed zombie hit.</summary>
-    public void NotifyOwnerMeleeHit()
+    /// <summary>Owner already plays swoosh in <c>TryMelee</c>; other clients get it from the server.</summary>
+    void PlayMeleeSwooshForNonOwnerClients()
     {
         if (!IsServer)
             return;
 
-        PlayMeleeHitFeedbackClientRpc(new ClientRpcParams
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null)
+            return;
+
+        s_MeleeSwooshObserverClientIds.Clear();
+        foreach (ulong id in nm.ConnectedClientsIds)
         {
-            Send = new ClientRpcSendParams { TargetClientIds = new[] { OwnerClientId } }
+            if (id != OwnerClientId)
+                s_MeleeSwooshObserverClientIds.Add(id);
+        }
+
+        if (s_MeleeSwooshObserverClientIds.Count == 0)
+            return;
+
+        PlayMeleeSwooshObserversClientRpc(new ClientRpcParams
+        {
+            Send = new ClientRpcSendParams { TargetClientIds = s_MeleeSwooshObserverClientIds.ToArray() }
         });
     }
 
     [ClientRpc]
-    void PlayMeleeHitFeedbackClientRpc(ClientRpcParams clientRpcParams = default)
+    void PlayMeleeSwooshObserversClientRpc(ClientRpcParams clientRpcParams = default)
     {
-        playerController?.PlayMeleeHitSfx();
+        playerController?.PlayMeleeSwooshSfx();
+    }
+
+    /// <summary>Server-only: same punch impact sound on every client, with a single chosen clip for everyone.</summary>
+    public void NotifyObserversMeleeHit(byte punchClipSlot0To2)
+    {
+        if (!IsServer)
+            return;
+
+        PlayMeleeHitObserversClientRpc(punchClipSlot0To2);
+    }
+
+    [ClientRpc]
+    void PlayMeleeHitObserversClientRpc(byte punchClipSlot0To2, ClientRpcParams clientRpcParams = default)
+    {
+        playerController?.PlayMeleeHitSfxWithIndex(punchClipSlot0To2);
     }
 
     /// <summary>Server-only: tells the owning client to play feedback when a zombie hit lands.</summary>

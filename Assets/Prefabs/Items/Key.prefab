@@ -29,13 +29,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7024707792395785160}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalRotation: {x: 0.021791829, y: -0.0039844764, z: 0.1798168, w: 0.98345065}
+  m_LocalPosition: {x: 0.0012039449, y: -0.0044997726, z: -0.00024561398}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 90, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 2.539, y: 0, z: 20.723}
 --- !u!33 &8974265133831145437
 MeshFilter:
   m_ObjectHideFlags: 0
@@ -106,12 +106,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::KeyItem
   _itemTypeId: 3
-  _slotIcon: {fileID: 0}
+  _slotIcon: {fileID: 21300000, guid: 803f13083c5f3f64987de356205696dc, type: 3}
   itemRigidbody: {fileID: 0}
   itemColliders: []
   itemRenderers: []
   heldLocalPosition: {x: 0, y: 0, z: 0}
-  heldLocalEulerAngles: {x: 0, y: 0, z: 0}
+  heldLocalEulerAngles: {x: 180, y: 0, z: 0}
   alignRotationWithFollow: 1
 --- !u!54 &1208223952772278169
 Rigidbody:

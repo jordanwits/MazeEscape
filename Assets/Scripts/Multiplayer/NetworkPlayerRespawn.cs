@@ -46,6 +46,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
             playerHealth.Damaged += HandlePlayerHealthChanged;
             playerHealth.Died += HandlePlayerDied;
             playerHealth.Restored += HandlePlayerHealthChanged;
+            playerHealth.Healed += HandlePlayerHealthChanged;
         }
 
         if (IsServer && playerHealth != null)
@@ -66,6 +67,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
             playerHealth.Damaged -= HandlePlayerHealthChanged;
             playerHealth.Died -= HandlePlayerDied;
             playerHealth.Restored -= HandlePlayerHealthChanged;
+            playerHealth.Healed -= HandlePlayerHealthChanged;
         }
     }
 

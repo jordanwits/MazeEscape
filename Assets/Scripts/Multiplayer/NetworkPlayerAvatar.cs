@@ -29,6 +29,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
     bool _isDormant;
     bool _isAlive = true;
+    NetworkManager _networkManager;
     OwnerNetworkAnimator _ownerNetworkAnimator;
     Light _remoteFlashlightProxyLight;
 
@@ -108,8 +109,17 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        _networkManager = NetworkManager.Singleton;
         SetDormant(false);
         ApplyOwnershipState();
+
+        if (IsOwner
+            && !IsServer
+            && UnityEngine.SceneManagement.SceneManager.GetActiveScene().name
+                == MultiplayerSceneFlow.GameSceneName)
+        {
+            RequestMazeSeedFromHostServerRpc();
+        }
     }
 
     public override void OnGainedOwnership()
@@ -124,6 +134,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
     public override void OnNetworkDespawn()
     {
+        _networkManager = null;
         SetDormant(false);
         ApplyPresentation(true);
         SetRemoteFlashlightProxyEnabled(false);
@@ -169,14 +180,15 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         TryPickupItem(flashlight);
     }
 
-    public void TriggerAnimation(string triggerName)
+    public     void TriggerAnimation(string triggerName)
     {
         if (string.IsNullOrWhiteSpace(triggerName))
             return;
 
+        NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
         bool useNetworkAnimator = _ownerNetworkAnimator != null
-            && NetworkManager.Singleton != null
-            && NetworkManager.Singleton.IsListening
+            && nm != null
+            && nm.IsListening
             && IsSpawned;
 
         if (useNetworkAnimator)
@@ -302,7 +314,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
     bool ShouldBeDormant()
     {
-        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+        NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening)
             return false;
 
         return !IsSpawned;
@@ -320,7 +333,14 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             playerHealth.SetHudVisible(isLocalOwner && _isAlive);
 
         if (characterController != null)
-            characterController.enabled = _isAlive;
+        {
+            // Client-authoritative transform: remote player proxies should not run CharacterController
+            // physics (no Move on host/client observer); that wastes work and can fight NetworkTransform.
+            NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
+            bool inNetSession = nm != null && nm.IsListening;
+            bool enableCc = _isAlive && (!inNetSession || isLocalOwner);
+            characterController.enabled = enableCc;
+        }
 
         if (localOnlyCameras != null)
         {
@@ -409,5 +429,36 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             return;
 
         ApplyPresentation(IsOwner);
+    }
+
+    /// <summary>Called on the <b>server</b> on this avatar instance to push the maze seed to that player's client. Uses ClientRpc (reliable) instead of custom named messages, which do not work reliably to the Steam host in practice.</summary>
+    public void DeliverMazeSeedToOwnerFromServer(int seed)
+    {
+        if (!IsServer)
+            return;
+        DeliverMazeSeedToOwnerClientRpc(seed);
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+    void RequestMazeSeedFromHostServerRpc()
+    {
+        if (NetworkManager.Singleton == null
+            || !NetworkManager.Singleton.TryGetComponent(out ProceduralMazeCoordinator coordinator)
+            || coordinator == null
+            || !coordinator.TryGetServerMazeSeed(out int seed))
+        {
+            return;
+        }
+        DeliverMazeSeedToOwnerClientRpc(seed);
+    }
+
+    [ClientRpc]
+    void DeliverMazeSeedToOwnerClientRpc(int seed, ClientRpcParams clientRpcParams = default)
+    {
+        if (IsServer)
+            return;
+        if (!IsOwner)
+            return;
+        ProceduralMazeCoordinator.TryApplyMazeSeedAsClientFromRpc(seed);
     }
 }

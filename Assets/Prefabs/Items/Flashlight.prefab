@@ -233,6 +233,7 @@ GameObject:
   - component: {fileID: 5538197934289644156}
   - component: {fileID: 5871732867846903746}
   - component: {fileID: 6184729301827463521}
+  - component: {fileID: 8192837460011223344}
   m_Layer: 0
   m_Name: Flashlight
   m_TagString: Untagged
@@ -440,3 +441,15 @@ MonoBehaviour:
   AutoObjectParentSync: 0
   SyncOwnerTransformWhenParented: 0
   AllowOwnerToParent: 0
+--- !u!114 &8192837460011223344
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7328506109978203443}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c4d8a2e1f9054b6c9d0e1f2a3b4c5d6e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics

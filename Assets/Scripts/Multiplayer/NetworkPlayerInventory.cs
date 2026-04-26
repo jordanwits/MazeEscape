@@ -632,11 +632,21 @@ public class NetworkPlayerInventory : NetworkBehaviour
         if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || !(g is FlashlightItem flashlight))
             return;
 
+        bool wasOn = flashlight.IsLightOn;
         if (flashlight.IsLightOn)
             flashlight.SetLightEnabled(false);
         else if (flashlight.HasUsableBattery)
             flashlight.SetLightEnabled(true);
         _selectedFlashlightLightOn.Value = flashlight.IsLightOn;
+
+        if (wasOn != flashlight.IsLightOn)
+            PlayFlashlightClickObserversClientRpc();
+    }
+
+    [ClientRpc]
+    void PlayFlashlightClickObserversClientRpc()
+    {
+        playerController?.PlayFlashlightClickSfx();
     }
 
     public void ServerDropAllHeldOnDeath()
@@ -775,6 +785,84 @@ public class NetworkPlayerInventory : NetworkBehaviour
         }
 
         playerController?.RefreshInventoryViewFromNetwork();
+    }
+
+    public void RequestUseSelectedBandage()
+    {
+        if (!IsSpawned)
+            return;
+
+        if (IsServer)
+        {
+            ServerUseSelectedBandage();
+            return;
+        }
+
+        RequestUseSelectedBandageServerRpc();
+    }
+
+    [ServerRpc]
+    void RequestUseSelectedBandageServerRpc(ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+
+        ServerUseSelectedBandage();
+    }
+
+    void ServerUseSelectedBandage()
+    {
+        if (!IsServer)
+            return;
+
+        int sel = SelectedSlotIndex;
+        ulong id = GetSlotItemId(sel);
+        bool slotSaysBandage = GetSlotItemTypeId(sel) == GrabbableInventoryItem.TypeIdBandage;
+        if (id == 0UL && !slotSaysBandage)
+            return;
+
+        GrabbableInventoryItem g = null;
+        bool resolved = id != 0UL
+            && GrabbableInventoryItem.TryGetRegistered(id, out g)
+            && g is BandageItem;
+        if (!resolved && slotSaysBandage)
+        {
+            Vector3 hint = playerController != null ? playerController.transform.position : transform.position;
+            resolved = GrabbableInventoryItem.TryResolveForStateByType(
+                id,
+                hint,
+                GrabbableInventoryItem.TypeIdBandage,
+                out g)
+                && g is BandageItem;
+        }
+
+        if (!resolved || g == null)
+            return;
+
+        PlayerHealth health = playerController != null
+            ? playerController.GetComponent<PlayerHealth>()
+            : GetComponent<PlayerHealth>();
+        if (health == null || health.IsDead || health.CurrentHealth >= health.MaxHealth)
+            return;
+
+        health.Heal(BandageItem.HealthRestoreAmount);
+        PlayBandageUseObserversClientRpc();
+
+        SetSlotItemId(sel, 0UL);
+        SetSlotItemTypeId(sel, GrabbableInventoryItem.TypeIdNone);
+        SetSlotStackCount(sel, 0);
+        _selectedFlashlightLightOn.Value = false;
+        ulong consumeId = g.ItemId;
+        ConsumeItemClientRpc(consumeId);
+        Object.Destroy(g.gameObject);
+        SelectAfterDrop();
+        RaiseChangedAndRefresh();
+    }
+
+    [ClientRpc]
+    void PlayBandageUseObserversClientRpc()
+    {
+        playerController?.PlayBandageUseSfx();
     }
 
     public bool ServerTryConsumeKeyItem()

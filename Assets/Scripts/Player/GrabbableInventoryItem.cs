@@ -14,6 +14,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     public const byte TypeIdFlashlight = 1;
     public const byte TypeIdGlowstick = 2;
     public const byte TypeIdKey = 3;
+    public const byte TypeIdBandage = 4;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -31,6 +32,9 @@ public class GrabbableInventoryItem : MonoBehaviour
     public bool IsHeld { get; private set; }
     public bool IsStashed { get; private set; }
 
+    /// <summary>World rigidbody, if any (cached in <see cref="Awake"/> when unassigned in the inspector).</summary>
+    public Rigidbody ItemRigidbody => itemRigidbody;
+
     /// <summary>Called by the player inventory when applying hand vs non-selected slot layout.</summary>
     public void SetStashViewStateForInventory(bool isStashed)
     {
@@ -45,6 +49,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhFlash;
     static Sprite s_hudPhGlow;
     static Sprite s_hudPhKey;
+    static Sprite s_hudPhBandage;
 
     /// <summary>Inspector <see cref="_slotIcon"/> if set; otherwise a simple circular runtime glyph (transparent outside the disk).</summary>
     public Sprite GetEffectiveSlotIconForHud()
@@ -69,6 +74,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdGlowstick;
         if (GetComponent<KeyItem>() != null)
             return TypeIdKey;
+        if (GetComponent<BandageItem>() != null)
+            return TypeIdBandage;
         return TypeIdNone;
     }
 
@@ -78,7 +85,8 @@ public class GrabbableInventoryItem : MonoBehaviour
         {
             TypeIdFlashlight => s_hudPhFlash ??= CreatePlaceholderSprite(0.95f, 0.9f, 0.5f),
             TypeIdGlowstick => s_hudPhGlow ??= CreatePlaceholderSprite(0.35f, 1f, 0.35f),
-            TypeIdKey => s_hudPhKey ??= CreatePlaceholderSprite(0.92f, 0.75f, 0.2f),
+            TypeIdKey => KeyItem.SharedHudSlotIcon ?? (s_hudPhKey ??= CreatePlaceholderSprite(0.92f, 0.75f, 0.2f)),
+            TypeIdBandage => BandageItem.SharedHudSlotIcon ?? (s_hudPhBandage ??= CreatePlaceholderSprite(0.95f, 0.35f, 0.35f)),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
     }

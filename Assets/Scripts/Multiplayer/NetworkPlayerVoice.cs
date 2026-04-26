@@ -264,12 +264,21 @@ public class NetworkPlayerVoice : NetworkBehaviour
 
         public void EnqueueShorts(short[] frame, int count)
         {
-            for (int i = 0; i < count; i++)
+            if (count <= 0)
+                return;
+            // One budget check per frame, then a bounded dequeue pass — avoid reading ConcurrentQueue.Count
+            // around every enqueued sample (it can be O(n) and was on the per-sample hot path for proximity voice).
+            int room = MaxQueuedSamples - count;
+            if (room < 0)
+                room = 0;
+            int excess = _queue.Count - room;
+            for (int d = 0; d < excess; d++)
             {
-                while (_queue.Count > MaxQueuedSamples)
-                    _queue.TryDequeue(out _);
-                _queue.Enqueue(frame[i] / 32768f);
+                if (!_queue.TryDequeue(out _))
+                    break;
             }
+            for (int i = 0; i < count; i++)
+                _queue.Enqueue(frame[i] / 32768f);
         }
 
         public void Dispose()

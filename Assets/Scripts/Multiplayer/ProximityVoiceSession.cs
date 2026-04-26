@@ -13,10 +13,21 @@ public class ProximityVoiceSession : MonoBehaviour
     public const string VoiceDownMessageName = "maze-escape-prox-voice-down";
     static bool s_HandlersRegistered;
 
+    /// <summary>
+    /// Fixed scratch buffers for voice PCM decode. Netcode message handlers are non-reentrant; avoids per-frame GC on the host when relaying.
+    /// </summary>
+    static readonly short[] s_ServerVoicePcmScratch = new short[NetworkPlayerVoice.FrameSamples];
+    static readonly short[] s_ClientVoicePcmScratch = new short[NetworkPlayerVoice.FrameSamples];
+
     void OnEnable() => RegisterHandlers();
-    void Start() => RegisterHandlers();
-    void LateUpdate() => RegisterHandlers();
     void OnDestroy() => UnregisterHandlers();
+
+    void Update()
+    {
+        if (s_HandlersRegistered)
+            return;
+        RegisterHandlers();
+    }
 
     void RegisterHandlers()
     {
@@ -56,13 +67,12 @@ public class ProximityVoiceSession : MonoBehaviour
         reader.ReadValueSafe(out ushort count);
         if (count == 0 || count > NetworkPlayerVoice.FrameSamples)
             return;
-        var samples = new short[count];
         for (int i = 0; i < count; i++)
         {
             reader.ReadValueSafe(out short s);
-            samples[i] = s;
+            s_ServerVoicePcmScratch[i] = s;
         }
-        RelayToOthers(senderId, seq, count, samples);
+        RelayToOthers(senderId, seq, count, s_ServerVoicePcmScratch);
     }
 
     static void RelayToOthers(ulong senderId, ushort seq, int count, short[] samples)
@@ -132,12 +142,11 @@ public class ProximityVoiceSession : MonoBehaviour
             return;
         if (!VoiceClientRegistry.TryGet(originalSpeaker, out NetworkPlayerVoice target))
             return;
-        var frame = new short[count];
         for (int i = 0; i < count; i++)
         {
             reader.ReadValueSafe(out short s);
-            frame[i] = s;
+            s_ClientVoicePcmScratch[i] = s;
         }
-        target.EnqueuePcm16Frame(seq, frame, count);
+        target.EnqueuePcm16Frame(seq, s_ClientVoicePcmScratch, count);
     }
 }

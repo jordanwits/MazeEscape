@@ -2014,6 +2014,8 @@ MonoBehaviour:
   minimumFootstepSpeed: 0.15
   flashlightClickClip: {fileID: 8300000, guid: 06e885263fd95c644bb0d90350b95b2e, type: 3}
   flashlightClickVolume: 0.05
+  bandageUseClip: {fileID: 8300000, guid: 92cbc2c7564a736428e5439c30d22bf2, type: 3}
+  bandageUseVolume: 0.05
   maxStamina: 100
   staminaDrainRate: 20
   staminaRegenRate: 15
@@ -2043,7 +2045,10 @@ MonoBehaviour:
   groundedParameter: Grounded
   verticalVelocityParameter: VerticalVelocity
   strafeDirectionParameter: StrafeDirection
+  moveXParameter: MoveX
+  moveYParameter: MoveY
   animSpeedParameter: AnimSpeed
+  locomotionBlendDampTime: 0.12
   strafeDirectionSmoothSpeed: 8
   ragdollRecoverAnimatorSuppressSeconds: 0.35
   snapAnimatorToIdleAfterRagdollRecover: 1
@@ -2094,7 +2099,7 @@ MonoBehaviour:
   eyesWeight: 0
   clampWeight: 0.55
   lookDistance: 2
-  ragdollController: {fileID: 640123456789012341}
+  ragdollController: {fileID: 0}
 --- !u!114 &173290369037602801
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2116,6 +2121,7 @@ MonoBehaviour:
       m_Calls: []
   healthBarImage: {fileID: 0}
   autoCreateHealthBar: 1
+  healthBarHealFillSpeedHps: 30
 --- !u!82 &7659817465885413634
 AudioSource:
   m_ObjectHideFlags: 0
@@ -2339,6 +2345,7 @@ MonoBehaviour:
   characterController: {fileID: 8025695549591612232}
   networkPlayerInventory: {fileID: 0}
   ragdollController: {fileID: 0}
+  respawnPitKillGraceSeconds: 1.5
 --- !u!114 &640123456789012345
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2438,6 +2445,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f1e2d3c4b5a6978877665544332211fd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::NetworkPlayerVoice
+  ShowTopMostFoldoutHeaderGroup: 1
   voiceAnchor: {fileID: 3623829882816591901}
   minHearingDistance: 1.2
   maxHearingDistance: 22

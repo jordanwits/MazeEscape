@@ -15,7 +15,10 @@ public class PlayerHealth : MonoBehaviour
     [SerializeField] Image healthBarImage;
     [Tooltip("Auto-create a HUD health bar if none is assigned.")]
     [SerializeField] bool autoCreateHealthBar = true;
+    [Tooltip("When CurrentHealth increases, the health bar fill moves toward the new value at this many HP per second. Damage still updates the bar immediately.")]
+    [SerializeField, Min(1f)] float healthBarHealFillSpeedHps = 25f;
 
+    float _displayHealth;
     RectTransform _healthFillRect;
     GameObject _healthBarRoot;
     NetworkObject _networkObject;
@@ -27,6 +30,7 @@ public class PlayerHealth : MonoBehaviour
     public event Action Damaged;
     public event Action Died;
     public event Action Restored;
+    public event Action Healed;
 
     void Awake()
     {
@@ -35,6 +39,25 @@ public class PlayerHealth : MonoBehaviour
 
         if (healthBarImage == null && autoCreateHealthBar)
             healthBarImage = CreateHealthBarUI();
+
+        _displayHealth = CurrentHealth;
+        UpdateHealthBar();
+    }
+
+    void Update()
+    {
+        if (IsDead)
+            return;
+
+        if (CurrentHealth < _displayHealth)
+            _displayHealth = CurrentHealth;
+        else if (CurrentHealth > _displayHealth)
+        {
+            _displayHealth = Mathf.MoveTowards(
+                _displayHealth,
+                CurrentHealth,
+                healthBarHealFillSpeedHps * Time.deltaTime);
+        }
 
         UpdateHealthBar();
     }
@@ -48,6 +71,7 @@ public class PlayerHealth : MonoBehaviour
             return;
 
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
+        _displayHealth = CurrentHealth;
         UpdateHealthBar();
         onDamaged?.Invoke();
         Damaged?.Invoke();
@@ -62,18 +86,25 @@ public class PlayerHealth : MonoBehaviour
 
     public void Heal(float amount)
     {
+        if (_networkObject != null
+            && NetworkManager.Singleton != null
+            && NetworkManager.Singleton.IsListening
+            && !NetworkManager.Singleton.IsServer)
+            return;
+
         if (IsDead || amount <= 0f)
             return;
 
         CurrentHealth = Mathf.Min(Mathf.Max(1f, maxHealth), CurrentHealth + amount);
-        UpdateHealthBar();
+        // Bar catches up in Update; do not snap _displayHealth here
+        Healed?.Invoke();
     }
 
     public void RestoreFullHealth()
     {
         IsDead = false;
         CurrentHealth = Mathf.Max(1f, maxHealth);
-        UpdateHealthBar();
+        // Bar animates to full; do not set _displayHealth here
         Restored?.Invoke();
     }
 
@@ -82,6 +113,8 @@ public class PlayerHealth : MonoBehaviour
         bool wasDead = IsDead;
         CurrentHealth = Mathf.Clamp(currentHealth, 0f, Mathf.Max(1f, maxHealth));
         IsDead = isDead;
+        if (CurrentHealth < _displayHealth)
+            _displayHealth = CurrentHealth;
         UpdateHealthBar();
         if (!wasDead && isDead)
         {
@@ -92,10 +125,11 @@ public class PlayerHealth : MonoBehaviour
 
     void UpdateHealthBar()
     {
+        float t = maxHealth > 0f ? Mathf.Clamp01(_displayHealth / maxHealth) : 0f;
         if (_healthFillRect != null)
-            _healthFillRect.anchorMax = new Vector2(HealthNormalized, 1f);
+            _healthFillRect.anchorMax = new Vector2(t, 1f);
         else if (healthBarImage != null)
-            healthBarImage.fillAmount = HealthNormalized;
+            healthBarImage.fillAmount = t;
     }
 
     Image CreateHealthBarUI()

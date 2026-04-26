@@ -85,6 +85,8 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] float minimumFootstepSpeed = 0.15f;
     [SerializeField] AudioClip flashlightClickClip;
     [SerializeField, Range(0f, 1f)] float flashlightClickVolume = 0.65f;
+    [SerializeField] AudioClip bandageUseClip;
+    [SerializeField, Range(0f, 1f)] float bandageUseVolume = 0.75f;
 
     [Header("Stamina")]
     [SerializeField] float maxStamina = 100f;
@@ -336,6 +338,9 @@ public partial class PlayerController : MonoBehaviour
             }
         }
 
+        if (firstPersonLook && GetComponent<FirstPersonViewHeadSync>() == null)
+            gameObject.AddComponent<FirstPersonViewHeadSync>();
+
         if (enemyMask == 0)
         {
             int enemyLayer = LayerMask.NameToLayer(EnemyLayerName);
@@ -467,6 +472,21 @@ public partial class PlayerController : MonoBehaviour
 
         if (firstPersonLook && UseNetworkedFlashlightFlow && _networkPlayerAvatar != null && _networkPlayerAvatar.IsOwner)
             _networkPlayerAvatar.PublishFlashlightLookPitch(_lookPitchDegrees);
+
+        if (ProceduralMazeCoordinator.ShouldBlockLocalPlayerUntilMazeReady())
+        {
+            _moveInput = Vector2.zero;
+            _horizontalVelocity = Vector3.zero;
+            _verticalVelocity = Vector3.zero;
+            _groundMoveThisFrame = Vector3.zero;
+            if (driveAnimator && animator != null)
+            {
+                animator.SetFloat(speedParameter, 0f, locomotionBlendDampTime, Time.deltaTime);
+                animator.SetBool(groundedParameter, false);
+                animator.SetFloat(verticalVelocityParameter, 0f);
+            }
+            return;
+        }
 
         HandleInventoryScrollInUpdate();
 
@@ -677,6 +697,12 @@ public partial class PlayerController : MonoBehaviour
         ApplyLocalControlState();
     }
 
+    public void OnClientMazeCollidersBecameReady()
+    {
+        if (isActiveAndEnabled)
+            _verticalVelocity = new Vector3(0f, -groundedStickDown, 0f);
+    }
+
     public void SetHudVisible(bool visible)
     {
         if (_staminaBarRoot != null)
@@ -776,6 +802,9 @@ public partial class PlayerController : MonoBehaviour
 
         if (flashlightClickClip == null)
             flashlightClickClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/FlashLightClick.wav");
+
+        if (bandageUseClip == null)
+            bandageUseClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Bandage.mp3");
 
         if (meleeSwooshClip == null)
             meleeSwooshClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Swoosh.wav");
@@ -1740,7 +1769,7 @@ public partial class PlayerController : MonoBehaviour
         StartCoroutine(ApplyMeleeDamageAfterDelay());
     }
 
-    void PlayMeleeSwooshSfx()
+    public void PlayMeleeSwooshSfx()
     {
         if (meleeSwooshClip == null || footstepAudioSource == null)
             return;
@@ -1775,7 +1804,7 @@ public partial class PlayerController : MonoBehaviour
             return;
 
         if (_networkPlayerCombat != null && _networkPlayerCombat.IsSpawned)
-            _networkPlayerCombat.NotifyOwnerMeleeHit();
+            _networkPlayerCombat.NotifyObserversMeleeHit(PickRandomMeleeHitClipIndex());
         else
             PlayMeleeHitSfx();
     }
@@ -1828,6 +1857,48 @@ public partial class PlayerController : MonoBehaviour
             return;
 
         footstepAudioSource.PlayOneShot(clip, Mathf.Max(0f, meleeHitPunchVolume));
+    }
+
+    /// <summary>Which punch clip slot (0–2) to play; same value must be used on all clients for a given hit.</summary>
+    public void PlayMeleeHitSfxWithIndex(byte clipSlot0To2)
+    {
+        if (footstepAudioSource == null)
+            return;
+
+        AudioClip c = clipSlot0To2 == 0
+            ? meleeHitPunch1
+            : clipSlot0To2 == 1
+                ? meleeHitPunch2
+                : meleeHitPunch3;
+        if (c == null)
+            return;
+
+        footstepAudioSource.PlayOneShot(c, Mathf.Max(0f, meleeHitPunchVolume));
+    }
+
+    public byte PickRandomMeleeHitClipIndex()
+    {
+        AudioClip c0 = meleeHitPunch1, c1 = meleeHitPunch2, c2 = meleeHitPunch3;
+        int n = (c0 != null ? 1 : 0) + (c1 != null ? 1 : 0) + (c2 != null ? 1 : 0);
+        if (n == 0)
+            return 0;
+
+        int r = UnityEngine.Random.Range(0, n);
+        if (c0 != null)
+        {
+            if (r == 0)
+                return 0;
+            r--;
+        }
+
+        if (c1 != null)
+        {
+            if (r == 0)
+                return 1;
+            r--;
+        }
+
+        return 2;
     }
 
     public void PlayZombieHitSfx()

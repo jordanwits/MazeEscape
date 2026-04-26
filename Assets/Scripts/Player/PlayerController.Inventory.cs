@@ -581,27 +581,35 @@ public partial class PlayerController
         if (IsUsingNetworkedInventory)
         {
             if (_networkPlayerInventory == null
-                || !HasSelectedFlashlightInWorld())
+                || !_networkPlayerInventory.HasItemInSelectedSlot)
             {
                 return;
             }
 
-            ulong id = _networkPlayerInventory.GetSlotItemId(_networkPlayerInventory.SelectedSlotIndex);
-            if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || g is not FlashlightItem fl)
+            int sel = _networkPlayerInventory.SelectedSlotIndex;
+            if (_networkPlayerInventory.GetSlotItemTypeId(sel) == GrabbableInventoryItem.TypeIdBandage)
+            {
+                _networkPlayerInventory.RequestUseSelectedBandage();
+                return;
+            }
+
+            if (!HasSelectedFlashlightInWorld())
+            {
+                return;
+            }
+
+            ulong id = _networkPlayerInventory.GetSlotItemId(sel);
+            if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || g is not FlashlightItem)
                 return;
 
-            bool wasOn = fl.IsLightOn;
             _networkPlayerInventory.TryToggleSelectedFlashlight();
 
-            bool isServer = NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer;
-            if (isServer)
-            {
-                if (fl.IsLightOn != wasOn)
-                    PlayFlashlightClickSfx();
-            }
-            else
-                PlayFlashlightClickSfx();
+            return;
+        }
 
+        if (_localInventorySlots[_localSelectedSlot] is BandageItem)
+        {
+            TryUseSelectedBandageLocal();
             return;
         }
 
@@ -614,12 +622,37 @@ public partial class PlayerController
         }
     }
 
-    void PlayFlashlightClickSfx()
+    void TryUseSelectedBandageLocal()
+    {
+        if (_localInventorySlots[_localSelectedSlot] is not BandageItem b)
+            return;
+        if (_playerHealth == null || _playerHealth.IsDead || _playerHealth.CurrentHealth >= _playerHealth.MaxHealth)
+            return;
+
+        int slot = _localSelectedSlot;
+        _localInventorySlots[slot] = null;
+        _localSlotStacks[slot] = 0;
+        SelectAfterDropLocal();
+        _playerHealth.Heal(BandageItem.HealthRestoreAmount);
+        Object.Destroy(b.gameObject);
+        PlayBandageUseSfx();
+        RefreshLocalInventoryView();
+    }
+
+    public void PlayFlashlightClickSfx()
     {
         if (flashlightClickClip == null || footstepAudioSource == null)
             return;
 
         footstepAudioSource.PlayOneShot(flashlightClickClip, Mathf.Max(0f, flashlightClickVolume));
+    }
+
+    public void PlayBandageUseSfx()
+    {
+        if (bandageUseClip == null || footstepAudioSource == null)
+            return;
+
+        footstepAudioSource.PlayOneShot(bandageUseClip, Mathf.Max(0f, bandageUseVolume));
     }
 
     void TryUnlockHingeDoorWithKeyLocal(HingeInteractDoor door)
