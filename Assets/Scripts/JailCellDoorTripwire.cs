@@ -23,6 +23,12 @@ public class JailCellDoorTripwire : MonoBehaviour
     [SerializeField] bool addKinematicRigidbody = true;
 
     Coroutine _closeRoutine;
+    /// <summary>
+    /// True after the Jailor intersected this volume while <see cref="JailorAI.BlocksJailDoorTripwire"/> was true
+    /// (carrying / delivery). When he stops blocking without ever leaving the collider, <see cref="OnTriggerEnter"/>
+    /// does not fire again — <see cref="OnTriggerStay"/> uses this to close the door.
+    /// </summary>
+    bool _armedAfterBlockedJailorOverlap;
 
     void Awake()
     {
@@ -94,13 +100,51 @@ public class JailCellDoorTripwire : MonoBehaviour
         if (jailor == null)
             return;
         if (jailor.BlocksJailDoorTripwire)
+        {
+            _armedAfterBlockedJailorOverlap = true;
             return;
+        }
+
+        TryBeginCloseSequenceAfterJailorUnblocked();
+    }
+
+    void OnTriggerStay(Collider other)
+    {
+        if (!IsAuthority())
+            return;
+        if (other == null)
+            return;
+
+        JailorAI jailor = other.GetComponentInParent<JailorAI>();
+        if (jailor == null)
+            return;
+
+        if (jailor.BlocksJailDoorTripwire)
+        {
+            _armedAfterBlockedJailorOverlap = true;
+            return;
+        }
+
+        if (!_armedAfterBlockedJailorOverlap)
+            return;
+
+        TryBeginCloseSequenceAfterJailorUnblocked();
+    }
+
+    void TryBeginCloseSequenceAfterJailorUnblocked()
+    {
         if (jailDoor == null)
             return;
         if (onlyWhenDoorOpen && !jailDoor.IsOpen)
+        {
+            _armedAfterBlockedJailorOverlap = false;
             return;
+        }
+
         if (_closeRoutine != null)
             return;
+
+        _armedAfterBlockedJailorOverlap = false;
 
         if (closeDelaySeconds <= 0f)
         {

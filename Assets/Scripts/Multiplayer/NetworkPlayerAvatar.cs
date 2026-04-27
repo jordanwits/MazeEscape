@@ -8,6 +8,10 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 {
     [Header("References")]
     [SerializeField] Animator avatarAnimator;
+    [Tooltip("Animator bool on Player controller; true while Jailor is carrying this avatar (owner writes; NetworkAnimator replicates).")]
+    [SerializeField] string carriedByJailorAnimatorParameter = "CarriedByJailor";
+    [Tooltip("After the server marks this player sealed in a jail cell, the owning client cannot move for this long (look still works).")]
+    [SerializeField] float postJailMovementLockSeconds = 2f;
     [SerializeField] PlayerController playerController;
     [SerializeField] PlayerHealth playerHealth;
     [SerializeField] CharacterController characterController;
@@ -101,7 +105,10 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             return;
         }
 
+        bool wasSealed = _offlineSealedInJailCell;
         _offlineSealedInJailCell = sealedInCell;
+        if (sealedInCell && !wasSealed)
+            TryBeginPostJailMovementLockOnOwner();
     }
 
     void OnCarriedByJailorChanged(bool previousValue, bool newValue)
@@ -109,6 +116,20 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         if (_isDormant)
             return;
         ApplyPresentation(IsOwner);
+    }
+
+    void OnSealedInJailCellChanged(bool previousValue, bool newValue)
+    {
+        if (_isDormant || !newValue || previousValue)
+            return;
+        TryBeginPostJailMovementLockOnOwner();
+    }
+
+    void TryBeginPostJailMovementLockOnOwner()
+    {
+        if (!IsOwner || playerController == null || postJailMovementLockSeconds <= 0f)
+            return;
+        playerController.BeginPostJailMovementLockout(postJailMovementLockSeconds);
     }
 
     void Awake()
@@ -217,6 +238,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         _networkManager = NetworkManager.Singleton;
         SetDormant(false);
         _carriedByJailor.OnValueChanged += OnCarriedByJailorChanged;
+        _sealedInJailCell.OnValueChanged += OnSealedInJailCellChanged;
         ApplyOwnershipState();
 
         if (IsOwner
@@ -241,6 +263,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     public override void OnNetworkDespawn()
     {
         _carriedByJailor.OnValueChanged -= OnCarriedByJailorChanged;
+        _sealedInJailCell.OnValueChanged -= OnSealedInJailCellChanged;
         _networkManager = null;
         SetDormant(false);
         ApplyPresentation(true);
@@ -428,6 +451,19 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         return !IsSpawned;
     }
 
+    void ApplyJailorCarryAnimatorState(bool carried)
+    {
+        if (avatarAnimator == null || string.IsNullOrEmpty(carriedByJailorAnimatorParameter))
+            return;
+
+        NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
+        bool inNetSession = nm != null && nm.IsListening;
+        if (inNetSession && IsSpawned && !IsOwner)
+            return;
+
+        avatarAnimator.SetBool(carriedByJailorAnimatorParameter, carried);
+    }
+
     void ApplyPresentation(bool isLocalOwner)
     {
         if (_isDormant)
@@ -435,8 +471,14 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
         bool jailorCarried = IsCarriedByJailor;
 
+        ApplyJailorCarryAnimatorState(jailorCarried);
+
         if (playerController != null)
+        {
+            bool lookOnlyWhileCarried = isLocalOwner && _isAlive && jailorCarried;
+            playerController.SetAllowLookWhileMovementLocked(lookOnlyWhileCarried);
             playerController.SetLocalControl(isLocalOwner && _isAlive && !jailorCarried);
+        }
 
         if (playerHealth != null)
             playerHealth.SetHudVisible(isLocalOwner && _isAlive);
@@ -477,7 +519,10 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         if (dormant)
         {
             if (playerController != null)
+            {
+                playerController.SetAllowLookWhileMovementLocked(false);
                 playerController.SetLocalControl(false);
+            }
 
             if (playerHealth != null)
                 playerHealth.SetHudVisible(false);

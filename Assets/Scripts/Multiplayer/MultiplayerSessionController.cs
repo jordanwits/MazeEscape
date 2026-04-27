@@ -298,6 +298,7 @@ public class MultiplayerSessionController : MonoBehaviour
         _steamLobby?.LeaveLobby();
         ClearLobbyState();
         UnregisterLobbyMessageHandlers();
+        ProximityVoiceSession.InvalidateProximityMessaging();
         _networkManager.Shutdown();
         SelectDirectIpTransport();
         ConfigureDirectClientTransport(defaultAddress, defaultPort);

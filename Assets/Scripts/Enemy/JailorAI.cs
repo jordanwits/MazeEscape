@@ -3,6 +3,7 @@ using Unity.Netcode;
 using Unity.Netcode.Components;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.SceneManagement;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -96,6 +97,11 @@ public class JailorAI : MonoBehaviour
         "While carrying to jail, unlock/open the cell door when within this horizontal distance of the door. "
         + "Needed when the door was left closed after an escape so NavMesh can path inside before the drop.")]
     [SerializeField] float jailDoorPremptiveOpenDistance = 16f;
+    [Header("Jailor key drop")]
+    [Tooltip("Spawned when a player is grabbed. Add JailorKey to Default Network Prefabs if you use ForceSamePrefabs (no runtime AddNetworkPrefab).")]
+    [SerializeField] GameObject jailorKeyWorldPrefab;
+    [Tooltip("Local offset from the jailor root (Z = forward, Y = up).")]
+    [SerializeField] Vector3 jailorKeyDropLocalOffset = new Vector3(0f, 0.12f, 0.55f);
 
     [Header("Movement")]
     [SerializeField] float walkSpeed = 2.6f;
@@ -574,6 +580,8 @@ public class JailorAI : MonoBehaviour
     {
         if (!ShouldRunSimulation())
             return;
+
+        RecoverNavMeshIfOffMesh();
 
         RefreshTargetFromSightAndHearing();
 
@@ -1243,6 +1251,7 @@ public class JailorAI : MonoBehaviour
             ApplyDesiredLossyScale(pt, preservedLossyScale);
             _grabAttachCompleted = true;
             NotifyPickupLaughSfx();
+            TrySpawnJailorKeyOnPlayerPickup();
 
             if (_carriedAvatar != null)
                 _carriedAvatar.ServerSetCarriedByJailor(true);
@@ -1260,6 +1269,7 @@ public class JailorAI : MonoBehaviour
             ApplyDesiredLossyScale(pt, preservedLossyScale);
             _grabAttachCompleted = true;
             NotifyPickupLaughSfx();
+            TrySpawnJailorKeyOnPlayerPickup();
 
             if (_carriedAvatar != null)
                 _carriedAvatar.ServerSetCarriedByJailor(true);
@@ -1271,6 +1281,25 @@ public class JailorAI : MonoBehaviour
             $"[{nameof(JailorAI)}] Cannot attach networked player: Jailor must be a spawned NetworkObject "
             + $"(jailorSpawned={jailorSpawned}, nm={(nm != null)}). Do not use an unregistered or non-spawned Jailor in a net session.",
             this);
+    }
+
+    void TrySpawnJailorKeyOnPlayerPickup()
+    {
+        if (jailorKeyWorldPrefab == null)
+            return;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        bool inNetSession = nm != null && nm.IsListening;
+        if (inNetSession && !nm.IsServer)
+            return;
+
+        Vector3 pos = transform.TransformPoint(jailorKeyDropLocalOffset);
+        Quaternion rot = transform.rotation;
+        GameObject go = Instantiate(jailorKeyWorldPrefab, pos, rot);
+        SceneManager.MoveGameObjectToScene(go, gameObject.scene);
+
+        if (inNetSession && go.TryGetComponent(out NetworkObject no))
+            no.Spawn();
     }
 
     void NotifyPickupLaughSfx()
@@ -2263,7 +2292,24 @@ public class JailorAI : MonoBehaviour
         animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);
     }
 
+    static readonly float[] NavMeshSnapRadiiDefault = { 2f, 6f, 12f };
+    static readonly float[] NavMeshSnapRadiiAggressive = { 3f, 8f, 16f, 24f, 48f };
+
+    /// <summary>Pushes agent back onto NavMesh after pits / physics pushes (skipped during scripted off-mesh jumps).</summary>
+    void RecoverNavMeshIfOffMesh()
+    {
+        if (_isTraversingOffMeshJump || navMeshAgent == null || !navMeshAgent.enabled || navMeshAgent.isOnNavMesh)
+            return;
+
+        TryWarpToNearestNavMesh(NavMeshSnapRadiiAggressive);
+    }
+
     bool TrySnapToNavMesh()
+    {
+        return TryWarpToNearestNavMesh(NavMeshSnapRadiiDefault);
+    }
+
+    bool TryWarpToNearestNavMesh(float[] radii)
     {
         if (navMeshAgent == null || !navMeshAgent.enabled)
             return false;
@@ -2271,13 +2317,41 @@ public class JailorAI : MonoBehaviour
         if (navMeshAgent.isOnNavMesh)
             return true;
 
-        Vector3 p = transform.position;
-        float[] radii = { 2f, 6f, 12f };
-        for (int i = 0; i < radii.Length; i++)
+        if (radii == null || radii.Length == 0)
+            return false;
+
+        Vector3 basePos = transform.position;
+        Vector3[] verticalOrigins =
         {
-            if (!NavMesh.SamplePosition(p, out NavMeshHit hit, radii[i], NavMesh.AllAreas))
-                continue;
-            return navMeshAgent.Warp(hit.position);
+            basePos,
+            basePos + Vector3.up * 4f,
+            basePos + Vector3.up * 10f,
+        };
+
+        for (int o = 0; o < verticalOrigins.Length; o++)
+        {
+            Vector3 origin = verticalOrigins[o];
+            for (int i = 0; i < radii.Length; i++)
+            {
+                if (!NavMesh.SamplePosition(origin, out NavMeshHit hit, radii[i], NavMesh.AllAreas))
+                    continue;
+
+                bool ccWasEnabled = characterController != null && characterController.enabled;
+                if (characterController != null)
+                    characterController.enabled = false;
+
+                navMeshAgent.Warp(hit.position);
+
+                if (characterController != null)
+                    characterController.enabled = ccWasEnabled;
+
+                if (navMeshAgent.isOnNavMesh)
+                {
+                    _verticalVelocity.y = Mathf.Min(_verticalVelocity.y, 0f);
+                    navMeshAgent.nextPosition = transform.position;
+                    return true;
+                }
+            }
         }
 
         return false;

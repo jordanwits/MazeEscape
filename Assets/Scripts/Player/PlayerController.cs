@@ -201,6 +201,7 @@ public partial class PlayerController : MonoBehaviour
     float _footstepTimer;
     bool _playFootstep1Next = true;
     bool _hasLocalControl = true;
+    bool _allowLookWhileMovementLocked;
     float _smoothedStrafeDirection;
 
     float _nextMeleeTime;
@@ -214,6 +215,7 @@ public partial class PlayerController : MonoBehaviour
     PlayerHealth _playerHealth;
 
     float _ragdollRecoverAnimatorSuppressUntil;
+    float _postJailMovementLockEndTime;
 
     bool _cameraPitchParentedToHead;
     bool _hasSavedCameraPitchPrefabPose;
@@ -224,6 +226,15 @@ public partial class PlayerController : MonoBehaviour
     public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
     public bool HasLocalControl => _hasLocalControl;
     public bool IsAudiblySprintingForAi => _audiblySprintingForAi;
+    bool IsPostJailMovementLocked => Time.time < _postJailMovementLockEndTime;
+
+    /// <summary>Local player only: blocks walk/sprint/jump for a short time (e.g. after Jailor seals the cell).</summary>
+    public void BeginPostJailMovementLockout(float durationSeconds)
+    {
+        if (durationSeconds <= 0f)
+            return;
+        _postJailMovementLockEndTime = Time.time + durationSeconds;
+    }
     public Transform LookPitchTransform => cameraTransform;
     public bool UsesFirstPersonLook => firstPersonLook;
     public Transform CameraPitchNode => cameraPitchTransform;
@@ -401,7 +412,11 @@ public partial class PlayerController : MonoBehaviour
     void Update()
     {
         if (!_hasLocalControl && !ShouldRunDeadRagdollCameraUpdate())
+        {
+            if (_allowLookWhileMovementLocked && firstPersonLook)
+                UpdateLookOnlyWhileMovementLocked();
             return;
+        }
 
         if (_hasLocalControl && !IsUsingNetworkedInventory)
             TickLocalFlashlightBatteries();
@@ -464,6 +479,13 @@ public partial class PlayerController : MonoBehaviour
         bool attackPressed = _attackAction != null
             ? _attackAction.WasPressedThisFrame()
             : WasAttackPressedFallback();
+
+        if (IsPostJailMovementLocked)
+        {
+            _moveInput = Vector2.zero;
+            jumpPressed = false;
+            sprintHeld = false;
+        }
 
         if (firstPersonLook && lockCursor && Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame
             && Cursor.lockState != CursorLockMode.Locked)
@@ -563,6 +585,8 @@ public partial class PlayerController : MonoBehaviour
 
             speedForAnimator = Mathf.Clamp01(speedForAnimator);
             if (Time.time < _ragdollRecoverAnimatorSuppressUntil)
+                speedForAnimator = 0f;
+            if (IsPostJailMovementLocked)
                 speedForAnimator = 0f;
 
             float targetStrafeDirection = ComputeStrafeDirection(_moveInput);
@@ -700,6 +724,20 @@ public partial class PlayerController : MonoBehaviour
         GameAudioManager.RouteSfxSource(footstepAudioSource);
     }
 
+    /// <summary>
+    /// When false, normal movement/input is off but first-person look can still run (e.g. Jailor carry).
+    /// Must be set before <see cref="SetLocalControl"/> when entering that state so input bindings apply correctly.
+    /// </summary>
+    public void SetAllowLookWhileMovementLocked(bool allow)
+    {
+        if (_allowLookWhileMovementLocked == allow)
+            return;
+
+        _allowLookWhileMovementLocked = allow;
+        if (!_hasLocalControl)
+            ApplyLocalControlState();
+    }
+
     public void SetLocalControl(bool hasLocalControl)
     {
         if (_hasLocalControl == hasLocalControl)
@@ -734,12 +772,19 @@ public partial class PlayerController : MonoBehaviour
         if (_hasLocalControl)
         {
             AcquireInputActions();
+            _playerMap?.Enable();
             ApplyCursorLock();
         }
         else
         {
-            DisableInputActions();
-            ReleaseCursor();
+            if (_allowLookWhileMovementLocked && firstPersonLook)
+                ApplyLookOnlyInputMode();
+            else
+            {
+                DisableInputActions();
+                ReleaseCursor();
+            }
+
             _moveInput = Vector2.zero;
             _horizontalVelocity = Vector3.zero;
             _verticalVelocity = Vector3.zero;
@@ -747,6 +792,50 @@ public partial class PlayerController : MonoBehaviour
         }
 
         SetHudVisible(_hasLocalControl);
+    }
+
+    void ApplyLookOnlyInputMode()
+    {
+        AcquireInputActions();
+        _moveAction?.Disable();
+        _jumpAction?.Disable();
+        _sprintAction?.Disable();
+        _interactAction?.Disable();
+        _dropAction?.Disable();
+        _flashlightAction?.Disable();
+        _attackAction?.Disable();
+        _lookAction?.Enable();
+        ApplyCursorLock();
+    }
+
+    void UpdateLookOnlyWhileMovementLocked()
+    {
+        if (_ragdollController != null && (_ragdollController.IsRagdolled || _ragdollController.IsGettingUp))
+            return;
+
+        EnsureCameraPitchParentedToHead();
+
+        if (MultiplayerMenuOverlay.BlocksGameplayInput)
+            return;
+
+        Vector2 lookInput = _lookAction != null && _lookAction.enabled
+            ? _lookAction.ReadValue<Vector2>()
+            : ReadLookFallback();
+
+        if (firstPersonLook && lockCursor && Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame
+            && Cursor.lockState != CursorLockMode.Locked)
+        {
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+        }
+
+        if (!firstPersonLook)
+            return;
+
+        ApplyFirstPersonLook(lookInput);
+
+        if (UseNetworkedFlashlightFlow && _networkPlayerAvatar != null && _networkPlayerAvatar.IsOwner)
+            _networkPlayerAvatar.PublishFlashlightLookPitch(_lookPitchDegrees);
     }
 
     void AcquireInputActions()

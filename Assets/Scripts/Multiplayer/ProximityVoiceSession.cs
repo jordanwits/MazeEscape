@@ -19,13 +19,49 @@ public class ProximityVoiceSession : MonoBehaviour
     static readonly short[] s_ServerVoicePcmScratch = new short[NetworkPlayerVoice.FrameSamples];
     static readonly short[] s_ClientVoicePcmScratch = new short[NetworkPlayerVoice.FrameSamples];
 
+    bool _wasListening;
+
     void OnEnable() => RegisterHandlers();
-    void OnDestroy() => UnregisterHandlers();
+    void OnDestroy() => InvalidateProximityMessaging();
+
+    /// <summary>
+    /// NGO <see cref="NetworkManager.Shutdown"/> clears messaging state while this component stays alive on the bootstrap —
+    /// the static registration flag must reset so handlers are registered again on the next StartHost/StartClient.
+    /// Invoke while <see cref="NetworkManager.CustomMessagingManager"/> is still valid (e.g. before Shutdown).
+    /// </summary>
+    public static void InvalidateProximityMessaging()
+    {
+        if (!s_HandlersRegistered)
+        {
+            VoiceClientRegistry.Clear();
+            return;
+        }
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm != null && nm.CustomMessagingManager != null)
+        {
+            CustomMessagingManager cmm = nm.CustomMessagingManager;
+            cmm.UnregisterNamedMessageHandler(VoiceUpMessageName);
+            cmm.UnregisterNamedMessageHandler(VoiceDownMessageName);
+        }
+
+        s_HandlersRegistered = false;
+        VoiceClientRegistry.Clear();
+    }
 
     void Update()
     {
-        if (s_HandlersRegistered)
+        NetworkManager nm = NetworkManager.Singleton;
+        bool listening = nm != null && nm.IsListening;
+
+        if (_wasListening && !listening)
+            InvalidateProximityMessaging();
+
+        _wasListening = listening;
+
+        if (!listening)
             return;
+
         RegisterHandlers();
     }
 
@@ -34,7 +70,7 @@ public class ProximityVoiceSession : MonoBehaviour
         if (s_HandlersRegistered)
             return;
         NetworkManager nm = NetworkManager.Singleton;
-        if (nm == null || nm.CustomMessagingManager == null)
+        if (nm == null || !nm.IsListening || nm.CustomMessagingManager == null)
             return;
 
         nm.CustomMessagingManager.RegisterNamedMessageHandler(
@@ -42,20 +78,6 @@ public class ProximityVoiceSession : MonoBehaviour
         nm.CustomMessagingManager.RegisterNamedMessageHandler(
             VoiceDownMessageName, HandleVoiceDown);
         s_HandlersRegistered = true;
-    }
-
-    void UnregisterHandlers()
-    {
-        if (!s_HandlersRegistered)
-            return;
-        if (NetworkManager.Singleton == null
-            || NetworkManager.Singleton.CustomMessagingManager == null)
-            return;
-
-        var cmm = NetworkManager.Singleton.CustomMessagingManager;
-        cmm.UnregisterNamedMessageHandler(VoiceUpMessageName);
-        cmm.UnregisterNamedMessageHandler(VoiceDownMessageName);
-        s_HandlersRegistered = false;
     }
 
     static void HandleVoiceUp(ulong senderId, FastBufferReader reader)

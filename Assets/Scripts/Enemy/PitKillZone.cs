@@ -137,29 +137,53 @@ public class PitKillZone : MonoBehaviour
         _nextJailorRescueTime = Time.time + Mathf.Max(0.05f, jailorRescueCooldown);
 
         Transform jailorTransform = jailor.transform;
-        Vector3 origin = jailorTransform.position + Vector3.up;
-        if (!NavMesh.SamplePosition(origin, out NavMeshHit hit, Mathf.Max(0.5f, jailorRescueSampleRadius), NavMesh.AllAreas))
+        float sampleRadius = Mathf.Max(0.5f, jailorRescueSampleRadius);
+        // Sample from several heights so deep pits still resolve to rim NavMesh; avoid relying on isOnNavMesh before Warp.
+        Vector3[] origins =
+        {
+            jailorTransform.position + Vector3.up,
+            jailorTransform.position + Vector3.up * 4f,
+            jailorTransform.position + Vector3.up * 10f,
+            jailorTransform.position,
+        };
+
+        NavMeshHit hit = default;
+        bool sampled = false;
+        for (int i = 0; i < origins.Length; i++)
+        {
+            if (NavMesh.SamplePosition(origins[i], out hit, sampleRadius, NavMesh.AllAreas))
+            {
+                sampled = true;
+                break;
+            }
+        }
+
+        if (!sampled && NavMesh.SamplePosition(jailorTransform.position, out hit, sampleRadius * 2f, NavMesh.AllAreas))
+            sampled = true;
+
+        if (!sampled)
             return;
 
         Vector3 safePosition = hit.position + Vector3.up * Mathf.Max(0f, jailorRescueLift);
         NavMeshAgent jailorAgent = jailor.GetComponent<NavMeshAgent>();
-        if (jailorAgent != null && jailorAgent.enabled && jailorAgent.isOnNavMesh)
+        CharacterController jailorController = jailor.GetComponent<CharacterController>();
+
+        bool ccWasEnabled = jailorController != null && jailorController.enabled;
+        if (jailorController != null)
+            jailorController.enabled = false;
+
+        if (jailorAgent != null && jailorAgent.enabled)
         {
             jailorAgent.Warp(safePosition);
-            return;
-        }
-
-        CharacterController jailorController = jailor.GetComponent<CharacterController>();
-        if (jailorController != null)
-        {
-            bool wasEnabled = jailorController.enabled;
-            jailorController.enabled = false;
-            jailorTransform.position = safePosition;
-            jailorController.enabled = wasEnabled;
+            if (ccWasEnabled && jailorController != null)
+                jailorController.enabled = true;
             return;
         }
 
         jailorTransform.position = safePosition;
+
+        if (ccWasEnabled && jailorController != null)
+            jailorController.enabled = true;
     }
 
     static bool IsCarriedByJailor(PlayerHealth player)

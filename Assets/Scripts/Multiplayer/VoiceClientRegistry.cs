@@ -24,4 +24,12 @@ public static class VoiceClientRegistry
 
     public static bool TryGet(ulong ownerClientId, out NetworkPlayerVoice playerVoice) =>
         s_ByOwnerClient.TryGetValue(ownerClientId, out playerVoice);
+
+    /// <summary>
+    /// Call when the netcode session ends so stale owner→voice mappings cannot route audio to wrong objects.
+    /// </summary>
+    public static void Clear()
+    {
+        s_ByOwnerClient.Clear();
+    }
 }

@@ -759,6 +759,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   hinge: {fileID: 1098311280}
   openLocalEuler: {x: 0, y: 90, z: 0}
+  hingeRestPoseIsOpen: 0
   moveDuration: 4
   interactMaxDistance: 5
   useKeyToUnlock: 1
@@ -22089,6 +22090,67 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
+--- !u!1001 &2437920621673375760
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 2081294663432562076, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 53.91802
+      objectReference: {fileID: 0}
+    - target: {fileID: 2081294663432562076, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.50000024
+      objectReference: {fileID: 0}
+    - target: {fileID: 2081294663432562076, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -5.5820284
+      objectReference: {fileID: 0}
+    - target: {fileID: 2081294663432562076, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.98345065
+      objectReference: {fileID: 0}
+    - target: {fileID: 2081294663432562076, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0.021791829
+      objectReference: {fileID: 0}
+    - target: {fileID: 2081294663432562076, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0.0039844764
+      objectReference: {fileID: 0}
+    - target: {fileID: 2081294663432562076, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0.1798168
+      objectReference: {fileID: 0}
+    - target: {fileID: 2081294663432562076, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 2.539
+      objectReference: {fileID: 0}
+    - target: {fileID: 2081294663432562076, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2081294663432562076, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 20.723
+      objectReference: {fileID: 0}
+    - target: {fileID: 6611223344110011001, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: GlobalObjectIdHash
+      value: 4232841266
+      objectReference: {fileID: 0}
+    - target: {fileID: 9109535346363733284, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+      propertyPath: m_Name
+      value: JailorKey
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
 --- !u!4 &2438051312917040856
 Transform:
   m_ObjectHideFlags: 0
@@ -37201,3 +37263,4 @@ SceneRoots:
   - {fileID: 1035897206}
   - {fileID: 1717442782}
   - {fileID: 1229804538365933280}
+  - {fileID: 2437920621673375760}
