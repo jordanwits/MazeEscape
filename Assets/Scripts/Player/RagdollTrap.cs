@@ -138,6 +138,10 @@ public class RagdollTrap : MonoBehaviour
         if (swingTrapDamageGate != null && !swingTrapDamageGate.CanDealSwingTrapDamage)
             return;
 
+        PlayerHealth playerHealth = other.GetComponentInParent<PlayerHealth>();
+        if (playerHealth != null && IsCarriedByJailor(playerHealth))
+            return;
+
         ZombieHealth zombieHealth = other.GetComponentInParent<ZombieHealth>();
         if (zombieHealth != null && !zombieHealth.IsDead)
         {
@@ -199,7 +203,7 @@ public class RagdollTrap : MonoBehaviour
             return;
         }
 
-        PlayerHealth health = other.GetComponentInParent<PlayerHealth>();
+        PlayerHealth health = playerHealth;
         if (health != null && health.IsDead)
             return;
 
@@ -211,6 +215,15 @@ public class RagdollTrap : MonoBehaviour
 
         if (ragdoll != null)
             ragdoll.ActivateRagdoll(force, hitPoint, forceMode);
+    }
+
+    static bool IsCarriedByJailor(PlayerHealth player)
+    {
+        if (player == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = player.GetComponent<NetworkPlayerAvatar>();
+        return avatar != null && avatar.IsCarriedByJailor;
     }
 
     Vector3 ResolveKnockbackDirection(Vector3 otherBoundsCenter)

@@ -128,6 +128,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     [SerializeField] bool rebuildNavMeshAfterMaze = true;
     [Tooltip("Physics = MeshCollider/BoxCollider on floor pieces. Render Meshes = Renderer geometry (use if walkable meshes have no colliders).")]
     [SerializeField] NavMeshCollectGeometry navMeshBakeGeometry = NavMeshCollectGeometry.PhysicsColliders;
+    [Tooltip("Runtime navmesh surfaces above this height (relative to the maze layout floor, see Origin on ProceduralMazeConfig) are marked Not Walkable so ceilings and wall tops do not bake. Uses max(collider min Y, Origin.y) so pit/deep colliders do not lower this band onto the real floor.")]
+    [SerializeField] float navMeshCeilingExcludeHeightAboveFloor = 1.4f;
 
     ProceduralMazeConfig _config;
     NetworkManager _networkManager;
@@ -159,9 +161,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             return;
 
         RegisterRuntimeNetworkPrefab(mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab);
+        RegisterRuntimeNetworkPrefab(_config.MazeJailorPrefab);
         RegisterRuntimeNetworkPrefab(_config.MazeTrapPrefab);
         RegisterRuntimeNetworkPrefab(_config.MazeChestPrefab);
         RegisterRuntimeNetworkPrefab(_config.MazeStartFlashlightPrefab);
+        RegisterRuntimeNetworkPrefab(_config.JailDeadEndPrefab);
     }
 
     void RegisterRuntimeNetworkPrefab(GameObject prefab)
@@ -466,6 +470,16 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 interiorPlan.SkipCells.Add(skip);
         }
 
+        Vector2Int? jailDeadEndCell = SelectJailDeadEndCell(
+            _config.JailDeadEndPrefab, grid, start, exit, interiorPlan, width, height, seed);
+        if (_config.JailDeadEndPrefab != null && !jailDeadEndCell.HasValue)
+        {
+            LogMazeWarningOnce(
+                "jail-dead-end-no-candidate",
+                "[Maze] Jail Dead End Prefab is set but no valid dead-end cell was found (need a non-start, non-exit, non-interior one-opening cell). No jail piece spawned.",
+                this);
+        }
+
         Transform cellsRoot = CreateChild(root.transform, "Cells");
         Dictionary<Vector2Int, Transform> builtCellRoots = new();
         float cellSize = _config.CellSize;
@@ -500,7 +514,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                     seed,
                     cell,
                     isInteriorAnchor,
-                    interiorEntry);
+                    interiorEntry,
+                    jailDeadEndCell);
             }
         }
 
@@ -1939,6 +1954,58 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         return Math.Max(Math.Abs(a.x - b.x), Math.Abs(a.y - b.y));
     }
 
+    /// <summary>
+    /// Picks one grid cell to place <see cref="ProceduralMazeConfig.JailDeadEndPrefab"/>, or null if the prefab is unset or no cell qualifies.
+    /// </summary>
+    static Vector2Int? SelectJailDeadEndCell(
+        GameObject jailPrefab,
+        MazeCell[,] grid,
+        Vector2Int start,
+        Vector2Int exit,
+        InteriorRoomBuildPlan interiorPlan,
+        int width,
+        int height,
+        int seed)
+    {
+        if (jailPrefab == null)
+            return null;
+
+        List<Vector2Int> candidates = new();
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                MazeFaceMask openings = grid[x, y].Openings;
+                if (openings == MazeFaceMask.None)
+                    continue;
+
+                Vector2Int c = new(x, y);
+                if (interiorPlan.SkipCells.Contains(c))
+                    continue;
+                if (interiorPlan.Anchors.ContainsKey(c))
+                    continue;
+                if (MazeFaceMaskUtility.CountOpenFaces(openings) != 1)
+                    continue;
+                if (c == start || c == exit)
+                    continue;
+
+                candidates.Add(c);
+            }
+        }
+
+        if (candidates.Count == 0)
+            return null;
+
+        candidates.Sort((a, b) =>
+        {
+            int cmp = a.y.CompareTo(b.y);
+            return cmp != 0 ? cmp : a.x.CompareTo(b.x);
+        });
+
+        int idx = (int)((uint)MixSeed(MixSeed(seed, unchecked((int)0x1A1E0DE0)), unchecked((int)0xBEE51A1E)) % (uint)candidates.Count);
+        return candidates[idx];
+    }
+
     void BuildCell(
         Transform parent,
         MazeFaceMask gridCellOpenings,
@@ -1948,7 +2015,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int seed,
         Vector2Int cellCoordinates,
         bool hasInteriorRoomEntry,
-        InteriorRoomPlacementEntry interiorRoomEntry)
+        InteriorRoomPlacementEntry interiorRoomEntry,
+        Vector2Int? jailDeadEndCell)
     {
         if (gridCellOpenings == MazeFaceMask.None)
             return;
@@ -1973,6 +2041,45 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             }
 
             return;
+        }
+
+        if (jailDeadEndCell.HasValue
+            && cellCoordinates == jailDeadEndCell.Value
+            && _config.JailDeadEndPrefab != null)
+        {
+            if (MazePieceResolver.TryResolveFromPrefabPool(
+                    new[] { _config.JailDeadEndPrefab },
+                    gridCellOpenings,
+                    isStart,
+                    isExit,
+                    seed,
+                    cellCoordinates,
+                    0xA11E5A1Du,
+                    out MazePieceMatch jailMatch))
+            {
+                Instantiate(jailMatch.Prefab, parent.position, jailMatch.Rotation, parent);
+
+                if (!jailMatch.UseClosedFaceCaps || _config.EndCapPrefab == null)
+                    return;
+
+                foreach (DirectionStep step in Steps)
+                {
+                    if ((jailMatch.FinalOpenFaces & step.Direction) != 0)
+                        continue;
+
+                    Vector3 localOffset = MazeFaceMaskUtility.ToVector3(step.Direction) * blockerOffset;
+                    Quaternion endCapRotation = Quaternion.LookRotation(MazeFaceMaskUtility.ToVector3(step.Direction), Vector3.up)
+                        * Quaternion.Euler(0f, _config.EndCapYawOffset, 0f);
+                    Instantiate(_config.EndCapPrefab, parent.position + localOffset, endCapRotation, parent);
+                }
+
+                return;
+            }
+
+            LogMazeWarningOnce(
+                "jail-dead-end-resolve-fail",
+                $"[Maze] Jail dead-end prefab did not match openings at ({cellCoordinates.x}, {cellCoordinates.y}); using normal piece pool for that cell.",
+                this);
         }
 
         if (!MazePieceResolver.TryResolve(_config, gridCellOpenings, isStart, isExit, seed, cellCoordinates, out MazePieceMatch match, out string failureReason))
@@ -2010,6 +2117,24 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         ValidatePiecePool("cross", MazePieceCategory.Cross, _config.EnumerateTopologyPrefabs(MazePieceCategory.Cross), true);
         ValidatePiecePool("special", null, _config.SpecialPrefabs, false);
         ValidatePiecePool("interior room", null, _config.InteriorRoomPrefabs, false);
+
+        if (_config.JailDeadEndPrefab != null)
+        {
+            if (!MazePieceDefinition.TryGetDefinitionForResolution(_config.JailDeadEndPrefab, out MazePieceDefinition jailDef))
+            {
+                LogMazeWarningOnce(
+                    "jail-dead-end-no-definition",
+                    "[Maze] Jail Dead End Prefab needs a MazePieceDefinition with dead-end topology matching your corridor openings.",
+                    this);
+            }
+            else if (jailDef.Category != MazePieceCategory.DeadEnd)
+            {
+                LogMazeWarningOnce(
+                    "jail-dead-end-wrong-category",
+                    $"[Maze] Jail Dead End Prefab \"{_config.JailDeadEndPrefab.name}\" should use MazePieceCategory DeadEnd.",
+                    this);
+            }
+        }
 
         if (_config.InteriorRoomCount > 0)
         {
@@ -2241,15 +2366,113 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         surface.collectObjects = CollectObjects.Children;
         surface.useGeometry = navMeshBakeGeometry;
         surface.layerMask = ~0;
+        ConfigureCeilingExclusionVolume(mazeRoot.transform);
 
         surface.BuildNavMesh();
     }
 
+    void ConfigureCeilingExclusionVolume(Transform mazeRoot)
+    {
+        if (mazeRoot == null)
+            return;
+
+        const string exclusionName = "__RuntimeNavMesh_CeilingExclude";
+        Transform exclusionTransform = mazeRoot.Find(exclusionName);
+        if (exclusionTransform == null)
+        {
+            GameObject exclusionObject = new(exclusionName);
+            exclusionObject.transform.SetParent(mazeRoot, false);
+            exclusionTransform = exclusionObject.transform;
+        }
+
+        if (!TryGetMazeBounds(mazeRoot, out Bounds mazeBounds))
+            return;
+
+        // Never key off the raw axis-aligned min Y alone: tall pits / large downward colliders drag min.y
+        // far below the real corridor floor and the Not Walkable box would cover the walkable level.
+        float layoutFloorY = _config != null
+            ? Mathf.Max(mazeBounds.min.y, _config.Origin.y)
+            : mazeBounds.min.y;
+        float excludeBottomY = layoutFloorY + Mathf.Max(0.5f, navMeshCeilingExcludeHeightAboveFloor);
+        float slabThickness = Mathf.Max(0.5f, mazeBounds.max.y - excludeBottomY + 0.5f);
+        float margin = 0.35f;
+
+        exclusionTransform.position = new Vector3(
+            mazeBounds.center.x,
+            excludeBottomY + slabThickness * 0.5f,
+            mazeBounds.center.z);
+        exclusionTransform.rotation = Quaternion.identity;
+        exclusionTransform.localScale = Vector3.one;
+
+        NavMeshModifierVolume volume = exclusionTransform.GetComponent<NavMeshModifierVolume>();
+        if (volume == null)
+            volume = exclusionTransform.gameObject.AddComponent<NavMeshModifierVolume>();
+
+        volume.center = Vector3.zero;
+        volume.size = new Vector3(
+            Mathf.Max(0.5f, mazeBounds.size.x + margin * 2f),
+            Mathf.Max(0.5f, slabThickness),
+            Mathf.Max(0.5f, mazeBounds.size.z + margin * 2f));
+        volume.area = 1; // Not Walkable
+    }
+
+    bool TryGetMazeBounds(Transform mazeRoot, out Bounds bounds)
+    {
+        bounds = default;
+        bool hasBounds = false;
+
+        Collider[] colliders = mazeRoot.GetComponentsInChildren<Collider>(includeInactive: true);
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            Collider c = colliders[i];
+            if (c == null || !c.enabled || c.isTrigger)
+                continue;
+
+            if (!hasBounds)
+            {
+                bounds = c.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(c.bounds);
+            }
+        }
+
+        if (hasBounds)
+            return true;
+
+        Renderer[] renderers = mazeRoot.GetComponentsInChildren<Renderer>(includeInactive: true);
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer r = renderers[i];
+            if (r == null || !r.enabled)
+                continue;
+
+            if (!hasBounds)
+            {
+                bounds = r.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(r.bounds);
+            }
+        }
+
+        return hasBounds;
+    }
+
     void TrySpawnMazeEnemies(Transform mazeRoot, MazeCell[,] grid, Vector2Int start, Vector2Int exit, int seed, float cellSize)
     {
-        GameObject prefab = mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab;
-        int count = _config.MazeEnemyCount;
-        if (prefab == null || count <= 0)
+        GameObject zombiePrefab = mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab;
+        int zombieCountRequested = _config.MazeEnemyCount;
+        GameObject jailorPrefab = _config.MazeJailorPrefab;
+        int jailorCountRequested = _config.MazeJailorCount;
+
+        bool wantZombies = zombiePrefab != null && zombieCountRequested > 0;
+        bool wantJailors = jailorPrefab != null && jailorCountRequested > 0;
+        if (!wantZombies && !wantJailors)
             return;
 
         if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
@@ -2286,31 +2509,55 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             return;
         }
 
-        if (count > candidates.Count)
+        ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0x39FEA0B9))));
+
+        int zombiesToSpawn = wantZombies ? Mathf.Min(zombieCountRequested, candidates.Count) : 0;
+        if (wantZombies && zombieCountRequested > candidates.Count)
         {
             LogMazeWarningOnce(
                 "enemies-trimmed",
                 $"[Maze] Requested {_config.MazeEnemyCount} maze enemies but only {candidates.Count} cells match rules; spawning {candidates.Count}.",
                 this);
-            count = candidates.Count;
         }
 
-        ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0x39FEA0B9))));
+        int freeAfterZombies = candidates.Count - zombiesToSpawn;
+        int jailorsToSpawn = wantJailors ? Mathf.Min(jailorCountRequested, freeAfterZombies) : 0;
+        if (wantJailors && jailorsToSpawn < jailorCountRequested)
+        {
+            LogMazeWarningOnce(
+                "maze-jailor-trimmed",
+                $"[Maze] Requested {jailorCountRequested} maze jailor(s) but only {freeAfterZombies} cell(s) remain after zombies; spawning {jailorsToSpawn}. "
+                + "Reduce maze enemy count or maze size.",
+                this);
+        }
 
-        Debug.Log(
-            $"[Maze] Spawning {count} maze enemy/enemies from config asset \"{_config.name}\" " +
-            $"(Maze Enemy Count field = {_config.MazeEnemyCount}). Prefab: \"{(prefab != null ? prefab.name : "null")}\". " +
-            $"{(mazeEnemyPrefabOverride != null ? $"Prefab override on coordinator: \"{mazeEnemyPrefabOverride.name}\"." : "No enemy prefab override on coordinator (using config prefab).")}",
-            this);
+        int totalSpawns = zombiesToSpawn + jailorsToSpawn;
+        if (totalSpawns == 0)
+            return;
+
+        if (wantZombies)
+        {
+            Debug.Log(
+                $"[Maze] Spawning {zombiesToSpawn} maze enemy/enemies from config \"{_config.name}\" "
+                + $"(prefab \"{zombiePrefab.name}\"). "
+                + $"{(mazeEnemyPrefabOverride != null ? $"Override on coordinator: \"{mazeEnemyPrefabOverride.name}\"." : "")}",
+                this);
+        }
+
+        if (wantJailors && jailorsToSpawn > 0)
+        {
+            Debug.Log(
+                $"[Maze] Spawning {jailorsToSpawn} maze jailor(s) from config \"{_config.name}\" (prefab \"{jailorPrefab.name}\").",
+                this);
+        }
 
         Transform enemiesRoot = CreateChild(mazeRoot, "GeneratedEnemies");
         float yOffset = _config.MazeEnemySpawnHeight;
         bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
-
-        List<Vector3> placedEnemyPositions = new(count);
+        List<Vector3> placedEnemyPositions = new(totalSpawns);
         float minSeparationXZ = ResolveMazeEnemyMinSeparationXZ(cellSize);
 
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < zombiesToSpawn; i++)
         {
             Vector2Int cell = candidates[i];
             Vector3 position = ResolveSpawnPositionWithSeparation(
@@ -2323,15 +2570,191 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 minSeparationXZ);
 
             placedEnemyPositions.Add(position);
-            GameObject instance = Instantiate(prefab, position, Quaternion.identity, enemiesRoot);
+            GameObject instance = Instantiate(zombiePrefab, position, Quaternion.identity, enemiesRoot);
 
-            if (!spawnWithNetcode)
+            if (spawnWithNetcode)
+            {
+                NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+                if (networkObject != null)
+                    networkObject.Spawn();
+            }
+        }
+
+        const int jailorSpawnSalt = unchecked((int)0x7E11CA33);
+        for (int j = 0; j < jailorsToSpawn; j++)
+        {
+            int candidateIndex = zombiesToSpawn + j;
+            Vector2Int cell = candidates[candidateIndex];
+            int spawnKey = zombiesToSpawn + MixSeed(seed, MixSeed(j, jailorSpawnSalt));
+            Vector3 position = ResolveSpawnPositionWithSeparation(
+                cell,
+                cellSize,
+                yOffset,
+                seed,
+                spawnKey,
+                placedEnemyPositions,
+                minSeparationXZ);
+
+            placedEnemyPositions.Add(position);
+            GameObject instance = Instantiate(jailorPrefab, position, Quaternion.identity, enemiesRoot);
+
+            if (spawnWithNetcode)
+            {
+                NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+                if (networkObject != null)
+                    networkObject.Spawn();
+            }
+        }
+
+        TryAssignJailorCarryDestinationFromMaze(mazeRoot, start, exit, cellSize);
+    }
+
+    void TryAssignJailorCarryDestinationFromMaze(
+        Transform mazeRoot,
+        Vector2Int start,
+        Vector2Int exit,
+        float cellSize)
+    {
+        if (!_config.AssignJailorCarryDestinationAfterSpawn || mazeRoot == null)
+            return;
+
+        // Maze enemy prefab may be a zombie; Jailor can be spawned elsewhere in the same scene.
+        // Assign carry target to every JailorAI in this scene, not only under GeneratedEnemies.
+        List<JailorAI> jailors = FindJailorsInSameSceneAsMaze(mazeRoot);
+        if (jailors.Count == 0)
+            return;
+
+        if (_config.PreferJailorCarryAnchorFromMazePrefab)
+        {
+            Transform anchor = FindFirstTransformByExactName(
+                mazeRoot,
+                _config.JailorCarryAnchorTransformName,
+                out int anchorMatches);
+            if (anchor != null)
+            {
+                if (anchorMatches > 1)
+                {
+                    LogMazeWarningOnce(
+                        "jailor-carry-anchor-multiple",
+                        $"[Maze] Found {anchorMatches} transforms named \"{_config.JailorCarryAnchorTransformName}\" under the maze; "
+                        + "using the first. Use a unique name or only one piece with this anchor.",
+                        this);
+                }
+
+                DestroyChildByName(mazeRoot, _config.JailorCarryDestinationMarkerName);
+                ApplyCarryDestinationToJailors(jailors, anchor);
+                return;
+            }
+
+            LogMazeWarningOnce(
+                "jailor-carry-anchor-missing",
+                $"[Maze] Prefer maze-piece carry anchor is on but no Transform named \"{_config.JailorCarryAnchorTransformName}\" was found. "
+                + "Falling back to generated exit/start marker. Add a child with that exact name to your room prefab.",
+                this);
+        }
+
+        Vector2Int cell = _config.JailorCarryDestinationMazeAnchor == JailorCarryDestinationMazeAnchor.StartCell
+            ? start
+            : exit;
+
+        // Same floor + NavMesh snap strategy as maze enemies so the marker isn't projected to a random
+        // corridor corner when the cell center sits off-mesh (common in large interior cells).
+        Vector3 cellCenter = CellToWorld(cell.x, cell.y, cellSize);
+        if (!TryFindMazeEnemySpawnFloor(cellCenter, cellSize, out Vector3 floorPoint))
+            floorPoint = cellCenter;
+
+        Vector3 sampleFrom = floorPoint + Vector3.up * (0.35f + _config.JailorCarryDestinationYOffset);
+        float[] snapRadii =
+        {
+            Mathf.Clamp(cellSize * 0.22f, 0.75f, 3f),
+            Mathf.Clamp(cellSize * 0.5f, 2.5f, 8f),
+            Mathf.Max(12f, _config.JailorCarryDestinationNavMeshSearchRadius)
+        };
+
+        Vector3 raw = floorPoint + Vector3.up * _config.JailorCarryDestinationYOffset;
+        for (int i = 0; i < snapRadii.Length; i++)
+        {
+            if (!NavMesh.SamplePosition(sampleFrom, out NavMeshHit navHit, snapRadii[i], NavMesh.AllAreas))
+                continue;
+            if (navHit.position.y <= floorPoint.y + 2.5f)
+            {
+                raw = navHit.position + Vector3.up * _config.JailorCarryDestinationYOffset;
+                break;
+            }
+        }
+
+        string markerName = _config.JailorCarryDestinationMarkerName;
+        DestroyChildByName(mazeRoot, markerName);
+
+        GameObject marker = new(markerName);
+        marker.transform.SetParent(mazeRoot, false);
+        marker.transform.position = raw;
+
+        ApplyCarryDestinationToJailors(jailors, marker.transform);
+    }
+
+    static void ApplyCarryDestinationToJailors(List<JailorAI> jailors, Transform destination)
+    {
+        if (jailors == null || destination == null)
+            return;
+
+        for (int i = 0; i < jailors.Count; i++)
+        {
+            if (jailors[i] != null)
+                jailors[i].SetCarryDestination(destination);
+        }
+    }
+
+    static List<JailorAI> FindJailorsInSameSceneAsMaze(Transform mazeRoot)
+    {
+        List<JailorAI> list = new();
+        if (mazeRoot == null)
+            return list;
+
+        Scene mazeScene = mazeRoot.gameObject.scene;
+        foreach (JailorAI j in UnityEngine.Object.FindObjectsByType<JailorAI>(
+                     FindObjectsInactive.Include))
+        {
+            if (j != null && j.gameObject.scene == mazeScene)
+                list.Add(j);
+        }
+
+        return list;
+    }
+
+    static void DestroyChildByName(Transform parent, string childName)
+    {
+        if (parent == null || string.IsNullOrEmpty(childName))
+            return;
+
+        for (int i = parent.childCount - 1; i >= 0; i--)
+        {
+            Transform c = parent.GetChild(i);
+            if (c != null && c.name == childName)
+                UnityEngine.Object.Destroy(c.gameObject);
+        }
+    }
+
+    static Transform FindFirstTransformByExactName(Transform root, string exactName, out int matchCount)
+    {
+        matchCount = 0;
+        if (root == null || string.IsNullOrEmpty(exactName))
+            return null;
+
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        Transform first = null;
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            Transform t = transforms[i];
+            if (t == null || t.name != exactName)
                 continue;
 
-            NetworkObject networkObject = instance.GetComponent<NetworkObject>();
-            if (networkObject != null)
-                networkObject.Spawn();
+            matchCount++;
+            if (first == null)
+                first = t;
         }
+
+        return first;
     }
 
     void TrySpawnMazeTraps(

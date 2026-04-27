@@ -182,6 +182,21 @@ public class ZombieAI : MonoBehaviour
 
     public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
     public bool IsInvincible => _isCounterAttackInvincible;
+    /// <summary>
+    /// True while this zombie is actively producing audible SFX (scream loop/oneshot, breathing loop, or footsteps).
+    /// Used by other AI (e.g. Jailor) as a simple "heard noise from zombie" signal.
+    /// </summary>
+    public bool IsMakingNoiseForAi
+    {
+        get
+        {
+            if (_state == ZombieState.Dead)
+                return false;
+            return (screamAudioSource != null && screamAudioSource.isPlaying)
+                || (voiceAudioSource != null && voiceAudioSource.isPlaying)
+                || (footstepAudioSource != null && footstepAudioSource.isPlaying);
+        }
+    }
 
     void Reset()
     {
@@ -245,6 +260,11 @@ public class ZombieAI : MonoBehaviour
 
         UpdateZombieVocalAudio();
         RefreshTarget();
+        if (IsPlayerCarriedByJailor(_targetHealth))
+        {
+            ClearTarget();
+            EnterIdle();
+        }
 
         Vector3 desiredHorizontalVelocity = Vector3.zero;
         bool inHitReaction = _state == ZombieState.HitReaction && Time.time < _hitReactionEndTime;
@@ -438,7 +458,7 @@ public class ZombieAI : MonoBehaviour
         if (attackerHealth == null && attacker != null)
             attackerHealth = attacker.GetComponentInParent<PlayerHealth>();
 
-        if (attackerHealth == null || attackerHealth.IsDead)
+        if (attackerHealth == null || attackerHealth.IsDead || IsPlayerCarriedByJailor(attackerHealth))
             return;
 
         if (_targetHealth != attackerHealth)
@@ -675,7 +695,7 @@ public class ZombieAI : MonoBehaviour
                 continue;
 
             PlayerHealth candidate = hit.GetComponentInParent<PlayerHealth>();
-            if (candidate == null || candidate.IsDead)
+            if (candidate == null || candidate.IsDead || IsPlayerCarriedByJailor(candidate))
                 continue;
 
             if (!HasDetectionLineOfSight(candidate))
@@ -695,7 +715,7 @@ public class ZombieAI : MonoBehaviour
             for (int i = 0; i < players.Length; i++)
             {
                 PlayerHealth candidate = players[i];
-                if (candidate == null || candidate.IsDead)
+                if (candidate == null || candidate.IsDead || IsPlayerCarriedByJailor(candidate))
                     continue;
 
                 float distance = Vector3.Distance(transform.position, candidate.transform.position);
@@ -718,6 +738,15 @@ public class ZombieAI : MonoBehaviour
 
         _targetHealth = closestTarget;
         _target = closestTarget.transform;
+    }
+
+    static bool IsPlayerCarriedByJailor(PlayerHealth playerHealth)
+    {
+        if (playerHealth == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = playerHealth.GetComponent<NetworkPlayerAvatar>();
+        return avatar != null && avatar.IsCarriedByJailor;
     }
 
     bool HasDetectionLineOfSight(PlayerHealth targetHealth)

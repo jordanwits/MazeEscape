@@ -52,6 +52,7 @@ MonoBehaviour:
   - {fileID: 7531800331161147241, guid: 8fae984f5c07a4543ab82f2a23bb99eb, type: 3}
   specialPrefabs:
   - {fileID: 1554635876598814236, guid: 9c4f005e857f4374980ec7fb19e1099b, type: 3}
+  jailDeadEndPrefab: {fileID: 5483273465513195571, guid: 810a535ea8c219644bb16c0be1c18f1a, type: 3}
   interiorRoomPrefabs:
   - {fileID: 1781627571206459426, guid: 8935eb422580dd04287d6c8b2bbc5831, type: 3}
   - {fileID: 1202736749511769541, guid: a114aced94108b341b2af7a93d9aec75, type: 3}
@@ -84,10 +85,19 @@ MonoBehaviour:
   mazeEnemyMinCellsFromStart: 2
   mazeEnemyExcludeExitCell: 1
   mazeEnemyMinSeparation: 0
+  mazeJailorPrefab: {fileID: 7644638518217413858, guid: 3250bcfe5b1c11d4da88e202a1b8ea13, type: 3}
+  mazeJailorCount: 1
+  assignJailorCarryDestinationAfterSpawn: 1
+  preferJailorCarryAnchorFromMazePrefab: 1
+  jailorCarryAnchorTransformName: JailorCarryDrop
+  jailorCarryDestinationMazeAnchor: 0
+  jailorCarryDestinationYOffset: 0.05
+  jailorCarryDestinationNavMeshSearchRadius: 4
+  jailorCarryDestinationMarkerName: JailorCarryDestination
   mazeTrapPrefab: {fileID: 2022349335078714508, guid: 47af102dd8e7835409b736ab41efc253, type: 3}
-  mazeTrapCount: 10
+  mazeTrapCount: 5
   mazeTrapMinCellsFromStart: 2
   mazeTrapExcludeExitCell: 1
-  mazeTrapMinSeparation: 0
+  mazeTrapMinSeparation: 1
   mazeChestPrefab: {fileID: 7786454923030501191, guid: e621573098a2cb04a8ec9019443befb6, type: 3}
   mazeStartFlashlightPrefab: {fileID: 7328506109978203443, guid: 4f1b1ddb8a2d50848aa35c5643acaa6b, type: 3}

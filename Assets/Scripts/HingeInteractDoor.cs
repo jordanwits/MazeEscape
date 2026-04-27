@@ -15,17 +15,29 @@ public class HingeInteractDoor : NetworkBehaviour
     [SerializeField] Transform hinge;
     [Tooltip("Local Euler rotation when open, relative to the closed pose (default: -90° on local Y).")]
     [SerializeField] Vector3 openLocalEuler = new Vector3(0f, -90f, 0f);
+    [Tooltip(
+        "If the hinge is modeled in the OPEN position in the prefab (common for placed doors), enable this. "
+        + "The true closed rotation is derived so open/close and sound match the mesh. If wrong, your door will look like it opens when the script closes it.")]
+    [SerializeField] bool hingeRestPoseIsOpen;
     [Tooltip("How long the hinge takes to reach its target, in real-time seconds (not affected by Time.timeScale).")]
     [SerializeField] float moveDuration = 3.5f;
     [Header("Interaction")]
     [SerializeField] float interactMaxDistance = 5f;
     [Tooltip("When enabled, the door starts locked. Use a KeyItem to unlock; opening is a separate interact.")]
     [SerializeField] bool useKeyToUnlock;
+    [Tooltip(
+        "If Use Key To Unlock is on: when true, the door spawns unlocked (for jail cells). "
+        + "Players can open/close freely until the Jailor seals it. Leave false for normal key doors that start locked.")]
+    [SerializeField] bool jailCellStartUnlocked;
     [Tooltip("After unlocking with a key, this many seconds must pass before the door can be opened (or the open prompt shown).")]
     [SerializeField] float openAfterUnlockDelay = 0.45f;
     [Header("Audio")]
     [SerializeField] AudioClip doorUnlockClip;
     [SerializeField] AudioClip doorOpenClip;
+    [Tooltip(
+        "If set, this clip plays when the door closes. If empty, closing uses a reversed copy of Door Open Clip (Door B / start room can stay on that behavior). "
+        + "Use on the jail door when you want a custom open clip without reversing it for close.")]
+    [SerializeField] AudioClip doorCloseClip;
     [SerializeField, Range(0f, 1f)] float doorUnlockVolume = 0.75f;
     [SerializeField, Range(0f, 1f)] float doorOpenVolume = 0.75f;
 
@@ -79,6 +91,12 @@ public class HingeInteractDoor : NetworkBehaviour
     }
     public Vector3 IdentityHintPosition => _identityHintPosition;
 
+    /// <summary>
+    /// Raised after the cell is unlocked with a player key (<see cref="ServerUnlockFromKey"/>, <see cref="ApplyLocalUnlock"/>, <see cref="ApplyProceduralRemoteUnlock"/>).
+    /// Not raised when the Jailor forces the door open. Used to clear <see cref="NetworkPlayerAvatar.IsSealedInJailCell"/> for occupants.
+    /// </summary>
+    public event System.Action<HingeInteractDoor> OnJailUnlockedByPlayerKey;
+
     /// <summary>True while unlocked and the post-key delay has not finished (cannot open or show open prompt yet).</summary>
     public bool IsPostUnlockOpenDelayActive =>
         useKeyToUnlock
@@ -87,6 +105,88 @@ public class HingeInteractDoor : NetworkBehaviour
 
     /// <summary>False after the door has been opened at least once (stays off if closed again). Used for UI only.</summary>
     public bool ShowOpenInteractionPrompt => !IsSpawned ? _openPromptOffline : _showOpenInteractionPrompt.Value;
+
+    /// <summary>Server / offline: jailor opens the door before a drop (master key). Ignores interact range.</summary>
+    public void ServerJailorOpenForEntry()
+    {
+        if (hinge == null)
+            return;
+
+        bool treatAsServer = !IsSpawned || IsServer;
+        if (!treatAsServer)
+            return;
+
+        if (IsSpawned && IsServer)
+        {
+            // Must not return when IsBusy: JailorAI waits for JailorDoorIsOpenAndIdle (open and not busy).
+            StopDoorMoveRoutine();
+            _isLocked.Value = false;
+            _mayOpenUnlockedTime = 0f;
+            if (!_isOpen.Value)
+                _isOpen.Value = true;
+            else
+                StartMoveToState(true, true);
+            return;
+        }
+
+        if (IsBusy)
+            StopDoorMoveRoutine();
+        _lockedOffline = false;
+        _mayOpenUnlockedTime = 0f;
+        if (_isOpenOffline)
+        {
+            StartMoveToState(true, true);
+            return;
+        }
+
+        _isOpenOffline = true;
+        if (_isOpenOffline)
+            _openPromptOffline = false;
+        PlayDoorOpenSfx(true);
+        StartMoveToState(true, false);
+    }
+
+    /// <summary>
+    /// Server / offline: called only from <see cref="JailCellDoorTripwire"/> when the Jailor seals the cell.
+    /// Applies lock (requires key) before closing so the door cannot be toggled mid-close. Player interaction uses
+    /// <see cref="ToggleRequestServerRpc"/>, which only changes open state and never locks.
+    /// </summary>
+    public void ServerJailorCloseAndLock()
+    {
+        if (hinge == null)
+            return;
+
+        bool treatAsServer = !IsSpawned || IsServer;
+        if (!treatAsServer)
+            return;
+
+        if (IsSpawned && IsServer)
+        {
+            // Lock first so TryRequestToggle sees IsLocked before the close finishes (tripwire-only path).
+            if (useKeyToUnlock)
+                _isLocked.Value = true;
+            // Do not bail when IsBusy: the door may still be swinging open after JailorAI drops the player early.
+            // Flipping _isOpen false triggers OnIsOpenChanged → StartMoveToState, which stops the open coroutine and closes.
+            if (_isOpen.Value)
+                _isOpen.Value = false;
+            return;
+        }
+
+        if (useKeyToUnlock)
+            _lockedOffline = true;
+        if (_isOpenOffline)
+        {
+            _isOpenOffline = false;
+            PlayDoorOpenSfx(false);
+            StartMoveToState(false, false);
+        }
+    }
+
+    /// <summary>Used by JailorAI to wait for hinge motion after requesting open.</summary>
+    public bool JailorDoorIsOpenAndIdle() => IsOpen && !IsBusy;
+
+    /// <summary>Used by JailorAI to wait for hinge motion after requesting close.</summary>
+    public bool JailorDoorIsClosedAndIdle() => !IsOpen && !IsBusy;
 
     void OnEnable()
     {
@@ -112,9 +212,21 @@ public class HingeInteractDoor : NetworkBehaviour
             return;
         }
 
-        _closedLocalRotation = hinge.localRotation;
-        _lockedOffline = useKeyToUnlock;
+        Quaternion restLocal = hinge.localRotation;
+        Quaternion openDelta = Quaternion.Euler(openLocalEuler);
+        _closedLocalRotation = hingeRestPoseIsOpen
+            ? restLocal * Quaternion.Inverse(openDelta)
+            : restLocal;
+
+        _lockedOffline = useKeyToUnlock && !jailCellStartUnlocked;
         _mayOpenUnlockedTime = 0f;
+        // Jail cells: unlocked and left open until the Jailor seals (must match logical _isOpen / NetworkVariable).
+        if (useKeyToUnlock && jailCellStartUnlocked)
+        {
+            _isOpenOffline = true;
+            _openPromptOffline = false;
+        }
+
         EnsureSfxSource();
     }
 
@@ -149,15 +261,22 @@ public class HingeInteractDoor : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        _isOpen.OnValueChanged += OnIsOpenChanged;
-        _isLocked.OnValueChanged += OnIsLockedChanged;
+        // Apply server defaults before subscribing so spawn does not fire unlock/open sounds or tween from wrong pose.
         if (IsServer)
         {
             if (!useKeyToUnlock)
                 _isLocked.Value = false;
             else
-                _isLocked.Value = true;
+                _isLocked.Value = !jailCellStartUnlocked;
+
+            // _isOpen NetworkVariable defaults to false; jail cells start open (matches Jail Cell Start Unlocked).
+            if (useKeyToUnlock && jailCellStartUnlocked)
+                _isOpen.Value = true;
         }
+
+        _isOpen.OnValueChanged += OnIsOpenChanged;
+        _isLocked.OnValueChanged += OnIsLockedChanged;
+
         if (hinge == null)
             return;
 
@@ -237,6 +356,7 @@ public class HingeInteractDoor : NetworkBehaviour
         if (IsBusy)
             return;
         _isLocked.Value = false;
+        OnJailUnlockedByPlayerKey?.Invoke(this);
     }
 
     /// <summary>Single-player / non-network: key was removed from inventory by the player; door stays closed until open interact.</summary>
@@ -249,6 +369,7 @@ public class HingeInteractDoor : NetworkBehaviour
         _lockedOffline = false;
         _mayOpenUnlockedTime = Time.unscaledTime + Mathf.Max(0f, openAfterUnlockDelay);
         PlayDoorUnlockSfx();
+        OnJailUnlockedByPlayerKey?.Invoke(this);
     }
 
     public void ApplyProceduralRemoteUnlock()
@@ -259,6 +380,7 @@ public class HingeInteractDoor : NetworkBehaviour
         _lockedOffline = false;
         _mayOpenUnlockedTime = Time.unscaledTime + Mathf.Max(0f, openAfterUnlockDelay);
         PlayDoorUnlockSfx();
+        OnJailUnlockedByPlayerKey?.Invoke(this);
     }
 
     public void ApplyProceduralRemoteOpenState(bool open)
@@ -311,6 +433,7 @@ public class HingeInteractDoor : NetworkBehaviour
         }
         else
         {
+            // Player closing an open door: never lock (only JailCellDoorTripwire → ServerJailorCloseAndLock locks).
             _isOpen.Value = false;
         }
     }
@@ -322,16 +445,21 @@ public class HingeInteractDoor : NetworkBehaviour
             : _closedLocalRotation;
     }
 
-    void StartMoveToState(bool open, bool immediate)
+    void StopDoorMoveRoutine()
     {
-        if (hinge == null)
-            return;
-
         if (_moveRoutine != null)
         {
             StopCoroutine(_moveRoutine);
             _moveRoutine = null;
         }
+    }
+
+    void StartMoveToState(bool open, bool immediate)
+    {
+        if (hinge == null)
+            return;
+
+        StopDoorMoveRoutine();
 
         Quaternion end = TargetLocalRotationForState(open);
         if (immediate)
@@ -397,10 +525,17 @@ public class HingeInteractDoor : NetworkBehaviour
         _sfx.PlayOneShot(doorUnlockClip, Mathf.Max(0f, doorUnlockVolume));
     }
 
-    /// <param name="opening">True when swinging toward open, false when closing (uses a reversed runtime copy of the open clip).</param>
+    /// <param name="opening">True when swinging toward open, false when closing.</param>
     void PlayDoorOpenSfx(bool opening)
     {
-        AudioClip clip = opening ? doorOpenClip : GetOrCreateReversedClip(doorOpenClip);
+        AudioClip clip;
+        if (opening)
+            clip = doorOpenClip;
+        else if (doorCloseClip != null)
+            clip = doorCloseClip;
+        else
+            clip = GetOrCreateReversedClip(doorOpenClip);
+
         if (clip == null)
             clip = doorOpenClip;
         if (clip == null)

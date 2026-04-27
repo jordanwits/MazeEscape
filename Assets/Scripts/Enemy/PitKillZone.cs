@@ -1,4 +1,5 @@
 using Unity.Netcode;
+using UnityEngine.AI;
 using UnityEngine;
 #if UNITY_EDITOR
 using UnityEditor;
@@ -10,6 +11,12 @@ public class PitKillZone : MonoBehaviour
 {
     [SerializeField] bool destroyIfNoZombieHealth;
     [SerializeField] bool addKinematicRigidbody = true;
+    [Header("Jailor safety")]
+    [Tooltip("If the Jailor enters this pit trigger, teleport him back to the nearest NavMesh point instead of allowing pit grabs.")]
+    [SerializeField] bool rescueJailorFromPit = true;
+    [SerializeField, Min(0.05f)] float jailorRescueCooldown = 0.2f;
+    [SerializeField, Min(0.5f)] float jailorRescueSampleRadius = 12f;
+    [SerializeField, Min(0f)] float jailorRescueLift = 0.08f;
 
     [Header("Audio")]
     [SerializeField] AudioClip spikeStabClip;
@@ -21,6 +28,7 @@ public class PitKillZone : MonoBehaviour
     AudioSource _spikeAudio;
     EntityId _lastSpikeSoundColliderEntity;
     float _nextSpikeSoundTime;
+    float _nextJailorRescueTime;
 
     void Reset()
     {
@@ -74,10 +82,19 @@ public class PitKillZone : MonoBehaviour
         if (!ShouldApplyPitKills())
             return;
 
+        JailorAI jailor = other.GetComponentInParent<JailorAI>();
+        if (jailor != null)
+        {
+            TryRescueJailorFromPit(jailor);
+            return;
+        }
+
         PlayerHealth playerHealth = other.GetComponentInParent<PlayerHealth>();
         if (playerHealth != null)
         {
             if (playerHealth.IsDead)
+                return;
+            if (IsCarriedByJailor(playerHealth))
                 return;
 
             NetworkPlayerRespawn playerRespawn = playerHealth.GetComponent<NetworkPlayerRespawn>();
@@ -110,6 +127,48 @@ public class PitKillZone : MonoBehaviour
         if (nm == null || !nm.IsListening)
             return true;
         return nm.IsServer;
+    }
+
+    void TryRescueJailorFromPit(JailorAI jailor)
+    {
+        if (!rescueJailorFromPit || jailor == null || Time.time < _nextJailorRescueTime)
+            return;
+
+        _nextJailorRescueTime = Time.time + Mathf.Max(0.05f, jailorRescueCooldown);
+
+        Transform jailorTransform = jailor.transform;
+        Vector3 origin = jailorTransform.position + Vector3.up;
+        if (!NavMesh.SamplePosition(origin, out NavMeshHit hit, Mathf.Max(0.5f, jailorRescueSampleRadius), NavMesh.AllAreas))
+            return;
+
+        Vector3 safePosition = hit.position + Vector3.up * Mathf.Max(0f, jailorRescueLift);
+        NavMeshAgent jailorAgent = jailor.GetComponent<NavMeshAgent>();
+        if (jailorAgent != null && jailorAgent.enabled && jailorAgent.isOnNavMesh)
+        {
+            jailorAgent.Warp(safePosition);
+            return;
+        }
+
+        CharacterController jailorController = jailor.GetComponent<CharacterController>();
+        if (jailorController != null)
+        {
+            bool wasEnabled = jailorController.enabled;
+            jailorController.enabled = false;
+            jailorTransform.position = safePosition;
+            jailorController.enabled = wasEnabled;
+            return;
+        }
+
+        jailorTransform.position = safePosition;
+    }
+
+    static bool IsCarriedByJailor(PlayerHealth player)
+    {
+        if (player == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = player.GetComponent<NetworkPlayerAvatar>();
+        return avatar != null && avatar.IsCarriedByJailor;
     }
 
     void EnsureSpikeAudioSource()

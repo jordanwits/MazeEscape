@@ -32,6 +32,18 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
 
+    readonly NetworkVariable<bool> _carriedByJailor = new NetworkVariable<bool>(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    readonly NetworkVariable<bool> _sealedInJailCell = new NetworkVariable<bool>(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    bool _offlineCarriedByJailor;
+    bool _offlineSealedInJailCell;
     bool _isDormant;
     bool _isAlive = true;
     NetworkManager _networkManager;
@@ -45,6 +57,15 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     /// <summary>Replicated from owner: sprinting on foot loud enough for enemy AI (e.g. Jailor hearing).</summary>
     public bool AudiblySprintingForAi => _audiblySprintingForAi.Value;
 
+    /// <summary>Server-authoritative: player is grabbed and carried by the Jailor.</summary>
+    public bool IsCarriedByJailor => IsSpawned ? _carriedByJailor.Value : _offlineCarriedByJailor;
+
+    /// <summary>
+    /// Server-authoritative: Jailor finished locking this player in a key-locked jail cell.
+    /// Cleared when the cell is unlocked with a key (see <see cref="JailCellSealedReleaseZone"/>) or on death/restore.
+    /// </summary>
+    public bool IsSealedInJailCell => IsSpawned ? _sealedInJailCell.Value : _offlineSealedInJailCell;
+
     public void PublishAudiblySprinting(bool value)
     {
         if (!IsSpawned || !IsOwner)
@@ -52,6 +73,42 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         if (_audiblySprintingForAi.Value == value)
             return;
         _audiblySprintingForAi.Value = value;
+    }
+
+    /// <summary>Called on the server by <see cref="JailorAI"/> when parenting / releasing the carry.</summary>
+    public void ServerSetCarriedByJailor(bool carried)
+    {
+        if (IsSpawned)
+        {
+            if (!IsServer)
+                return;
+            _carriedByJailor.Value = carried;
+            return;
+        }
+
+        _offlineCarriedByJailor = carried;
+        ApplyPresentation(IsOwner);
+    }
+
+    /// <summary>Server / offline host: mark player as locked in a jail cell for Jailor AI ignore rules.</summary>
+    public void ServerSetSealedInJailCell(bool sealedInCell)
+    {
+        if (IsSpawned)
+        {
+            if (!IsServer)
+                return;
+            _sealedInJailCell.Value = sealedInCell;
+            return;
+        }
+
+        _offlineSealedInJailCell = sealedInCell;
+    }
+
+    void OnCarriedByJailorChanged(bool previousValue, bool newValue)
+    {
+        if (_isDormant)
+            return;
+        ApplyPresentation(IsOwner);
     }
 
     void Awake()
@@ -75,6 +132,37 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
         ResolveFlashlightAimPivot();
         EnsureAnimationSync();
+
+        if (playerHealth != null)
+        {
+            playerHealth.Died += ClearSealedInJailCellIfAuthoritative;
+            playerHealth.Restored += ClearSealedInJailCellIfAuthoritative;
+        }
+    }
+
+    public override void OnDestroy()
+    {
+        if (playerHealth != null)
+        {
+            playerHealth.Died -= ClearSealedInJailCellIfAuthoritative;
+            playerHealth.Restored -= ClearSealedInJailCellIfAuthoritative;
+        }
+
+        base.OnDestroy();
+    }
+
+    void ClearSealedInJailCellIfAuthoritative()
+    {
+        if (IsSpawned && !IsServer)
+            return;
+        if (IsSpawned && IsServer)
+        {
+            if (_sealedInJailCell.Value)
+                _sealedInJailCell.Value = false;
+            return;
+        }
+
+        _offlineSealedInJailCell = false;
     }
 
     void ResolveFlashlightAimPivot()
@@ -128,6 +216,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     {
         _networkManager = NetworkManager.Singleton;
         SetDormant(false);
+        _carriedByJailor.OnValueChanged += OnCarriedByJailorChanged;
         ApplyOwnershipState();
 
         if (IsOwner
@@ -151,6 +240,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
     public override void OnNetworkDespawn()
     {
+        _carriedByJailor.OnValueChanged -= OnCarriedByJailorChanged;
         _networkManager = null;
         SetDormant(false);
         ApplyPresentation(true);
@@ -343,8 +433,10 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         if (_isDormant)
             return;
 
+        bool jailorCarried = IsCarriedByJailor;
+
         if (playerController != null)
-            playerController.SetLocalControl(isLocalOwner && _isAlive);
+            playerController.SetLocalControl(isLocalOwner && _isAlive && !jailorCarried);
 
         if (playerHealth != null)
             playerHealth.SetHudVisible(isLocalOwner && _isAlive);
@@ -355,7 +447,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             // physics (no Move on host/client observer); that wastes work and can fight NetworkTransform.
             NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
             bool inNetSession = nm != null && nm.IsListening;
-            bool enableCc = _isAlive && (!inNetSession || isLocalOwner);
+            bool enableCc = _isAlive && (!inNetSession || isLocalOwner) && !jailorCarried;
             characterController.enabled = enableCc;
         }
 

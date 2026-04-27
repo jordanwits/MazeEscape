@@ -511,6 +511,37 @@ Transform:
   - {fileID: 3874506867359985278}
   m_Father: {fileID: 129338757031835197}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &5011123456789012000
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 5011123456789012001}
+  m_Layer: 7
+  m_Name: CarryAttach
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &5011123456789012001
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5011123456789012000}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0.15580316, y: 0.012422206, z: 0.018627498, w: 0.9875344}
+  m_LocalPosition: {x: 0.128, y: 0.244, z: 0.505}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 129338757031835197}
+  m_LocalEulerAnglesHint: {x: -17.95, y: 1.128, z: 1.983}
 --- !u!1 &5216182934242048562
 GameObject:
   m_ObjectHideFlags: 0
@@ -573,6 +604,135 @@ Transform:
   m_Children: []
   m_Father: {fileID: 4028691244847992431}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &5738452469631865893
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 3215212839773810010}
+  - component: {fileID: 2353927260852405139}
+  m_Layer: 0
+  m_Name: JailorFootstepAudio
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &3215212839773810010
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5738452469631865893}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2792986047379688985}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!82 &2353927260852405139
+AudioSource:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5738452469631865893}
+  m_Enabled: 1
+  serializedVersion: 4
+  OutputAudioMixerGroup: {fileID: 0}
+  m_audioClip: {fileID: 0}
+  m_Resource: {fileID: 0}
+  m_PlayOnAwake: 1
+  m_Volume: 1
+  m_Pitch: 1
+  Loop: 0
+  Mute: 0
+  Spatialize: 0
+  SpatializePostEffects: 0
+  Priority: 128
+  DopplerLevel: 1
+  MinDistance: 1
+  MaxDistance: 500
+  Pan2D: 0
+  rolloffMode: 0
+  BypassEffects: 0
+  BypassListenerEffects: 0
+  BypassReverbZones: 0
+  rolloffCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  panLevelCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  spreadCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  reverbZoneMixCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
 --- !u!1 &5924452786145301409
 GameObject:
   m_ObjectHideFlags: 0
@@ -767,6 +927,135 @@ Transform:
   - {fileID: 367757436125109638}
   m_Father: {fileID: 7299344509822336196}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &7610846091280404134
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7230075419731423008}
+  - component: {fileID: 3751952732189646971}
+  m_Layer: 0
+  m_Name: JailorLaughAudio
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7230075419731423008
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7610846091280404134}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2792986047379688985}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!82 &3751952732189646971
+AudioSource:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7610846091280404134}
+  m_Enabled: 1
+  serializedVersion: 4
+  OutputAudioMixerGroup: {fileID: 0}
+  m_audioClip: {fileID: 0}
+  m_Resource: {fileID: 0}
+  m_PlayOnAwake: 1
+  m_Volume: 1
+  m_Pitch: 1
+  Loop: 0
+  Mute: 0
+  Spatialize: 0
+  SpatializePostEffects: 0
+  Priority: 128
+  DopplerLevel: 1
+  MinDistance: 1
+  MaxDistance: 500
+  Pan2D: 0
+  rolloffMode: 0
+  BypassEffects: 0
+  BypassListenerEffects: 0
+  BypassReverbZones: 0
+  rolloffCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  panLevelCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  spreadCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  reverbZoneMixCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
 --- !u!1 &7644638518217413858
 GameObject:
   m_ObjectHideFlags: 0
@@ -782,7 +1071,7 @@ GameObject:
   - component: {fileID: 2712650400925260513}
   - component: {fileID: 7541107775037098470}
   - component: {fileID: 7713415644906319568}
-  m_Layer: 6
+  m_Layer: 7
   m_Name: Jailor
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -804,6 +1093,8 @@ Transform:
   m_Children:
   - {fileID: 161913872395889943}
   - {fileID: 6901442877957057706}
+  - {fileID: 7230075419731423008}
+  - {fileID: 3215212839773810010}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!95 &3908310291460958626
@@ -890,6 +1181,11 @@ MonoBehaviour:
   animator: {fileID: 3908310291460958626}
   navMeshAgent: {fileID: 7001733651103369478}
   characterController: {fileID: 4689613813191485252}
+  carryAttach: {fileID: 5011123456789012001}
+  carriedPlayerLocalPositionOffset: {x: 0, y: 0, z: 0}
+  carriedPlayerLocalEulerOffset: {x: 0, y: 0, z: 0}
+  carryDestination: {fileID: 0}
+  carryDestinationObjectName: 
   detectionMask:
     serializedVersion: 2
     m_Bits: 0
@@ -897,21 +1193,74 @@ MonoBehaviour:
   loseTargetRadiusMultiplier: 1.5
   hearingRadius: 18
   voiceHearRadius: 22
+  zombieNoiseHearRadius: 22
   targetNavMeshSampleRadius: 3
   requireDetectionLineOfSight: 1
   detectionLineOfSightMask:
     serializedVersion: 2
     m_Bits: 115
   detectionLineOfSightHeight: 1.1
+  grabRange: 1.3
+  maxGrabAngleDegrees: 100
+  maxGrabVerticalDelta: 0.9
+  grabTriggerParameter: Grab
+  grabClipDurationFallback: 1.93
+  attachFallbackDelay: 0.95
+  carrySpeed: 6
+  carryStoppingDistance: 0.65
+  carryArrivalDistance: 1.1
+  carryDestinationSampleRadius: 2
+  carryDestinationForwardFallback: 10
+  postDropChaseCooldownSeconds: 6
+  minCarrySecondsBeforeDrop: 0.85
+  carryDestinationNavSnapMaxDistance: 24
   walkSpeed: 2.6
-  runSpeed: 3.25
+  runSpeed: 4
   rotationSpeed: 360
   gravity: -20
   groundedStickDown: 2
+  destinationRefreshInterval: 0.1
+  destinationRefreshMinDistance: 0.2
   alwaysRunWhenChasing: 1
+  patrolSpeed: 2.2
+  patrolMinWaypointDistance: 6
+  patrolMaxWaypointDistance: 14
+  patrolArrivalDistance: 1
+  patrolDestinationRefreshInterval: 0.45
+  patrolSampleAttempts: 14
+  patrolRecentDestinationMemory: 6
+  patrolRecentDestinationRadius: 3.5
+  patrolStuckVelocityThreshold: 0.18
+  patrolProgressCheckInterval: 0.35
+  patrolMinProgressDistance: 0.1
+  patrolStuckSeconds: 2
+  patrolRepathCooldown: 0.9
+  investigationArrivalDistance: 1.2
+  investigationLingerSeconds: 10
+  investigationSearchRadius: 3.5
+  investigationSearchMinWaypointDistance: 1.2
+  investigationSearchSampleAttempts: 10
+  chaseLoseLineOfSightSeconds: 2
   speedParameter: Speed
   groundedParameter: Grounded
   verticalVelocityParameter: VerticalVelocity
+  grabStateName: Grab
+  jumpTriggerParameter: Jump
+  animatorSpeedLerp: 12
+  idleSpeedDeadZone: 0.08
+  jailorLaughClip: {fileID: 8300000, guid: f0cf1293b9e2a6b4e9b5d005c87dd682, type: 3}
+  jailorLaughVolume: 0.3
+  jailorLaughAudioSource: {fileID: 3751952732189646971}
+  jailorFootstepClip: {fileID: 8300000, guid: 4df5524c407766d41835b2691730694b, type: 3}
+  jailorFootstepVolume: 0.3
+  jailorFootstepAudioSource: {fileID: 2353927260852405139}
+  jailorMinFootstepMoveSpeed: 0.2
+  jailorWalkFootstepPhases: {x: 0.13, y: 0.63}
+  jailorRunFootstepPhases: {x: 0.1, y: 0.6}
+  offMeshJumpDuration: 0.72
+  offMeshJumpArcHeight: 1.05
+  offMeshJumpLandingSnapDistance: 0.45
+  offMeshJumpCooldown: 0.12
 --- !u!114 &7541107775037098470
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -954,6 +1303,7 @@ MonoBehaviour:
   jailorAI: {fileID: 2712650400925260513}
   navMeshAgent: {fileID: 7001733651103369478}
   characterController: {fileID: 4689613813191485252}
+  maxFootstepObserverDistance: 18
 --- !u!1 &7777923338331262405
 GameObject:
   m_ObjectHideFlags: 0
@@ -1296,6 +1646,7 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 4183897183171009139}
+  - {fileID: 5011123456789012001}
   m_Father: {fileID: 6901442877957057706}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &8894222143174897548

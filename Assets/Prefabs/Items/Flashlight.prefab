@@ -364,7 +364,7 @@ MonoBehaviour:
   lensGlowRenderers:
   - {fileID: 2898514983395639065}
   alignHeldRotationToLight: 1
-  maxBatterySeconds: 60
+  maxBatterySeconds: 85
   minBatteryToOperate: 0.001
 --- !u!54 &5538197934289644156
 Rigidbody:
@@ -428,7 +428,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 0
+  GlobalObjectIdHash: 1348909608
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 0
@@ -453,3 +453,4 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c4d8a2e1f9054b6c9d0e1f2a3b4c5d6e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics
+  ShowTopMostFoldoutHeaderGroup: 1

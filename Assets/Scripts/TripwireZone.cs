@@ -310,7 +310,7 @@ public class TripwireZone : MonoBehaviour
             return;
 
         PlayerHealth ph = other.GetComponentInParent<PlayerHealth>();
-        if (ph != null && !ph.IsDead)
+        if (ph != null && !ph.IsDead && !IsCarriedByJailor(ph))
         {
             _players.Add(ph);
             return;
@@ -323,8 +323,17 @@ public class TripwireZone : MonoBehaviour
 
     void Prune()
     {
-        _players.RemoveWhere(p => p == null || p.IsDead);
+        _players.RemoveWhere(p => p == null || p.IsDead || IsCarriedByJailor(p));
         _zombies.RemoveWhere(z => z == null || z.IsDead);
+    }
+
+    static bool IsCarriedByJailor(PlayerHealth player)
+    {
+        if (player == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = player.GetComponent<NetworkPlayerAvatar>();
+        return avatar != null && avatar.IsCarriedByJailor;
     }
 
 #if UNITY_EDITOR

@@ -7,6 +7,13 @@ public enum MazeSpecialRoomVariant
     Alternate
 }
 
+/// <summary>Where to place the generated <see cref="ProceduralMazeConfig.JailorCarryDestinationMarkerName"/> for <see cref="JailorAI"/>.</summary>
+public enum JailorCarryDestinationMazeAnchor
+{
+    ExitCell,
+    StartCell,
+}
+
 [CreateAssetMenu(menuName = "Maze Escape/Procedural Maze Config", fileName = "ProceduralMazeConfig")]
 public class ProceduralMazeConfig : ScriptableObject
 {
@@ -44,6 +51,9 @@ public class ProceduralMazeConfig : ScriptableObject
     [SerializeField] GameObject[] teePrefabs = EmptyPrefabs;
     [SerializeField] GameObject[] crossPrefabs = EmptyPrefabs;
     [SerializeField] GameObject[] specialPrefabs = EmptyPrefabs;
+    [Tooltip("Spawned exactly once per maze on a random dead-end cell (not start, not exit, not an interior room). "
+        + "Same topology as other dead ends (MazePieceDefinition DeadEnd + matching open faces). Do not add this to Dead End Prefabs. Leave empty to skip.")]
+    [SerializeField] GameObject jailDeadEndPrefab;
 
     [Header("Interior rooms (throughout maze)")]
     [Tooltip("Prefabs with MazePieceDefinition: open faces must match the **outer** openings of the room block (see Interior Room Grid Footprint). Placed on non-start, non-exit cells only.")]
@@ -97,6 +107,29 @@ public class ProceduralMazeConfig : ScriptableObject
     [SerializeField] bool mazeEnemyExcludeExitCell = true;
     [Tooltip("Minimum horizontal distance between enemies spawned in the same batch. Use 0 for auto (from cell size).")]
     [SerializeField] float mazeEnemyMinSeparation;
+
+    [Header("Maze Jailor (optional, in addition to maze enemies)")]
+    [Tooltip("Spawned after zombies in the same GeneratedEnemies pass, using extra candidate cells (same rules as maze enemies).")]
+    [SerializeField] GameObject mazeJailorPrefab;
+    [Tooltip("How many Jailors to spawn (usually 1). Cannot exceed free cells after zombie spawns.")]
+    [SerializeField] int mazeJailorCount = 1;
+
+    [Header("Jailor carry drop (maze)")]
+    [Tooltip("After maze enemies and maze jailor(s) spawn, assign carry destination on every JailorAI in the scene.")]
+    [SerializeField] bool assignJailorCarryDestinationAfterSpawn = true;
+    [Tooltip(
+        "If true, looks for a child Transform with Jailor Carry Anchor Transform Name anywhere under the built maze (your room prefab instance). "
+        + "Use that as the drop point wherever that piece spawned. If none is found, falls back to the generated exit/start marker.")]
+    [SerializeField] bool preferJailorCarryAnchorFromMazePrefab;
+    [Tooltip("Exact name of the empty (or object) on your maze piece prefab, e.g. JailorCarryDrop.")]
+    [SerializeField] string jailorCarryAnchorTransformName = "JailorCarryDrop";
+    [SerializeField] JailorCarryDestinationMazeAnchor jailorCarryDestinationMazeAnchor = JailorCarryDestinationMazeAnchor.ExitCell;
+    [Tooltip("Added on top of the chosen cell center before NavMesh sampling.")]
+    [SerializeField] float jailorCarryDestinationYOffset = 0.05f;
+    [Tooltip("How far to search for a NavMesh point from the raw cell position.")]
+    [SerializeField] float jailorCarryDestinationNavMeshSearchRadius = 4f;
+    [Tooltip("Child name under the generated maze root. Re-created each maze build if assign is enabled.")]
+    [SerializeField] string jailorCarryDestinationMarkerName = "JailorCarryDestination";
 
     [Header("Maze traps (anchor-based, optional)")]
     [Tooltip("Prefab spawned at child transforms named TrapAnchor or TrapAnchor2 on generated maze pieces. Use a NetworkObject prefab for multiplayer.")]
@@ -175,6 +208,22 @@ public class ProceduralMazeConfig : ScriptableObject
     public int MazeEnemyMinCellsFromStart => Mathf.Max(0, mazeEnemyMinCellsFromStart);
     public bool MazeEnemyExcludeExitCell => mazeEnemyExcludeExitCell;
     public float MazeEnemyMinSeparation => mazeEnemyMinSeparation;
+    public GameObject MazeJailorPrefab => mazeJailorPrefab;
+    public int MazeJailorCount => Mathf.Max(0, mazeJailorCount);
+    public bool AssignJailorCarryDestinationAfterSpawn => assignJailorCarryDestinationAfterSpawn;
+    public bool PreferJailorCarryAnchorFromMazePrefab => preferJailorCarryAnchorFromMazePrefab;
+    public string JailorCarryAnchorTransformName =>
+        string.IsNullOrWhiteSpace(jailorCarryAnchorTransformName)
+            ? "JailorCarryDrop"
+            : jailorCarryAnchorTransformName.Trim();
+    public JailorCarryDestinationMazeAnchor JailorCarryDestinationMazeAnchor => jailorCarryDestinationMazeAnchor;
+    public float JailorCarryDestinationYOffset => jailorCarryDestinationYOffset;
+    public float JailorCarryDestinationNavMeshSearchRadius =>
+        Mathf.Max(0.5f, jailorCarryDestinationNavMeshSearchRadius);
+    public string JailorCarryDestinationMarkerName =>
+        string.IsNullOrWhiteSpace(jailorCarryDestinationMarkerName)
+            ? "JailorCarryDestination"
+            : jailorCarryDestinationMarkerName.Trim();
     public GameObject MazeTrapPrefab => mazeTrapPrefab;
     public int MazeTrapCount => Mathf.Max(0, mazeTrapCount);
     public int MazeTrapMinCellsFromStart => Mathf.Max(0, mazeTrapMinCellsFromStart);
@@ -182,6 +231,7 @@ public class ProceduralMazeConfig : ScriptableObject
     public float MazeTrapMinSeparation => mazeTrapMinSeparation;
     public GameObject MazeChestPrefab => mazeChestPrefab;
     public GameObject MazeStartFlashlightPrefab => mazeStartFlashlightPrefab;
+    public GameObject JailDeadEndPrefab => jailDeadEndPrefab;
 
     public bool HasMinimumStarterSet => HasAssignedForCategory(MazePieceCategory.Cross)
         && HasAssignedForCategory(MazePieceCategory.Straight)
