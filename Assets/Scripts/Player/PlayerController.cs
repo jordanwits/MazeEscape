@@ -177,6 +177,7 @@ public partial class PlayerController : MonoBehaviour
     float _currentStamina;
     float _staminaRegenTimer;
     bool _isSprinting;
+    bool _audiblySprintingForAi;
     RectTransform _staminaFillRect;
     GameObject _staminaBarRoot;
     GameObject _inventorySlotsRoot;
@@ -222,6 +223,7 @@ public partial class PlayerController : MonoBehaviour
 
     public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
     public bool HasLocalControl => _hasLocalControl;
+    public bool IsAudiblySprintingForAi => _audiblySprintingForAi;
     public Transform LookPitchTransform => cameraTransform;
     public bool UsesFirstPersonLook => firstPersonLook;
     public Transform CameraPitchNode => cameraPitchTransform;
@@ -248,6 +250,9 @@ public partial class PlayerController : MonoBehaviour
         _currentHorizontalSpeed = 0f;
         _groundMoveThisFrame = Vector3.zero;
         _isSprinting = false;
+        _audiblySprintingForAi = false;
+        if (_networkPlayerAvatar != null && _networkPlayerAvatar.IsSpawned && _networkPlayerAvatar.IsOwner)
+            _networkPlayerAvatar.PublishAudiblySprinting(false);
         _smoothedStrafeDirection = 0f;
         _verticalVelocity.y = characterController != null && characterController.isGrounded
             ? -groundedStickDown
@@ -542,6 +547,13 @@ public partial class PlayerController : MonoBehaviour
 
         TryPlayLandFootstep(wasGroundedBeforeMove, characterController.isGrounded);
         UpdateFootsteps(characterController.isGrounded);
+
+        bool audibleSprint = _isSprinting
+            && characterController.isGrounded
+            && _currentHorizontalSpeed >= minimumFootstepSpeed;
+        _audiblySprintingForAi = audibleSprint;
+        if (_networkPlayerAvatar != null && _networkPlayerAvatar.IsSpawned && _networkPlayerAvatar.IsOwner)
+            _networkPlayerAvatar.PublishAudiblySprinting(audibleSprint);
 
         if (driveAnimator && animator != null)
         {

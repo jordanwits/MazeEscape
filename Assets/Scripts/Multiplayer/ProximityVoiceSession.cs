@@ -72,6 +72,7 @@ public class ProximityVoiceSession : MonoBehaviour
             reader.ReadValueSafe(out short s);
             s_ServerVoicePcmScratch[i] = s;
         }
+        ServerProximityVoiceNotifications.NotifyVoiceFrameFromClient(senderId);
         RelayToOthers(senderId, seq, count, s_ServerVoicePcmScratch);
     }
 

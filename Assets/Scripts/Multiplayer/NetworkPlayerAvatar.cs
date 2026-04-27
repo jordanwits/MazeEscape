@@ -27,6 +27,11 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
 
+    readonly NetworkVariable<bool> _audiblySprintingForAi = new NetworkVariable<bool>(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Owner);
+
     bool _isDormant;
     bool _isAlive = true;
     NetworkManager _networkManager;
@@ -36,6 +41,18 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     public bool HasHeldFlashlight => playerInventory != null
         && playerInventory.IsSpawned
         && playerInventory.HasItemInSelectedSlot;
+
+    /// <summary>Replicated from owner: sprinting on foot loud enough for enemy AI (e.g. Jailor hearing).</summary>
+    public bool AudiblySprintingForAi => _audiblySprintingForAi.Value;
+
+    public void PublishAudiblySprinting(bool value)
+    {
+        if (!IsSpawned || !IsOwner)
+            return;
+        if (_audiblySprintingForAi.Value == value)
+            return;
+        _audiblySprintingForAi.Value = value;
+    }
 
     void Awake()
     {
