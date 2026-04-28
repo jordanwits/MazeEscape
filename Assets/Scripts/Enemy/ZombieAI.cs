@@ -589,6 +589,8 @@ public class ZombieAI : MonoBehaviour
         navMeshAgent.updatePosition = false;
         navMeshAgent.updateRotation = false;
         navMeshAgent.baseOffset = 0f;
+        // Higher than <see cref="JailorAI"/> (12) so zombies yield in local avoidance and cannot box the jailor in.
+        navMeshAgent.avoidancePriority = 48;
 
         if (characterController != null)
         {

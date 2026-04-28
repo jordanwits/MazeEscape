@@ -137,7 +137,6 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     int _currentSeed;
     Coroutine _sceneRoutine;
     readonly HashSet<string> _loggedMazeWarnings = new();
-    readonly HashSet<GameObject> _registeredRuntimeNetworkPrefabs = new();
     string _lastServerMazeBuildSceneName;
     int _lastServerMazeBuildSeed = int.MinValue;
 
@@ -147,36 +146,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             ? configOverride
             : Resources.Load<ProceduralMazeConfig>(ConfigResourceName);
         _networkManager = GetComponent<NetworkManager>();
-        EnsureRuntimeSpawnPrefabsRegistered();
 
         if (_config == null)
             Debug.LogWarning("[Maze] Assign config Override on ProceduralMazeCoordinator or add ProceduralMazeConfig to Resources.", this);
         else if (!_config.HasMinimumStarterSet)
             Debug.LogWarning("[Maze] ProceduralMazeConfig needs cross, straight, dead-end, corner, and tee prefabs assigned.", this);
-    }
-
-    void EnsureRuntimeSpawnPrefabsRegistered()
-    {
-        if (_networkManager == null || _config == null)
-            return;
-
-        RegisterRuntimeNetworkPrefab(mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab);
-        RegisterRuntimeNetworkPrefab(_config.MazeJailorPrefab);
-        RegisterRuntimeNetworkPrefab(_config.MazeTrapPrefab);
-        RegisterRuntimeNetworkPrefab(_config.MazeChestPrefab);
-        RegisterRuntimeNetworkPrefab(_config.MazeStartFlashlightPrefab);
-        RegisterRuntimeNetworkPrefab(_config.JailDeadEndPrefab);
-    }
-
-    void RegisterRuntimeNetworkPrefab(GameObject prefab)
-    {
-        if (prefab == null || !_registeredRuntimeNetworkPrefabs.Add(prefab))
-            return;
-
-        if (prefab.GetComponent<NetworkObject>() == null)
-            return;
-
-        _networkManager.AddNetworkPrefab(prefab);
     }
 
     void OnEnable()

@@ -428,8 +428,8 @@ public class MultiplayerSessionController : MonoBehaviour
         _levelStartSpawnRotation = _projectSettings.LevelStartRotation;
         _hasLevelStartSpawn = true;
 
+        // Player must already be listed in Resources/DefaultNetworkPrefabs; AddNetworkPrefab here duplicates its GlobalObjectIdHash.
         _networkManager.NetworkConfig.PlayerPrefab = null;
-        _networkManager.AddNetworkPrefab(_playerPrefab);
         _playerPrefabConfigured = true;
     }
 

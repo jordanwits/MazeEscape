@@ -204,6 +204,20 @@ public class JailorAI : MonoBehaviour
     const string JailorLayerName = "Jailor";
     static bool s_HasConfiguredEnemyJailorCollision;
 
+    /// <summary>
+    /// Register before any Awake so zombies and jailor never rely on spawn order for layer ignores.
+    /// </summary>
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    static void RegisterIgnoreEnemyJailorPhysicsCollision()
+    {
+        int enemyLayer = LayerMask.NameToLayer(EnemyLayerName);
+        int jailorLayer = LayerMask.NameToLayer(JailorLayerName);
+        if (enemyLayer < 0 || jailorLayer < 0)
+            return;
+        Physics.IgnoreLayerCollision(enemyLayer, jailorLayer, true);
+        s_HasConfiguredEnemyJailorCollision = true;
+    }
+
     NetworkObject _networkObject;
     NetworkAnimator _networkAnimator;
     NetworkJailorAvatar _networkJailorAvatar;
@@ -563,6 +577,8 @@ public class JailorAI : MonoBehaviour
         navMeshAgent.updatePosition = false;
         navMeshAgent.updateRotation = false;
         navMeshAgent.baseOffset = 0f;
+        // Lower value = higher priority in NavMesh local avoidance — prevents deadlocks vs zombies also at default 50.
+        navMeshAgent.avoidancePriority = 12;
 
         if (characterController != null)
         {
