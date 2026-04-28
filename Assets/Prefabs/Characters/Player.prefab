@@ -2008,7 +2008,7 @@ MonoBehaviour:
   footstepAudioSource: {fileID: 7659817465885413634}
   footstepClip1: {fileID: 8300000, guid: 4da1bc539b3bc154b8a33b44a2304c1c, type: 3}
   footstepClip2: {fileID: 8300000, guid: 510199d7fcb4bff4fa1af1098c837530, type: 3}
-  walkFootstepInterval: 0.48
+  walkFootstepInterval: 0.54
   runFootstepInterval: 0.36
   footstepVolume: 0.01
   minimumFootstepSpeed: 0.15
@@ -2304,6 +2304,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
   avatarAnimator: {fileID: 0}
+  carriedByJailorAnimatorParameter: CarriedByJailor
+  postJailMovementLockSeconds: 2
   playerController: {fileID: 2408966858996660808}
   playerHealth: {fileID: 173290369037602801}
   characterController: {fileID: 8025695549591612232}

@@ -1201,7 +1201,8 @@ MonoBehaviour:
     m_Bits: 115
   detectionLineOfSightHeight: 1.1
   grabRange: 1.3
-  maxGrabAngleDegrees: 100
+  grabHitRangePadding: 0.15
+  grabHitHalfAngle: 55
   maxGrabVerticalDelta: 0.9
   grabTriggerParameter: Grab
   grabClipDurationFallback: 1.93

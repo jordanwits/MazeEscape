@@ -300,8 +300,7 @@ public partial class PlayerController : MonoBehaviour
             animator = GetComponentInChildren<Animator>();
         if (animator != null)
             animator.applyRootMotion = false;
-        if (cameraTransform == null && Camera.main != null)
-            cameraTransform = Camera.main.transform;
+
         if (facingTransform == null)
         {
             if (animator != null && animator.transform != transform)
@@ -353,6 +352,21 @@ public partial class PlayerController : MonoBehaviour
                 }
             }
         }
+
+        if (cameraTransform == null)
+        {
+            foreach (Camera c in GetComponentsInChildren<Camera>(true))
+            {
+                if (c != null && c.transform.IsChildOf(transform))
+                {
+                    cameraTransform = c.transform;
+                    break;
+                }
+            }
+        }
+
+        if (cameraTransform == null && Camera.main != null && Camera.main.transform.IsChildOf(transform))
+            cameraTransform = Camera.main.transform;
 
         if (firstPersonLook && GetComponent<FirstPersonViewHeadSync>() == null)
             gameObject.AddComponent<FirstPersonViewHeadSync>();

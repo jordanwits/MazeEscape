@@ -4,6 +4,7 @@ using Unity.Netcode.Components;
 using UnityEngine;
 using UnityEngine.AI;
 using UnityEngine.SceneManagement;
+using UnityEngine.Serialization;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -76,7 +77,11 @@ public class JailorAI : MonoBehaviour
 
     [Header("Grab / carry")]
     [SerializeField] float grabRange = 1.55f;
-    [SerializeField, Range(30f, 180f)] float maxGrabAngleDegrees = 100f;
+    [Tooltip("Extra reach added on top of Grab Range when checking grab start (same idea as Zombie attackHitRangePadding).")]
+    [SerializeField] float grabHitRangePadding = 0.15f;
+    [Tooltip("Half-angle from Jailor forward toward the player — same semantics as Zombie attackHitHalfAngle.")]
+    [FormerlySerializedAs("maxGrabAngleDegrees")]
+    [SerializeField, Range(0f, 180f)] float grabHitHalfAngle = 55f;
     [SerializeField] float maxGrabVerticalDelta = 1.1f;
     [SerializeField] string grabTriggerParameter = "Grab";
     [SerializeField] float grabClipDurationFallback = 1.93f;
@@ -1112,16 +1117,25 @@ public class JailorAI : MonoBehaviour
         if (Mathf.Abs(to.y) > Mathf.Max(0.1f, maxGrabVerticalDelta))
             return false;
 
-        float dist = new Vector3(to.x, 0f, to.z).magnitude;
-        if (dist > grabRange)
+        Vector3 horizontalToTarget = new Vector3(to.x, 0f, to.z);
+        float horizontalDist = horizontalToTarget.magnitude;
+        if (horizontalDist > grabRange + Mathf.Max(0f, grabHitRangePadding))
             return false;
 
-        Vector3 flat = new Vector3(to.x, 0f, to.z);
-        if (flat.sqrMagnitude < 0.001f)
-            return true;
+        // Forward cone only (matches Zombie swipe angle check vs committed facing).
+        if (horizontalDist > 0.001f)
+        {
+            Vector3 flatFwd = new Vector3(transform.forward.x, 0f, transform.forward.z);
+            if (flatFwd.sqrMagnitude < 0.0001f)
+                return false;
+            flatFwd.Normalize();
 
-        float ang = Vector3.Angle(transform.forward, flat.normalized);
-        return ang <= maxGrabAngleDegrees;
+            float grabAngle = Vector3.Angle(flatFwd, horizontalToTarget / horizontalDist);
+            if (grabAngle > grabHitHalfAngle)
+                return false;
+        }
+
+        return true;
     }
 
     void EnterGrabbing()

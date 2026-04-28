@@ -66,7 +66,8 @@ public class ZombieHealth : MonoBehaviour
         return true;
     }
 
-    public void Die()
+    /// <summary>Pass <paramref name="fromPit"/> from <see cref="PitKillZone"/> so DeathIndex selects ZombieDeath2.</summary>
+    public void Die(bool fromPit = false)
     {
         if (_networkObject != null && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && !NetworkManager.Singleton.IsServer)
             return;
@@ -77,7 +78,7 @@ public class ZombieHealth : MonoBehaviour
         IsDead = true;
         CurrentHealth = 0f;
 
-        int deathIndex = Random.Range(0, 2);
+        int deathIndex = fromPit ? 1 : Random.Range(0, 2);
         if (animator != null)
         {
             animator.ResetTrigger("Attack");

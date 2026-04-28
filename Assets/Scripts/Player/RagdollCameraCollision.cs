@@ -26,6 +26,8 @@ public class RagdollCameraCollision : MonoBehaviour
     [SerializeField] LayerMask collisionLayers = ~0;
 
     Vector3 _originalPivotLocalPos;
+    /// <summary>Parent of CameraPitch when <see cref="_originalPivotLocalPos"/> was captured. If <see cref="PlayerController"/> reparents the pivot (head ↔ mesh) in Update, LateUpdate must not apply stale locals meant for another parent.</summary>
+    Transform _originalPivotParent;
     bool _isActive;
     bool _hasSavedOriginal;
     Collider[] _playerColliders;
@@ -97,13 +99,15 @@ public class RagdollCameraCollision : MonoBehaviour
 
         if (!shouldBeActive)
         {
-            if (_isActive && _hasSavedOriginal && cameraPitchTransform != null)
+            if (_isActive && _hasSavedOriginal && cameraPitchTransform != null
+                && _originalPivotParent != null && cameraPitchTransform.parent == _originalPivotParent)
             {
-                // Restore original position
+                // Only if parent unchanged: PlayerController often reparents CameraPitch head→mesh earlier this frame — applying stale locals would misplace the pivot.
                 cameraPitchTransform.localPosition = _originalPivotLocalPos;
             }
             _isActive = false;
             _hasSavedOriginal = false;
+            _originalPivotParent = null;
             return;
         }
 
@@ -114,9 +118,10 @@ public class RagdollCameraCollision : MonoBehaviour
                 return;
         }
 
-        // Save original on first active frame
+        // Save original on first active frame (locals are only valid relative to current parent).
         if (!_isActive)
         {
+            _originalPivotParent = cameraPitchTransform.parent;
             _originalPivotLocalPos = cameraPitchTransform.localPosition;
             _hasSavedOriginal = true;
         }

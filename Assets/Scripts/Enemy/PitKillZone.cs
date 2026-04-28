@@ -113,7 +113,7 @@ public class PitKillZone : MonoBehaviour
                 return;
 
             TryPlaySpikeStabSfx(other);
-            zombieHealth.Die();
+            zombieHealth.Die(fromPit: true);
             return;
         }
 
