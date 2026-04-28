@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
@@ -12,14 +13,12 @@ using UnityEditor;
 [RequireComponent(typeof(CharacterController))]
 public class ZombieAI : MonoBehaviour
 {
-    const string ScreamAudioChildName = "Zombie_Scream";
     const string VoiceAudioChildName = "Zombie_Voice";
     const string FootstepAudioChildName = "Zombie_Footsteps";
 
     enum ZombieState
     {
         Idle,
-        Alert,
         Chase,
         Attack,
         HitReaction,
@@ -31,27 +30,32 @@ public class ZombieAI : MonoBehaviour
     [SerializeField] NavMeshAgent navMeshAgent;
     [SerializeField] CharacterController characterController;
     [SerializeField] ZombieHealth zombieHealth;
-    [SerializeField] AudioSource screamAudioSource;
 
     [Header("Voice SFX")]
     [SerializeField] AudioSource voiceAudioSource;
-    [SerializeField] AudioClip zombieBreathingClip;
-    [SerializeField] AudioClip zombieScreamClip1;
-    [SerializeField] AudioClip zombieScreamClip2;
-    [SerializeField] AudioClip zombieScreamClip3;
-    [FormerlySerializedAs("ambientVoiceInterval")]
-    [SerializeField, Min(0.1f)] float periodicScreamIntervalSeconds = 5f;
-    [FormerlySerializedAs("ambientVoiceVolume")]
-    [SerializeField, Range(0f, 1f)] float breathingVolume = 0.3f;
+    [FormerlySerializedAs("zombieBreathingClip")]
+    [SerializeField] AudioClip zombieGroanClip;
+    [FormerlySerializedAs("breathingVolume")]
+    [SerializeField, Range(0f, 1f)] float groanVolume = 0.3f;
     [SerializeField] AudioClip zombieDeathClip;
     [SerializeField, Range(0f, 1f)] float deathVoiceVolume = 1f;
+    [FormerlySerializedAs("screamSpatialBlend")]
+    [SerializeField, Range(0f, 1f)] float voiceSpatialBlend = 1f;
+    [FormerlySerializedAs("scream3DMinDistance")]
+    [SerializeField, Min(0.01f)] float voice3DMinDistance = 2f;
+    [FormerlySerializedAs("scream3DMaxDistance")]
+    [SerializeField, Min(0.01f)] float voice3DMaxDistance = 70f;
+    [Tooltip("Delay after each groan before the next (including after the alert groan).")]
+    [FormerlySerializedAs("groanRepeatMinSeconds")]
+    [SerializeField, Min(0.1f)] float groanRepeatIntervalSeconds = 7f;
 
     [Header("Footsteps")]
     [SerializeField] AudioSource footstepAudioSource;
     [SerializeField] AudioClip footstepClip1;
     [SerializeField] AudioClip footstepClip2;
+    [SerializeField] AudioClip footstepClip3;
+    [SerializeField] AudioClip footstepClip4;
     [SerializeField] float walkFootstepInterval = 0.48f;
-    [SerializeField] float runFootstepInterval = 0.34f;
     [SerializeField] float footstepVolume = 0.6f;
     [SerializeField] float minimumFootstepSpeed = 0.15f;
 
@@ -70,7 +74,6 @@ public class ZombieAI : MonoBehaviour
 
     [Header("Movement")]
     [SerializeField] float walkSpeed = 1.5f;
-    [SerializeField] float runSpeed = 4f;
     [SerializeField] float rotationSpeed = 720f;
     [SerializeField] float gravity = -20f;
     [SerializeField] float groundedStickDown = 2f;
@@ -80,20 +83,9 @@ public class ZombieAI : MonoBehaviour
     [SerializeField] float pitDropMaxHeight = 12f;
     [SerializeField] float pitDropCommitDuration = 0.45f;
 
-    [Header("Stamina")]
-    [SerializeField] float maxStamina = 8000f;
-    [Tooltip("Stamina drained per second while running.")]
-    [SerializeField] float staminaDrainRate = 1f;
-    [Tooltip("Stamina recovered per second while not running.")]
-    [SerializeField] float staminaRegenRate = 20f;
-    [Tooltip("Optional UI Image (set to Filled) on a world-space canvas to show the stamina bar.")]
-    [SerializeField] UnityEngine.UI.Image staminaBarImage;
-
     [Header("Step Rhythm")]
     [Tooltip("Maps walk animation normalized time (0-1) to speed multiplier. Shape this to match footstep timing.")]
     [SerializeField] AnimationCurve walkStepCurve = DefaultWalkStepCurve();
-    [Tooltip("Maps run animation normalized time (0-1) to speed multiplier. Shape this to match footstep timing.")]
-    [SerializeField] AnimationCurve runStepCurve = DefaultRunStepCurve();
     [Tooltip("How quickly the actual speed blends toward the curve target. Higher = snappier steps.")]
     [SerializeField] float stepSpeedSmoothing = 15f;
 
@@ -119,19 +111,6 @@ public class ZombieAI : MonoBehaviour
     [Tooltip("Height used for the swipe obstruction check so the ray aims roughly at chest level.")]
     [SerializeField] float attackLineOfSightHeight = 1.1f;
 
-    [Header("Alert")]
-    [SerializeField] bool screamsOnAlert = true;
-    [SerializeField] float screamDuration = 1.3f;
-    [SerializeField, Range(0f, 1f)] float screamVolume = 1f;
-    [Tooltip("Extra multiplier on top of Scream Volume. Use when the clip still feels quiet at volume 1.")]
-    [SerializeField, Range(0.5f, 2.5f)] float screamLoudnessMultiplier = 1.35f;
-    [Tooltip("0 = 2D (no position). 1 = full 3D: panning and volume follow the listener relative to the zombie.")]
-    [SerializeField, Range(0f, 1f)] float screamSpatialBlend = 1f;
-    [Tooltip("3D: distance at which the scream is still full volume (Unity rolloff).")]
-    [SerializeField, Min(0.01f)] float scream3DMinDistance = 2f;
-    [Tooltip("3D: past this distance the scream is inaudible (rolloff).")]
-    [SerializeField, Min(0.01f)] float scream3DMaxDistance = 70f;
-
     [Header("Animator")]
     [SerializeField] string speedParameter = "Speed";
     [SerializeField] string groundedParameter = "Grounded";
@@ -141,7 +120,6 @@ public class ZombieAI : MonoBehaviour
     [SerializeField] string counterAttackStateName = "Attack2";
     [Tooltip("Extra blend time when easing the retaliatory Attack2 back out to the empty upper-body pose.")]
     [SerializeField] float counterAttackExitCrossfadeDuration = 0.22f;
-    [SerializeField] string screamTrigger = "Scream";
     [SerializeField] string hitReactionTrigger = "HitReaction";
     [Tooltip("How long the zombie is stunned during a hit reaction.")]
     [SerializeField] float hitReactionDuration = 2.0f;
@@ -159,11 +137,8 @@ public class ZombieAI : MonoBehaviour
     Transform _target;
     PlayerHealth _targetHealth;
     float _nextAttackTime;
-    float _alertEndTime;
     float _hitReactionEndTime;
     Coroutine _attackRoutine;
-    bool _hasAlertedTarget;
-    bool _hasPlayedAlertScream;
     Vector3 _horizontalVelocity;
     Vector3 _verticalVelocity;
     float _currentStepMultiplier;
@@ -172,18 +147,16 @@ public class ZombieAI : MonoBehaviour
     float _pitDropUnlockTime;
     float _rapidPunchCounterWindowEndTime;
     bool _isCounterAttackInvincible;
-    float _nextPeriodicScreamTime;
-    int _lastScreamIndex = -1;
     float _footstepTimer;
-    bool _playFootstep1Next = true;
+    readonly List<AudioClip> _footstepPool = new List<AudioClip>(4);
+    int[] _footstepShuffle;
+    int _footstepShuffleIndex;
+    float _nextGroanTime = -1f;
 
-    float _currentStamina;
-    bool _staminaFull;
-
-    public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
     public bool IsInvincible => _isCounterAttackInvincible;
+
     /// <summary>
-    /// True while this zombie is actively producing audible SFX (scream loop/oneshot, breathing loop, or footsteps).
+    /// True while this zombie is actively producing audible SFX (groan/footsteps).
     /// Used by other AI (e.g. Jailor) as a simple "heard noise from zombie" signal.
     /// </summary>
     public bool IsMakingNoiseForAi
@@ -192,8 +165,7 @@ public class ZombieAI : MonoBehaviour
         {
             if (_state == ZombieState.Dead)
                 return false;
-            return (screamAudioSource != null && screamAudioSource.isPlaying)
-                || (voiceAudioSource != null && voiceAudioSource.isPlaying)
+            return (voiceAudioSource != null && voiceAudioSource.isPlaying)
                 || (footstepAudioSource != null && footstepAudioSource.isPlaying);
         }
     }
@@ -201,11 +173,11 @@ public class ZombieAI : MonoBehaviour
     void Reset()
     {
         CacheReferences();
-        ConfigureScreamAudioSource();
         ConfigureVoiceAudioSource();
         ConfigureFootstepAudioSource();
         RemoveOrphanedRootAudioSources();
         ApplyAgentSettings();
+        RebuildFootstepPool();
 #if UNITY_EDITOR
         AutoAssignAudioClipsInEditor();
 #endif
@@ -214,13 +186,11 @@ public class ZombieAI : MonoBehaviour
     void Awake()
     {
         CacheReferences();
-        ConfigureScreamAudioSource();
         ConfigureVoiceAudioSource();
         ConfigureFootstepAudioSource();
         RemoveOrphanedRootAudioSources();
         ApplyAgentSettings();
-        _currentStamina = 0f;
-        _staminaFull = false;
+        RebuildFootstepPool();
 #if UNITY_EDITOR
         AutoAssignAudioClipsInEditor();
 #endif
@@ -229,16 +199,16 @@ public class ZombieAI : MonoBehaviour
     void OnEnable()
     {
         TrySnapToNavMesh();
-        ResetVocalAudioSchedule();
     }
 
 #if UNITY_EDITOR
     void OnValidate()
     {
+        groanRepeatIntervalSeconds = Mathf.Max(0.1f, groanRepeatIntervalSeconds);
         CacheReferences();
-        ConfigureScreamAudioSource(allowCreate: false);
         ConfigureVoiceAudioSource(allowCreate: false);
         ConfigureFootstepAudioSource(allowCreate: false);
+        RebuildFootstepPool();
         AutoAssignAudioClipsInEditor();
     }
 #endif
@@ -258,7 +228,7 @@ public class ZombieAI : MonoBehaviour
         if (_state == ZombieState.Dead)
             return;
 
-        UpdateZombieVocalAudio();
+        UpdatePeriodicGroan();
         RefreshTarget();
         if (IsPlayerCarriedByJailor(_targetHealth))
         {
@@ -290,21 +260,15 @@ public class ZombieAI : MonoBehaviour
                 switch (_state)
                 {
                     case ZombieState.Idle:
-                        StartAlertOrChase();
-                        break;
-                    case ZombieState.Alert:
-                        RegenStamina();
-                        UpdateAlert();
+                        TryStartChase();
                         break;
                     case ZombieState.Chase:
                         desiredHorizontalVelocity = UpdateChase(distanceToTarget);
                         break;
                     case ZombieState.Attack:
-                        RegenStamina();
                         UpdateAttack();
                         break;
                     case ZombieState.HitReaction:
-                        RegenStamina();
                         UpdateHitReaction();
                         break;
                 }
@@ -314,7 +278,6 @@ public class ZombieAI : MonoBehaviour
         ApplyMovement(desiredHorizontalVelocity);
         UpdateFootsteps();
         UpdateAnimatorParameters();
-        UpdateStaminaBar();
     }
 
     public void HandleDeath()
@@ -350,14 +313,10 @@ public class ZombieAI : MonoBehaviour
         _verticalVelocity = Vector3.zero;
         _intendedMoveSpeed = 0f;
         _pitDropActive = false;
-        _hasPlayedAlertScream = false;
         _rapidPunchCounterWindowEndTime = 0f;
         _isCounterAttackInvincible = false;
-        _nextPeriodicScreamTime = 0f;
         _footstepTimer = 0f;
-
-        if (screamAudioSource != null)
-            screamAudioSource.Stop();
+        _nextGroanTime = -1f;
 
         if (voiceAudioSource != null)
             voiceAudioSource.Stop();
@@ -444,13 +403,16 @@ public class ZombieAI : MonoBehaviour
             }
 
             animator.CrossFadeInFixedTime(
-                GetPostHitReactionState(),
+                "Walk",
                 hitReactionExitCrossfadeDuration,
                 0,
                 0f);
         }
 
         _state = _targetHealth != null && !_targetHealth.IsDead ? ZombieState.Chase : ZombieState.Idle;
+
+        if (_state == ZombieState.Chase && _nextGroanTime < 0f)
+            PlayGroanAndScheduleNext();
     }
 
     void AssignAttackerAsTarget(Transform attacker, PlayerHealth attackerHealth)
@@ -460,9 +422,6 @@ public class ZombieAI : MonoBehaviour
 
         if (attackerHealth == null || attackerHealth.IsDead || IsPlayerCarriedByJailor(attackerHealth))
             return;
-
-        if (_targetHealth != attackerHealth)
-            _hasAlertedTarget = false;
 
         _targetHealth = attackerHealth;
         _target = attackerHealth.transform;
@@ -484,7 +443,6 @@ public class ZombieAI : MonoBehaviour
     {
         animator.ResetTrigger(attackTrigger);
         animator.ResetTrigger(hitReactionTrigger);
-        animator.ResetTrigger(screamTrigger);
     }
 
     bool IsAnimatorInState(int layer, string stateName)
@@ -501,14 +459,6 @@ public class ZombieAI : MonoBehaviour
         return false;
     }
 
-    string GetPostHitReactionState()
-    {
-        if (_targetHealth == null || _targetHealth.IsDead)
-            return "Idle";
-
-        return _staminaFull ? "Run" : "Walk";
-    }
-
     void CacheReferences()
     {
         if (animator == null)
@@ -522,13 +472,6 @@ public class ZombieAI : MonoBehaviour
 
         if (zombieHealth == null)
             zombieHealth = GetComponent<ZombieHealth>();
-
-        if (screamAudioSource == null)
-        {
-            screamAudioSource = GetOrCreateChildAudioSource(ScreamAudioChildName, allowCreate: false);
-            if (screamAudioSource == null)
-                screamAudioSource = GetComponent<AudioSource>();
-        }
 
         if (voiceAudioSource == null)
             voiceAudioSource = GetOrCreateChildAudioSource(VoiceAudioChildName, allowCreate: false);
@@ -582,7 +525,7 @@ public class ZombieAI : MonoBehaviour
             AudioSource a = onRoot[i];
             if (a == null)
                 continue;
-            if (a == screamAudioSource || a == voiceAudioSource || a == footstepAudioSource)
+            if (a == voiceAudioSource || a == footstepAudioSource)
                 continue;
 
 #if UNITY_EDITOR
@@ -596,24 +539,6 @@ public class ZombieAI : MonoBehaviour
         }
     }
 
-    void ConfigureScreamAudioSource(bool allowCreate = true)
-    {
-        AudioSource resolved = GetOrCreateChildAudioSource(ScreamAudioChildName, allowCreate);
-        if (resolved == null)
-            return;
-
-        screamAudioSource = resolved;
-
-        screamAudioSource.playOnAwake = false;
-        screamAudioSource.loop = false;
-        screamAudioSource.spatialBlend = screamSpatialBlend;
-        screamAudioSource.minDistance = scream3DMinDistance;
-        screamAudioSource.maxDistance = scream3DMaxDistance;
-        screamAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
-        screamAudioSource.dopplerLevel = 0f;
-        GameAudioManager.RouteSfxSource(screamAudioSource);
-    }
-
     void ConfigureVoiceAudioSource(bool allowCreate = true)
     {
         AudioSource resolved = GetOrCreateChildAudioSource(VoiceAudioChildName, allowCreate);
@@ -623,10 +548,11 @@ public class ZombieAI : MonoBehaviour
         voiceAudioSource = resolved;
 
         voiceAudioSource.playOnAwake = false;
-        voiceAudioSource.loop = true;
-        voiceAudioSource.spatialBlend = screamSpatialBlend;
-        voiceAudioSource.minDistance = scream3DMinDistance;
-        voiceAudioSource.maxDistance = scream3DMaxDistance;
+        voiceAudioSource.loop = false;
+        voiceAudioSource.clip = null;
+        voiceAudioSource.spatialBlend = voiceSpatialBlend;
+        voiceAudioSource.minDistance = voice3DMinDistance;
+        voiceAudioSource.maxDistance = voice3DMaxDistance;
         voiceAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
         voiceAudioSource.dopplerLevel = 0f;
         GameAudioManager.RouteSfxSource(voiceAudioSource);
@@ -659,7 +585,7 @@ public class ZombieAI : MonoBehaviour
         navMeshAgent.speed = walkSpeed;
         navMeshAgent.angularSpeed = rotationSpeed;
         navMeshAgent.stoppingDistance = Mathf.Max(0.1f, attackRadius * 0.9f);
-        navMeshAgent.acceleration = Mathf.Max(navMeshAgent.acceleration, runSpeed * 4f);
+        navMeshAgent.acceleration = Mathf.Max(navMeshAgent.acceleration, walkSpeed * 4f);
         navMeshAgent.updatePosition = false;
         navMeshAgent.updateRotation = false;
         navMeshAgent.baseOffset = 0f;
@@ -733,9 +659,6 @@ public class ZombieAI : MonoBehaviour
         if (closestTarget == null)
             return;
 
-        if (_targetHealth != closestTarget)
-            _hasAlertedTarget = false;
-
         _targetHealth = closestTarget;
         _target = closestTarget.transform;
     }
@@ -757,43 +680,51 @@ public class ZombieAI : MonoBehaviour
         return HasLineOfSightToTarget(targetHealth, detectionLineOfSightMask, detectionLineOfSightHeight, Vector3.zero);
     }
 
-    void StartAlertOrChase()
+    void TryStartChase()
     {
         if (_target == null)
             return;
 
-        if (screamsOnAlert && !_hasAlertedTarget)
-        {
-            _state = ZombieState.Alert;
-            _hasAlertedTarget = true;
-            _hasPlayedAlertScream = false;
-            _alertEndTime = Time.time + screamDuration;
-            ScheduleNextPeriodicScream();
-
-            if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
-            {
-                navMeshAgent.isStopped = true;
-                navMeshAgent.ResetPath();
-            }
-
-            if (animator != null)
-                animator.SetTrigger(screamTrigger);
-
-            FaceTarget();
-            return;
-        }
-
         _state = ZombieState.Chase;
+        PlayGroanAndScheduleNext();
     }
 
-    void UpdateAlert()
+    void PlayGroanAndScheduleNext()
     {
-        FaceTarget();
-
-        if (Time.time < _alertEndTime)
+        if (voiceAudioSource == null || zombieGroanClip == null)
             return;
 
-        _state = ZombieState.Chase;
+        if (zombieHealth != null && zombieHealth.IsDead)
+            return;
+
+        voiceAudioSource.PlayOneShot(zombieGroanClip, Mathf.Clamp01(groanVolume));
+        _nextGroanTime = Time.time + groanRepeatIntervalSeconds;
+    }
+
+    void UpdatePeriodicGroan()
+    {
+        if (voiceAudioSource == null || zombieGroanClip == null)
+            return;
+
+        if (zombieHealth != null && zombieHealth.IsDead)
+            return;
+
+        bool aggroVoice = _targetHealth != null && !_targetHealth.IsDead
+            && (_state == ZombieState.Chase || _state == ZombieState.Attack);
+
+        if (!aggroVoice)
+            return;
+
+        if (_nextGroanTime < 0f || Time.time < _nextGroanTime)
+            return;
+
+        PlayGroanAndScheduleNext();
+    }
+
+    void StopZombieVocalAudio()
+    {
+        if (voiceAudioSource != null)
+            voiceAudioSource.Stop();
     }
 
     Vector3 UpdateChase(float distanceToTarget)
@@ -825,21 +756,8 @@ public class ZombieAI : MonoBehaviour
             }
         }
 
-        bool wantsToRun = _staminaFull;
-        if (wantsToRun)
-        {
-            _currentStamina = Mathf.Max(0f, _currentStamina - staminaDrainRate * Time.deltaTime);
-            if (_currentStamina <= 0f)
-                _staminaFull = false;
-        }
-        else
-        {
-            _currentStamina = Mathf.Min(maxStamina, _currentStamina + staminaRegenRate * Time.deltaTime);
-            if (_currentStamina >= maxStamina)
-                _staminaFull = true;
-        }
-        float moveSpeed = wantsToRun ? runSpeed : walkSpeed;
-        float targetMultiplier = SampleStepCurve(moveSpeed);
+        float moveSpeed = walkSpeed;
+        float targetMultiplier = SampleStepCurve();
         _currentStepMultiplier = Mathf.MoveTowards(
             _currentStepMultiplier,
             targetMultiplier,
@@ -919,9 +837,9 @@ public class ZombieAI : MonoBehaviour
         _horizontalVelocity = Vector3.zero;
         _intendedMoveSpeed = 0f;
         _pitDropActive = false;
-        _hasPlayedAlertScream = false;
         _rapidPunchCounterWindowEndTime = 0f;
         _footstepTimer = 0f;
+        _nextGroanTime = -1f;
         StopZombieVocalAudio();
     }
 
@@ -929,171 +847,10 @@ public class ZombieAI : MonoBehaviour
     {
         _target = null;
         _targetHealth = null;
-        _hasAlertedTarget = false;
-        _hasPlayedAlertScream = false;
         _rapidPunchCounterWindowEndTime = 0f;
         _footstepTimer = 0f;
+        _nextGroanTime = -1f;
         StopZombieVocalAudio();
-    }
-
-    public void PlayScreamAudio()
-    {
-        if (_state == ZombieState.Dead || _hasPlayedAlertScream || screamAudioSource == null)
-            return;
-
-        if (!TryGetRandomScreamIndex(out int screamIndex, out AudioClip clip) || clip == null)
-            return;
-
-        _hasPlayedAlertScream = true;
-        _lastScreamIndex = screamIndex;
-        ScheduleNextPeriodicScream();
-        float level = screamVolume * screamLoudnessMultiplier;
-        float vol = Mathf.Clamp(level, 0f, 2f);
-        screamAudioSource.PlayOneShot(clip, vol);
-        TryStartBreathingLoop();
-    }
-
-    void UpdateZombieVocalAudio()
-    {
-        if (zombieHealth != null && zombieHealth.IsDead)
-            return;
-
-        if (!_hasPlayedAlertScream)
-            return;
-
-        TryStartBreathingLoop();
-
-        if (periodicScreamIntervalSeconds <= 0f || screamAudioSource == null)
-            return;
-
-        if (Time.time < _nextPeriodicScreamTime)
-            return;
-
-        if (!TryGetRandomScreamIndex(out int screamIndex, out AudioClip clip) || clip == null)
-            return;
-
-        _lastScreamIndex = screamIndex;
-        ScheduleNextPeriodicScream();
-        float level = screamVolume * screamLoudnessMultiplier;
-        float vol = Mathf.Clamp(level, 0f, 2f);
-        screamAudioSource.PlayOneShot(clip, vol);
-    }
-
-    void TryStartBreathingLoop()
-    {
-        if (!_hasPlayedAlertScream)
-            return;
-
-        if (voiceAudioSource == null || zombieBreathingClip == null)
-            return;
-
-        if (zombieHealth != null && zombieHealth.IsDead)
-            return;
-
-        voiceAudioSource.clip = zombieBreathingClip;
-        voiceAudioSource.loop = true;
-        voiceAudioSource.volume = Mathf.Max(0f, breathingVolume);
-        if (!voiceAudioSource.isPlaying)
-            voiceAudioSource.Play();
-    }
-
-    void StopZombieVocalAudio()
-    {
-        if (voiceAudioSource != null)
-            voiceAudioSource.Stop();
-
-        if (screamAudioSource != null)
-            screamAudioSource.Stop();
-    }
-
-    void ResetVocalAudioSchedule()
-    {
-        _lastScreamIndex = -1;
-        ScheduleNextPeriodicScream();
-    }
-
-    void ScheduleNextPeriodicScream()
-    {
-        _nextPeriodicScreamTime = Time.time + Mathf.Max(0.1f, periodicScreamIntervalSeconds);
-    }
-
-    AudioClip GetZombieScreamClipAt(int index)
-    {
-        switch (index)
-        {
-            case 0:
-                return zombieScreamClip1;
-            case 1:
-                return zombieScreamClip2;
-            case 2:
-                return zombieScreamClip3;
-            default:
-                return null;
-        }
-    }
-
-    bool TryGetRandomScreamIndex(out int index, out AudioClip clip)
-    {
-        index = -1;
-        clip = null;
-
-        int availableClipCount = 0;
-        for (int i = 0; i < 3; i++)
-        {
-            if (GetZombieScreamClipAt(i) != null)
-                availableClipCount++;
-        }
-
-        if (availableClipCount == 0)
-            return false;
-
-        if (availableClipCount <= 1)
-        {
-            for (int i = 0; i < 3; i++)
-            {
-                AudioClip c = GetZombieScreamClipAt(i);
-                if (c == null)
-                    continue;
-                index = i;
-                clip = c;
-                return true;
-            }
-        }
-
-        for (int attempt = 0; attempt < 12; attempt++)
-        {
-            int candidate = Random.Range(0, 3);
-            AudioClip c = GetZombieScreamClipAt(candidate);
-            if (c == null || candidate == _lastScreamIndex)
-                continue;
-            index = candidate;
-            clip = c;
-            return true;
-        }
-
-        for (int i = 0; i < 3; i++)
-        {
-            if (i == _lastScreamIndex)
-                continue;
-            AudioClip c = GetZombieScreamClipAt(i);
-            if (c == null)
-                continue;
-            index = i;
-            clip = c;
-            return true;
-        }
-
-        for (int i = 0; i < 3; i++)
-        {
-            AudioClip c = GetZombieScreamClipAt(i);
-            if (c == null)
-                continue;
-            index = i;
-            clip = c;
-            return true;
-        }
-
-        return false;
     }
 
     void UpdateFootsteps()
@@ -1109,10 +866,7 @@ public class ZombieAI : MonoBehaviour
             return;
         }
 
-        bool isRunning = _intendedMoveSpeed > walkSpeed + 0.01f;
-        float interval = Mathf.Max(
-            0.05f,
-            isRunning ? runFootstepInterval : walkFootstepInterval * 2f);
+        float interval = Mathf.Max(0.05f, walkFootstepInterval * 2f);
         _footstepTimer -= Time.deltaTime;
         if (_footstepTimer > 0f)
             return;
@@ -1121,20 +875,69 @@ public class ZombieAI : MonoBehaviour
         _footstepTimer = interval;
     }
 
+    void RebuildFootstepPool()
+    {
+        _footstepPool.Clear();
+        if (footstepClip1 != null) _footstepPool.Add(footstepClip1);
+        if (footstepClip2 != null) _footstepPool.Add(footstepClip2);
+        if (footstepClip3 != null) _footstepPool.Add(footstepClip3);
+        if (footstepClip4 != null) _footstepPool.Add(footstepClip4);
+
+        int n = _footstepPool.Count;
+        if (n == 0)
+        {
+            _footstepShuffle = null;
+            _footstepShuffleIndex = 0;
+            return;
+        }
+
+        if (_footstepShuffle == null || _footstepShuffle.Length != n)
+            _footstepShuffle = new int[n];
+
+        ReshuffleFootstepOrder();
+    }
+
+    void ReshuffleFootstepOrder()
+    {
+        if (_footstepShuffle == null || _footstepPool.Count == 0)
+            return;
+
+        int n = _footstepPool.Count;
+        for (int i = 0; i < n; i++)
+            _footstepShuffle[i] = i;
+
+        for (int i = n - 1; i > 0; i--)
+        {
+            int j = Random.Range(0, i + 1);
+            int tmp = _footstepShuffle[i];
+            _footstepShuffle[i] = _footstepShuffle[j];
+            _footstepShuffle[j] = tmp;
+        }
+
+        _footstepShuffleIndex = 0;
+    }
+
     void PlayFootstepOneShot()
     {
         if (footstepAudioSource == null)
             return;
 
-        AudioClip clipToPlay = _playFootstep1Next ? footstepClip1 : footstepClip2;
-        if (clipToPlay == null)
-            clipToPlay = footstepClip1 != null ? footstepClip1 : footstepClip2;
+        if (_footstepPool.Count == 0)
+            RebuildFootstepPool();
+
+        if (_footstepPool.Count == 0)
+            return;
+
+        if (_footstepShuffleIndex >= _footstepPool.Count)
+            ReshuffleFootstepOrder();
+
+        int poolIndex = _footstepShuffle[_footstepShuffleIndex++];
+        AudioClip clipToPlay = _footstepPool[poolIndex];
 
         if (clipToPlay == null)
             return;
 
         footstepAudioSource.PlayOneShot(clipToPlay, Mathf.Max(0f, footstepVolume));
-        _playFootstep1Next = !_playFootstep1Next;
     }
 
     void PlayDeathVoice()
@@ -1148,17 +951,8 @@ public class ZombieAI : MonoBehaviour
 #if UNITY_EDITOR
     void AutoAssignAudioClipsInEditor()
     {
-        if (zombieBreathingClip == null)
-            zombieBreathingClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieBreathing.wav");
-
-        if (zombieScreamClip1 == null)
-            zombieScreamClip1 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieScream1.wav");
-
-        if (zombieScreamClip2 == null)
-            zombieScreamClip2 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieScream2.wav");
-
-        if (zombieScreamClip3 == null)
-            zombieScreamClip3 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieScream3.wav");
+        if (zombieGroanClip == null)
+            zombieGroanClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieGroan.wav");
 
         if (zombieDeathClip == null)
             zombieDeathClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieDeath.wav");
@@ -1168,6 +962,12 @@ public class ZombieAI : MonoBehaviour
 
         if (footstepClip2 == null)
             footstepClip2 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/footstep2.mp3");
+
+        if (footstepClip3 == null)
+            footstepClip3 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/footstep3.mp3");
+
+        if (footstepClip4 == null)
+            footstepClip4 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/footstep4.mp3");
     }
 #endif
 
@@ -1349,19 +1149,6 @@ public class ZombieAI : MonoBehaviour
         return true;
     }
 
-    void RegenStamina()
-    {
-        _currentStamina = Mathf.Min(maxStamina, _currentStamina + staminaRegenRate * Time.deltaTime);
-        if (_currentStamina >= maxStamina)
-            _staminaFull = true;
-    }
-
-    void UpdateStaminaBar()
-    {
-        if (staminaBarImage != null)
-            staminaBarImage.fillAmount = StaminaNormalized;
-    }
-
     void ApplyMovement(Vector3 desiredHorizontalVelocity)
     {
         if (characterController == null)
@@ -1428,7 +1215,7 @@ public class ZombieAI : MonoBehaviour
             return;
         }
 
-        float normalizedSpeed = runSpeed > 0.001f ? Mathf.Clamp01(_intendedMoveSpeed / runSpeed) : 0f;
+        float normalizedSpeed = walkSpeed > 0.001f ? Mathf.Clamp01(_intendedMoveSpeed / walkSpeed) : 0f;
         animator.SetFloat(speedParameter, normalizedSpeed);
         animator.SetBool(groundedParameter, characterController != null && characterController.isGrounded);
         animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);
@@ -1569,7 +1356,7 @@ public class ZombieAI : MonoBehaviour
         return false;
     }
 
-    float SampleStepCurve(float moveSpeed)
+    float SampleStepCurve()
     {
         if (animator == null)
             return 1f;
@@ -1577,8 +1364,7 @@ public class ZombieAI : MonoBehaviour
         AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(0);
         float normalizedTime = stateInfo.normalizedTime % 1f;
 
-        bool isWalking = moveSpeed <= walkSpeed;
-        AnimationCurve curve = isWalking ? walkStepCurve : runStepCurve;
+        AnimationCurve curve = walkStepCurve;
         if (curve == null || curve.length == 0)
             return 1f;
 
@@ -1587,7 +1373,6 @@ public class ZombieAI : MonoBehaviour
 
     static AnimationCurve DefaultWalkStepCurve()
     {
-        // Two-step cycle: move-pause-move-pause per loop
         return new AnimationCurve(
             new Keyframe(0.00f, 0f),
             new Keyframe(0.10f, 1f),
@@ -1598,21 +1383,6 @@ public class ZombieAI : MonoBehaviour
             new Keyframe(0.80f, 1f),
             new Keyframe(0.90f, 0f),
             new Keyframe(1.00f, 0f)
-        );
-    }
-
-    static AnimationCurve DefaultRunStepCurve()
-    {
-        // Running has shorter pauses
-        return new AnimationCurve(
-            new Keyframe(0.00f, 0.2f),
-            new Keyframe(0.10f, 1f),
-            new Keyframe(0.35f, 1f),
-            new Keyframe(0.45f, 0.2f),
-            new Keyframe(0.55f, 0.2f),
-            new Keyframe(0.65f, 1f),
-            new Keyframe(0.90f, 1f),
-            new Keyframe(1.00f, 0.2f)
         );
     }
 

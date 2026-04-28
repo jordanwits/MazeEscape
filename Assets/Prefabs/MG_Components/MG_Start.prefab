@@ -11517,8 +11517,8 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 1.6609197, y: 5.086928, z: 3.5266514}
-  m_Center: {x: 0.08044696, y: 0.57, z: -1.7575874}
+  m_Size: {x: 0.5323333, y: 5.086928, z: 3.5266514}
+  m_Center: {x: 0.19935855, y: 0.57, z: -1.7575874}
 --- !u!114 &6412012568417643364
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11534,12 +11534,15 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   hinge: {fileID: 7467786919081811155}
   openLocalEuler: {x: 0, y: 90, z: 0}
+  hingeRestPoseIsOpen: 0
   moveDuration: 4
   interactMaxDistance: 5
   useKeyToUnlock: 1
+  jailCellStartUnlocked: 0
   openAfterUnlockDelay: 2
   doorUnlockClip: {fileID: 8300000, guid: 044ba666a1102254d98a1174b7223dcf, type: 3}
   doorOpenClip: {fileID: 8300000, guid: 77d87fc9c97416f40906541d18efd180, type: 3}
+  doorCloseClip: {fileID: 0}
   doorUnlockVolume: 0.1
   doorOpenVolume: 0.1
 --- !u!1 &2601394949864797026

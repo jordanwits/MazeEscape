@@ -1,134 +1,5 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
---- !u!1 &9011111110000001
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 9011111110000002}
-  - component: {fileID: 9011111110000003}
-  m_Layer: 6
-  m_Name: Zombie_Scream
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &9011111110000002
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 9011111110000001}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 5748004295791622643}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!82 &9011111110000003
-AudioSource:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 9011111110000001}
-  m_Enabled: 1
-  serializedVersion: 4
-  OutputAudioMixerGroup: {fileID: -2078747760537998667, guid: 04aa9c935d63c1e4e92857de6d4e6749, type: 2}
-  m_audioClip: {fileID: 0}
-  m_Resource: {fileID: 0}
-  m_PlayOnAwake: 0
-  m_Volume: 1
-  m_Pitch: 1
-  Loop: 0
-  Mute: 0
-  Spatialize: 0
-  SpatializePostEffects: 0
-  Priority: 128
-  DopplerLevel: 0
-  MinDistance: 1
-  MaxDistance: 85
-  Pan2D: 0
-  rolloffMode: 0
-  BypassEffects: 0
-  BypassListenerEffects: 0
-  BypassReverbZones: 0
-  rolloffCustomCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    - serializedVersion: 3
-      time: 1
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  panLevelCustomCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  spreadCustomCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  reverbZoneMixCustomCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
 --- !u!1 &9022222220000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -176,7 +47,7 @@ AudioSource:
   m_PlayOnAwake: 0
   m_Volume: 1
   m_Pitch: 1
-  Loop: 1
+  Loop: 0
   Mute: 0
   Spatialize: 0
   SpatializePostEffects: 0
@@ -2607,7 +2478,6 @@ Transform:
   m_Children:
   - {fileID: 3522896177281608486}
   - {fileID: 9003328562108797837}
-  - {fileID: 9011111110000002}
   - {fileID: 9022222220000002}
   - {fileID: 9033333330000002}
   m_Father: {fileID: 0}
@@ -2695,22 +2565,22 @@ MonoBehaviour:
   navMeshAgent: {fileID: 1777899209754921520}
   characterController: {fileID: 2122988434391096662}
   zombieHealth: {fileID: 731013007641149117}
-  screamAudioSource: {fileID: 9011111110000003}
   voiceAudioSource: {fileID: 9022222220000003}
-  zombieBreathingClip: {fileID: 8300000, guid: 839dbe142b370d64dac91ca35882f977, type: 3}
-  zombieScreamClip1: {fileID: 8300000, guid: 2904fef1c3a1e094182746dc5cdc17c7, type: 3}
-  zombieScreamClip2: {fileID: 8300000, guid: 891b0bc062e5de141b370da5c3efe3d4, type: 3}
-  zombieScreamClip3: {fileID: 8300000, guid: 4af497261bb844a448f3f8c3463c78e0, type: 3}
-  periodicScreamIntervalSeconds: 8
-  breathingVolume: 0.2
+  zombieGroanClip: {fileID: 8300000, guid: ba4b8bb0f8f539e458b6ade97104ac9b, type: 3}
+  groanVolume: 0.2
   zombieDeathClip: {fileID: 8300000, guid: 429e7db698fa074458d8b910dc36adbe, type: 3}
   deathVoiceVolume: 0.7
+  voiceSpatialBlend: 1
+  voice3DMinDistance: 1
+  voice3DMaxDistance: 85
+  groanRepeatIntervalSeconds: 7
   footstepAudioSource: {fileID: 9033333330000003}
-  footstepClip1: {fileID: 8300000, guid: 4da1bc539b3bc154b8a33b44a2304c1c, type: 3}
-  footstepClip2: {fileID: 8300000, guid: 510199d7fcb4bff4fa1af1098c837530, type: 3}
-  walkFootstepInterval: 0.48
-  runFootstepInterval: 0.4
-  footstepVolume: 0.02
+  footstepClip1: {fileID: 8300000, guid: 2d0b4f75ffb37054e86aaaebc6dcb6e4, type: 3}
+  footstepClip2: {fileID: 8300000, guid: 776f71635a7568642bcef5411424c578, type: 3}
+  footstepClip3: {fileID: 8300000, guid: c489393350ba6dc40a1a1f8130b8525b, type: 3}
+  footstepClip4: {fileID: 8300000, guid: 143fde275d95a36459c0d73c4216ac88, type: 3}
+  walkFootstepInterval: 0.37
+  footstepVolume: 0.1
   minimumFootstepSpeed: 0.15
   detectionMask:
     serializedVersion: 2
@@ -2725,7 +2595,6 @@ MonoBehaviour:
     m_Bits: 115
   detectionLineOfSightHeight: 1.1
   walkSpeed: 2
-  runSpeed: 6
   rotationSpeed: 720
   gravity: -20
   groundedStickDown: 2
@@ -2734,10 +2603,6 @@ MonoBehaviour:
   pitDropMinHeight: 1
   pitDropMaxHeight: 12
   pitDropCommitDuration: 0.45
-  maxStamina: 100
-  staminaDrainRate: 10
-  staminaRegenRate: 10
-  staminaBarImage: {fileID: 0}
   walkStepCurve:
     serializedVersion: 2
     m_Curve:
@@ -2825,84 +2690,6 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
-  runStepCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 0.2
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.1
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.35
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.45
-      value: 0.2
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.55
-      value: 0.2
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.65
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 0.9
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 1
-      value: 0.2
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
   stepSpeedSmoothing: 15
   damage: 25
   attackRate: 1.5
@@ -2917,13 +2704,6 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 115
   attackLineOfSightHeight: 1.1
-  screamsOnAlert: 1
-  screamDuration: 2.5
-  screamVolume: 0.6
-  screamLoudnessMultiplier: 1.4
-  screamSpatialBlend: 1
-  scream3DMinDistance: 1
-  scream3DMaxDistance: 85
   speedParameter: Speed
   groundedParameter: Grounded
   verticalVelocityParameter: VerticalVelocity
@@ -2931,7 +2711,6 @@ MonoBehaviour:
   attackTrigger: Attack
   counterAttackStateName: Attack2
   counterAttackExitCrossfadeDuration: 0.22
-  screamTrigger: Scream
   hitReactionTrigger: HitReaction
   hitReactionDuration: 2
   hitReactionExitCrossfadeDuration: 0.18

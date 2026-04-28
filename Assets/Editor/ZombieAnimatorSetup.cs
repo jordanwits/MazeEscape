@@ -7,8 +7,8 @@ using UnityEngine;
 
 public static class ZombieAnimatorSetup
 {
-    const string ZombiePrefabPath = "Assets/Prefabs/Enemies/Warzombie F Pedroso.prefab";
-    const string ZombieControllerPath = "Assets/Prefabs/Enemies/ZombieAnimator.controller";
+    const string ZombiePrefabPath = "Assets/Prefabs/Enemies/Zombie/Zombie.prefab";
+    const string ZombieControllerPath = "Assets/Prefabs/Enemies/Zombie/ZombieAnimator.controller";
     const string UpperBodyMaskPath = "Assets/Prefabs/Enemies/ZombieUpperBodyMask.mask";
     const string AutoRepairSessionKey = "MazeEscape.ZombieAnimatorAutoRepairRan";
 
@@ -20,9 +20,7 @@ public static class ZombieAnimatorSetup
 
     const string IdleClipPath = "Assets/Prefabs/Enemies/ZombieIdle.anim";
     const string WalkClipPath = "Assets/Prefabs/Enemies/ZombieWalk.anim";
-    const string RunClipPath = "Assets/Prefabs/Enemies/ZombieRun.anim";
     const string AttackClipPath = "Assets/Prefabs/Enemies/ZombieAttack.anim";
-    const string ScreamClipPath = "Assets/Prefabs/Enemies/ZombieScream.anim";
     const string HitReactionClipPath = "Assets/Enemy/HitReaction.anim";
     const string Death1ClipPath = "Assets/Prefabs/Enemies/ZombieDeath1.anim";
     const string Death2ClipPath = "Assets/Prefabs/Enemies/ZombieDeath2.anim";
@@ -120,7 +118,6 @@ public static class ZombieAnimatorSetup
         controller.AddParameter("IsDead", AnimatorControllerParameterType.Bool);
         controller.AddParameter("DeathIndex", AnimatorControllerParameterType.Int);
         controller.AddParameter("Attack", AnimatorControllerParameterType.Trigger);
-        controller.AddParameter("Scream", AnimatorControllerParameterType.Trigger);
         controller.AddParameter("HitReaction", AnimatorControllerParameterType.Trigger);
     }
 
@@ -131,8 +128,6 @@ public static class ZombieAnimatorSetup
 
         AnimatorState idleState = AddState(stateMachine, "Idle", LoadRequiredClip(IdleClipPath), new Vector3(240f, 120f));
         AnimatorState walkState = AddState(stateMachine, "Walk", LoadRequiredClip(WalkClipPath), new Vector3(510f, -150f));
-        AnimatorState runState = AddState(stateMachine, "Run", LoadRequiredClip(RunClipPath), new Vector3(500f, 170f));
-        AnimatorState screamState = AddState(stateMachine, "Scream", LoadRequiredClip(ScreamClipPath), new Vector3(760f, 220f));
         AnimatorState hitReactionState = AddState(stateMachine, "HitReaction", LoadRequiredClip(HitReactionClipPath), new Vector3(170f, -90f));
         AnimatorState death1State = AddState(stateMachine, "Death1", LoadRequiredClip(Death1ClipPath), new Vector3(760f, 360f));
         AnimatorState death2State = AddState(stateMachine, "Death2", LoadRequiredClip(Death2ClipPath), new Vector3(760f, 500f));
@@ -144,35 +139,13 @@ public static class ZombieAnimatorSetup
         {
             transition.AddCondition(AnimatorConditionMode.Greater, 0.1f, "Speed");
         });
-        AddTransition(idleState, runState, false, 0.05f, transition =>
-        {
-            transition.AddCondition(AnimatorConditionMode.Greater, 0.5f, "Speed");
-        });
         AddTransition(walkState, idleState, false, 0.05f, transition =>
-        {
-            transition.AddCondition(AnimatorConditionMode.Less, 0.1f, "Speed");
-        });
-        AddTransition(walkState, runState, false, 0.05f, transition =>
-        {
-            transition.AddCondition(AnimatorConditionMode.Greater, 0.5f, "Speed");
-        });
-        AddTransition(runState, walkState, false, 0.05f, transition =>
-        {
-            transition.AddCondition(AnimatorConditionMode.Less, 0.5f, "Speed");
-        });
-        AddTransition(runState, idleState, false, 0.05f, transition =>
         {
             transition.AddCondition(AnimatorConditionMode.Less, 0.1f, "Speed");
         });
 
         AddTransition(hitReactionState, idleState, true, 0.1f, null, 1f);
-        AddTransition(screamState, walkState, true, 0.15f, null, 0.95f);
 
-        AddAnyStateTransition(stateMachine, screamState, 0.05f, transition =>
-        {
-            transition.AddCondition(AnimatorConditionMode.IfNot, 0f, "IsDead");
-            transition.AddCondition(AnimatorConditionMode.If, 0f, "Scream");
-        });
         AddAnyStateTransition(stateMachine, hitReactionState, 0.1f, transition =>
         {
             transition.AddCondition(AnimatorConditionMode.IfNot, 0f, "IsDead");
