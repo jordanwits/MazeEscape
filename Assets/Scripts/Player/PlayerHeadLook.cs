@@ -21,6 +21,13 @@ public class PlayerHeadLook : MonoBehaviour
     [SerializeField, Range(0f, 1f)] float clampWeight = 0.55f;
     [SerializeField] float lookDistance = 2f;
 
+    [Header("Melee / upper-body layer")]
+    [Tooltip("Animator layer that plays masked melee (Upper Body layer on Player). Look-at body IK stacks with punch torso motion and lifts the swing; we disable body contribution while that state is active.")]
+    [SerializeField] bool resolveUpperBodyLayerByName = true;
+    [SerializeField] string upperBodyLayerName = "Upper Body";
+    [SerializeField] int upperBodyLayerIndexFallback = 1;
+    [SerializeField] string meleeStateNameOnUpperLayer = "RightHook";
+
     [Header("Optional")]
     [SerializeField] PlayerRagdollController ragdollController;
 
@@ -69,8 +76,45 @@ public class PlayerHeadLook : MonoBehaviour
 
         Vector3 lookAt = head.position + source.forward * Mathf.Max(0.25f, lookDistance);
 
-        animator.SetLookAtWeight(globalWeight, bodyWeight, headWeight, eyesWeight, clampWeight);
+        float bodyW = bodyWeight;
+        if (MeleeUpperBodyDominatesLookLayer())
+            bodyW = 0f;
+
+        animator.SetLookAtWeight(globalWeight, bodyW, headWeight, eyesWeight, clampWeight);
         animator.SetLookAtPosition(lookAt);
+    }
+
+    /// <summary>
+    /// True while the upper-body layer is blending to or playing the melee punch (additive spine look would skew the arc vs the clip).
+    /// </summary>
+    bool MeleeUpperBodyDominatesLookLayer()
+    {
+        int layer = ResolveUpperBodyPunchLayer();
+        if (layer < 0 || layer >= animator.layerCount || string.IsNullOrEmpty(meleeStateNameOnUpperLayer))
+            return false;
+
+        if (animator.IsInTransition(layer))
+        {
+            AnimatorStateInfo next = animator.GetNextAnimatorStateInfo(layer);
+            if (next.IsName(meleeStateNameOnUpperLayer))
+                return true;
+        }
+
+        return animator.GetCurrentAnimatorStateInfo(layer).IsName(meleeStateNameOnUpperLayer);
+    }
+
+    int ResolveUpperBodyPunchLayer()
+    {
+        if (!resolveUpperBodyLayerByName || string.IsNullOrEmpty(upperBodyLayerName))
+            return upperBodyLayerIndexFallback;
+
+        for (int i = 0; i < animator.layerCount; i++)
+        {
+            if (animator.GetLayerName(i) == upperBodyLayerName)
+                return i;
+        }
+
+        return upperBodyLayerIndexFallback;
     }
 
     Transform ResolveLookDirectionSource()

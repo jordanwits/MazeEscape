@@ -1251,6 +1251,11 @@ public class JailorAI : MonoBehaviour
 
         if (playerSpawned && jailorSpawned && nm != null)
         {
+            // Before parenting: replicated carry flag lets OwnerNetworkTransform switch to server authority so the
+            // owning client's deltas don't fight TrySetParent / attach pose on observers.
+            if (_carriedAvatar != null)
+                _carriedAvatar.ServerSetCarriedByJailor(true);
+
             if (playerNo.TrySetParent(_networkObject, true))
                 pt.SetPositionAndRotation(attachWorldPosition, attachWorldRotation);
             else
@@ -1266,9 +1271,6 @@ public class JailorAI : MonoBehaviour
             _grabAttachCompleted = true;
             NotifyPickupLaughSfx();
             TrySpawnJailorKeyOnPlayerPickup();
-
-            if (_carriedAvatar != null)
-                _carriedAvatar.ServerSetCarriedByJailor(true);
 
             return;
         }

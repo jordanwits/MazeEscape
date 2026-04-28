@@ -1,10 +1,12 @@
 using System.Collections.Generic;
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
 using UnityEngine.AI;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
+[RequireComponent(typeof(NetworkTransform))]
 [RequireComponent(typeof(Animator))]
 [RequireComponent(typeof(JailorAI))]
 [RequireComponent(typeof(NavMeshAgent))]

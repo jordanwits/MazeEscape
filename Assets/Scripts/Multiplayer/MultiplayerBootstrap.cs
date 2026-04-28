@@ -71,6 +71,29 @@ public class MultiplayerBootstrap : MonoBehaviour
         if (networkManager.NetworkConfig.Prefabs.NetworkPrefabsLists == null)
             networkManager.NetworkConfig.Prefabs.NetworkPrefabsLists = new List<NetworkPrefabsList>();
 
+        EnsureDefaultNetworkPrefabsList(networkManager);
+
         networkManager.NetworkConfig.NetworkTransport = transport;
+    }
+
+    /// <summary>
+    /// Runtime-created <see cref="NetworkManager"/> has no inspector-assigned prefab lists.
+    /// Without loading <c>Resources/DefaultNetworkPrefabs</c>, clients fail to spawn objects whose
+    /// hashes exist only on the host (e.g. missing NetworkPrefab / hash mismatch errors).
+    /// </summary>
+    static void EnsureDefaultNetworkPrefabsList(NetworkManager networkManager)
+    {
+        var defaults = Resources.Load<NetworkPrefabsList>("DefaultNetworkPrefabs");
+        if (defaults == null)
+        {
+            Debug.LogWarning(
+                "[Multiplayer] Could not load Resources/DefaultNetworkPrefabs. Register network prefabs manually or keep DefaultNetworkPrefabs.asset under Assets/Resources.",
+                networkManager);
+            return;
+        }
+
+        var lists = networkManager.NetworkConfig.Prefabs.NetworkPrefabsLists;
+        if (!lists.Contains(defaults))
+            lists.Add(defaults);
     }
 }

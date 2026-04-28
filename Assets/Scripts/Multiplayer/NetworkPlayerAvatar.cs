@@ -115,6 +115,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     {
         if (_isDormant)
             return;
+        if (TryGetComponent(out OwnerNetworkTransform ownerNetworkTransform))
+            ownerNetworkTransform.RefreshAuthorityAfterCarryStateChanged();
         ApplyPresentation(IsOwner);
     }
 

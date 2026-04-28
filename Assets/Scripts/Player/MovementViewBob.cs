@@ -26,6 +26,14 @@ public class MovementViewBob : MonoBehaviour
     [Tooltip("How many bob peaks per one full loop of the locomotion clip. Mixamo walk/run is usually 2 (left + right step).")]
     [SerializeField] int bobPeaksPerAnimationCycle = 2;
 
+    [Header("Melee (optional)")]
+    [Tooltip("If set, skips vertical hips bob while the masked upper-body melee state plays so fist height matches the clip (bob stacks on hips and lifts everything).")]
+    [SerializeField] bool suppressBobDuringMaskedMelee = true;
+    [SerializeField] bool meleeLayerByName = true;
+    [SerializeField] string upperBodyLayerName = "Upper Body";
+    [SerializeField] int upperBodyLayerIndexFallback = 1;
+    [SerializeField] string meleeStateNameOnUpperLayer = "RightHook";
+
     void Awake()
     {
         if (animator == null)
@@ -47,6 +55,9 @@ public class MovementViewBob : MonoBehaviour
         if (!grounded || speed < minimumSpeed)
             return;
 
+        if (suppressBobDuringMaskedMelee && IsPlayingUpperBodyMeleeState())
+            return;
+
         AnimatorStateInfo info = animator.GetCurrentAnimatorStateInfo(baseLayerIndex);
         float cycle = Mathf.Repeat(info.normalizedTime, 1f);
         int peaks = Mathf.Max(1, bobPeaksPerAnimationCycle);
@@ -57,5 +68,35 @@ public class MovementViewBob : MonoBehaviour
 
         float bob = (1f - Mathf.Cos(angle)) * 0.5f * amp;
         hips.localPosition += Vector3.up * bob;
+    }
+
+    bool IsPlayingUpperBodyMeleeState()
+    {
+        int layer = ResolveMeleeLayerIndex();
+        if (layer < 0 || layer >= animator.layerCount || string.IsNullOrEmpty(meleeStateNameOnUpperLayer))
+            return false;
+
+        if (animator.IsInTransition(layer))
+        {
+            AnimatorStateInfo next = animator.GetNextAnimatorStateInfo(layer);
+            if (next.IsName(meleeStateNameOnUpperLayer))
+                return true;
+        }
+
+        return animator.GetCurrentAnimatorStateInfo(layer).IsName(meleeStateNameOnUpperLayer);
+    }
+
+    int ResolveMeleeLayerIndex()
+    {
+        if (!meleeLayerByName || string.IsNullOrEmpty(upperBodyLayerName))
+            return upperBodyLayerIndexFallback;
+
+        for (int i = 0; i < animator.layerCount; i++)
+        {
+            if (animator.GetLayerName(i) == upperBodyLayerName)
+                return i;
+        }
+
+        return upperBodyLayerIndexFallback;
     }
 }
