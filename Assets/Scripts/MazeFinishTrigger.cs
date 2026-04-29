@@ -1,7 +1,6 @@
 using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Collider))]
@@ -13,7 +12,6 @@ public class MazeFinishTrigger : MonoBehaviour
 
     Collider _triggerCollider;
     NetworkManager _networkManager;
-    MultiplayerSceneFlow _sceneFlow;
     bool _finishTriggered;
     bool _handlerRegistered;
 
@@ -26,7 +24,6 @@ public class MazeFinishTrigger : MonoBehaviour
     {
         RefreshNetworkManager();
         ConfigureTrigger();
-        CacheSceneFlow();
     }
 
     void OnEnable()
@@ -180,21 +177,6 @@ public class MazeFinishTrigger : MonoBehaviour
             return;
 
         _finishTriggered = true;
-        CacheSceneFlow();
-
-        if (_sceneFlow != null)
-        {
-            _sceneFlow.ReturnToMainMenu();
-            return;
-        }
-
-        Debug.LogWarning("[Maze] MultiplayerSceneFlow was not found, falling back to direct menu scene load.", this);
-        SceneManager.LoadScene(MultiplayerSceneFlow.MenuSceneName, LoadSceneMode.Single);
-    }
-
-    void CacheSceneFlow()
-    {
-        if (_sceneFlow == null)
-            _sceneFlow = FindAnyObjectByType<MultiplayerSceneFlow>();
+        // Return-to-menu (and any finish celebration) intentionally disabled pending rework.
     }
 }

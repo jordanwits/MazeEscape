@@ -2342,7 +2342,62 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         surface.layerMask = ~0;
         ConfigureCeilingExclusionVolume(mazeRoot.transform);
 
+        LogUnreadableNavMeshSourceMeshesOnce(mazeRoot.transform);
         surface.BuildNavMesh();
+    }
+
+    /// <summary>
+    /// Runtime NavMesh baking reads mesh data from MeshColliders (physics mode) or MeshFilters (render mode).
+    /// Imported meshes must have Read/Write enabled or player builds cannot bake; the editor often still works.
+    /// </summary>
+    void LogUnreadableNavMeshSourceMeshesOnce(Transform mazeRoot)
+    {
+        if (mazeRoot == null)
+            return;
+
+        if (navMeshBakeGeometry == NavMeshCollectGeometry.PhysicsColliders)
+        {
+            foreach (MeshCollider col in mazeRoot.GetComponentsInChildren<MeshCollider>(true))
+                TryLogUnreadableNavMeshMeshOnce(col.sharedMesh, col.transform, col);
+        }
+        else
+        {
+            foreach (MeshFilter mf in mazeRoot.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf.GetComponent<MeshRenderer>() == null)
+                    continue;
+                TryLogUnreadableNavMeshMeshOnce(mf.sharedMesh, mf.transform, mf);
+            }
+        }
+    }
+
+    void TryLogUnreadableNavMeshMeshOnce(Mesh mesh, Transform sourceTransform, Component context)
+    {
+        if (mesh == null || mesh.isReadable)
+            return;
+
+        string key = $"navmesh_cpu_unreadable::{mesh.GetInstanceID()}";
+        if (!_loggedMazeWarnings.Add(key))
+            return;
+
+        Debug.LogError(
+            "[Maze] NavMesh runtime bake: mesh asset '" + mesh.name + "' is not CPU-readable (see e.g. '" +
+            BuildTransformHierarchyPath(sourceTransform) + "'). " +
+            "Fix: Project window → select the FBX/model for this mesh → Inspector Model tab → enable Read/Write Enabled → Apply. " +
+            "Without this, runtime baking works in the Editor but fails in standalone players.",
+            context);
+    }
+
+    static string BuildTransformHierarchyPath(Transform t)
+    {
+        if (t == null)
+            return "";
+
+        List<string> names = new(8);
+        for (Transform cur = t; cur != null; cur = cur.parent)
+            names.Add(cur.name);
+        names.Reverse();
+        return string.Join("/", names);
     }
 
     void ConfigureCeilingExclusionVolume(Transform mazeRoot)

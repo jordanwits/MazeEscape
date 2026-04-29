@@ -40,6 +40,11 @@ public class HingeInteractDoor : NetworkBehaviour
     [SerializeField] AudioClip doorCloseClip;
     [SerializeField, Range(0f, 1f)] float doorUnlockVolume = 0.75f;
     [SerializeField, Range(0f, 1f)] float doorOpenVolume = 0.75f;
+    [Header("Double door (optional)")]
+    [Tooltip(
+        "The other door leaf. Assign both ways (A → B, B → A). One interact opens or closes both. "
+        + "Each leaf keeps its own Hinge and Open Local Euler so pivots and swing directions stay independent.")]
+    [SerializeField] HingeInteractDoor pairedLeaf;
 
     readonly NetworkVariable<bool> _isLocked = new(
         true,
@@ -70,6 +75,9 @@ public class HingeInteractDoor : NetworkBehaviour
     ulong _cachedDoorId;
     bool _hasCachedDoorId;
     Vector3 _identityHintPosition;
+    bool _jailorIncomingPairCall;
+    bool _jailorCloseIncomingPairCall;
+    bool _skipProceduralOpenPair;
 
     public bool IsOpen => !IsSpawned ? _isOpenOffline : _isOpen.Value;
     public bool IsBusy => _moveRoutine != null;
@@ -108,6 +116,26 @@ public class HingeInteractDoor : NetworkBehaviour
 
     /// <summary>Server / offline: jailor opens the door before a drop (master key). Ignores interact range.</summary>
     public void ServerJailorOpenForEntry()
+    {
+        ServerJailorOpenForEntryCore();
+        if (pairedLeaf != null && !_jailorIncomingPairCall)
+            pairedLeaf.SyncMateJailorOpenForEntry();
+    }
+
+    void SyncMateJailorOpenForEntry()
+    {
+        _jailorIncomingPairCall = true;
+        try
+        {
+            ServerJailorOpenForEntryCore();
+        }
+        finally
+        {
+            _jailorIncomingPairCall = false;
+        }
+    }
+
+    void ServerJailorOpenForEntryCore()
     {
         if (hinge == null)
             return;
@@ -152,6 +180,26 @@ public class HingeInteractDoor : NetworkBehaviour
     /// <see cref="ToggleRequestServerRpc"/>, which only changes open state and never locks.
     /// </summary>
     public void ServerJailorCloseAndLock()
+    {
+        ServerJailorCloseAndLockCore();
+        if (pairedLeaf != null && !_jailorCloseIncomingPairCall)
+            pairedLeaf.SyncMateJailorCloseAndLock();
+    }
+
+    void SyncMateJailorCloseAndLock()
+    {
+        _jailorCloseIncomingPairCall = true;
+        try
+        {
+            ServerJailorCloseAndLockCore();
+        }
+        finally
+        {
+            _jailorCloseIncomingPairCall = false;
+        }
+    }
+
+    void ServerJailorCloseAndLockCore()
     {
         if (hinge == null)
             return;
@@ -340,6 +388,7 @@ public class HingeInteractDoor : NetworkBehaviour
             if (_isOpenOffline)
                 _openPromptOffline = false;
             StartMoveToState(_isOpenOffline, false);
+            SyncPairedLeafLocalOpen(_isOpenOffline, playSfx: false);
             return;
         }
 
@@ -355,6 +404,15 @@ public class HingeInteractDoor : NetworkBehaviour
             return;
         if (IsBusy)
             return;
+        ServerUnlockThisLeafOnlyFromKey();
+        if (pairedLeaf != null && pairedLeaf.useKeyToUnlock && pairedLeaf.IsLocked && !pairedLeaf.IsBusy)
+            pairedLeaf.ServerUnlockThisLeafOnlyFromKey();
+    }
+
+    void ServerUnlockThisLeafOnlyFromKey()
+    {
+        if (!IsServer || !useKeyToUnlock || !_isLocked.Value)
+            return;
         _isLocked.Value = false;
         OnJailUnlockedByPlayerKey?.Invoke(this);
     }
@@ -365,6 +423,15 @@ public class HingeInteractDoor : NetworkBehaviour
         if (!useKeyToUnlock || !_lockedOffline)
             return;
         if (IsBusy)
+            return;
+        ApplyLocalUnlockThisLeafOnly();
+        if (pairedLeaf != null && pairedLeaf.useKeyToUnlock && pairedLeaf.IsLocked && !pairedLeaf.IsBusy)
+            pairedLeaf.ApplyLocalUnlockThisLeafOnly();
+    }
+
+    void ApplyLocalUnlockThisLeafOnly()
+    {
+        if (!useKeyToUnlock || !_lockedOffline)
             return;
         _lockedOffline = false;
         _mayOpenUnlockedTime = Time.unscaledTime + Mathf.Max(0f, openAfterUnlockDelay);
@@ -377,6 +444,15 @@ public class HingeInteractDoor : NetworkBehaviour
         if (IsSpawned || !useKeyToUnlock || !_lockedOffline || IsBusy)
             return;
 
+        ApplyProceduralRemoteUnlockThisLeafOnly();
+        if (pairedLeaf != null && !pairedLeaf.IsSpawned && pairedLeaf.useKeyToUnlock && pairedLeaf.IsLocked && !pairedLeaf.IsBusy)
+            pairedLeaf.ApplyProceduralRemoteUnlockThisLeafOnly();
+    }
+
+    void ApplyProceduralRemoteUnlockThisLeafOnly()
+    {
+        if (IsSpawned || !useKeyToUnlock || !_lockedOffline)
+            return;
         _lockedOffline = false;
         _mayOpenUnlockedTime = Time.unscaledTime + Mathf.Max(0f, openAfterUnlockDelay);
         PlayDoorUnlockSfx();
@@ -400,12 +476,34 @@ public class HingeInteractDoor : NetworkBehaviour
 
         PlayDoorOpenSfx(open);
         StartMoveToState(open, false);
+
+        if (!_skipProceduralOpenPair && pairedLeaf != null && !pairedLeaf.IsSpawned && !pairedLeaf.IsBusy)
+        {
+            pairedLeaf._skipProceduralOpenPair = true;
+            try
+            {
+                pairedLeaf.ApplyProceduralRemoteOpenState(open);
+            }
+            finally
+            {
+                pairedLeaf._skipProceduralOpenPair = false;
+            }
+        }
     }
 
     public bool IsInInteractRange(Vector3 worldPosition)
     {
         float maxSqr = interactMaxDistance * interactMaxDistance;
-        return (transform.position - worldPosition).sqrMagnitude <= maxSqr;
+        if ((transform.position - worldPosition).sqrMagnitude <= maxSqr)
+            return true;
+        if (pairedLeaf != null)
+        {
+            float maxSqrPair = pairedLeaf.InteractMaxDistance * pairedLeaf.InteractMaxDistance;
+            if ((pairedLeaf.transform.position - worldPosition).sqrMagnitude <= maxSqrPair)
+                return true;
+        }
+
+        return false;
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -436,6 +534,41 @@ public class HingeInteractDoor : NetworkBehaviour
             // Player closing an open door: never lock (only JailCellDoorTripwire → ServerJailorCloseAndLock locks).
             _isOpen.Value = false;
         }
+
+        if (pairedLeaf != null && pairedLeaf.IsSpawned)
+            pairedLeaf.ServerApplyOpenFromPairedLeaf(_isOpen.Value);
+    }
+
+    /// <summary>Server only: double-door mate already toggled; mirror open state without a second RPC.</summary>
+    void ServerApplyOpenFromPairedLeaf(bool open)
+    {
+        if (!IsServer || !IsSpawned || hinge == null)
+            return;
+        if (_isOpen.Value == open)
+            return;
+        if (open)
+        {
+            if (useKeyToUnlock && Time.unscaledTime < _mayOpenUnlockedTime)
+                return;
+            _showOpenInteractionPrompt.Value = false;
+        }
+
+        _isOpen.Value = open;
+    }
+
+    void SyncPairedLeafLocalOpen(bool open, bool playSfx)
+    {
+        if (pairedLeaf == null || pairedLeaf.hinge == null)
+            return;
+        if (pairedLeaf._isOpenOffline == open)
+            return;
+
+        pairedLeaf._isOpenOffline = open;
+        if (open)
+            pairedLeaf._openPromptOffline = false;
+        if (playSfx)
+            pairedLeaf.PlayDoorOpenSfx(open);
+        pairedLeaf.StartMoveToState(open, false);
     }
 
     Quaternion TargetLocalRotationForState(bool open)
@@ -680,6 +813,16 @@ public class HingeInteractDoor : NetworkBehaviour
             doorOpenClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/DoorOpen.wav");
         if (doorUnlockClip == null)
             doorUnlockClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Unlock.wav");
+        if (pairedLeaf == this)
+        {
+            Debug.LogWarning($"{nameof(HingeInteractDoor)} on '{name}': {nameof(pairedLeaf)} cannot reference itself.", this);
+        }
+        else if (pairedLeaf != null && pairedLeaf.pairedLeaf != this)
+        {
+            Debug.LogWarning(
+                $"{nameof(HingeInteractDoor)} on '{name}': link the pair both ways (the other leaf's {nameof(pairedLeaf)} should reference this object).",
+                this);
+        }
     }
 #endif
 }
