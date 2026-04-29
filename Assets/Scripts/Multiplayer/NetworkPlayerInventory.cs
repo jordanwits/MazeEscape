@@ -993,6 +993,9 @@ public class NetworkPlayerInventory : NetworkBehaviour
                 return;
 
             bool open = !door.IsOpen;
+            if (!open && !door.ServerValidateProceduralClose(OwnerClientId))
+                return;
+
             door.ApplyProceduralRemoteOpenState(open);
             ApplyProceduralDoorOpenStateClientRpc(doorId, hintPosition, open);
             return;
@@ -1056,6 +1059,9 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
 
         bool open = !door.IsOpen;
+        if (!open && !door.ServerValidateProceduralClose(serverRpcParams.Receive.SenderClientId))
+            return;
+
         door.ApplyProceduralRemoteOpenState(open);
         ApplyProceduralDoorOpenStateClientRpc(door.DoorId, door.IdentityHintPosition, open);
     }

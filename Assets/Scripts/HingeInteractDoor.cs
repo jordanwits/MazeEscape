@@ -46,6 +46,12 @@ public class HingeInteractDoor : NetworkBehaviour
         + "Each leaf keeps its own Hinge and Open Local Euler so pivots and swing directions stay independent.")]
     [SerializeField] HingeInteractDoor pairedLeaf;
 
+    /// <summary>Other door leaf when this hinge is one half of a double door.</summary>
+    public HingeInteractDoor PairedLeaf => pairedLeaf;
+
+    [Tooltip("Optional: implements IHingeCloseValidator to block closing until conditions are met (e.g. maze exit elevator).")]
+    [SerializeField] MonoBehaviour optionalCloseValidator;
+
     readonly NetworkVariable<bool> _isLocked = new(
         true,
         NetworkVariableReadPermission.Everyone,
@@ -78,6 +84,7 @@ public class HingeInteractDoor : NetworkBehaviour
     bool _jailorIncomingPairCall;
     bool _jailorCloseIncomingPairCall;
     bool _skipProceduralOpenPair;
+    IHingeCloseValidator _runtimeCloseValidator;
 
     public bool IsOpen => !IsSpawned ? _isOpenOffline : _isOpen.Value;
     public bool IsBusy => _moveRoutine != null;
@@ -98,6 +105,43 @@ public class HingeInteractDoor : NetworkBehaviour
         }
     }
     public Vector3 IdentityHintPosition => _identityHintPosition;
+
+    /// <summary>Server setup (e.g. <see cref="ElevatorFinishController"/>) assigns a close gate without inspector wiring on the door prefab.</summary>
+    public void AssignRuntimeCloseValidator(IHingeCloseValidator validator) =>
+        _runtimeCloseValidator = validator;
+
+    /// <summary>Server-only: procedural / offline close path; validates and invokes <see cref="IHingeCloseValidator.ServerOnCloseAuthorized"/> when allowed.</summary>
+    public bool ServerValidateProceduralClose(ulong senderClientId) =>
+        ServerInvokeCloseValidator(closing: true, senderClientId);
+
+    IHingeCloseValidator ResolveCloseValidator() =>
+        _runtimeCloseValidator ?? optionalCloseValidator as IHingeCloseValidator;
+
+    public bool TryGetElevatorFinishController(out ElevatorFinishController finish)
+    {
+        finish = ResolveCloseValidator() as ElevatorFinishController;
+        return finish != null && finish.IsSpawned;
+    }
+
+    bool ServerInvokeCloseValidator(bool closing, ulong senderClientId)
+    {
+        if (!closing)
+            return true;
+
+        IHingeCloseValidator validator = ResolveCloseValidator();
+        if (validator == null)
+            return true;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return false;
+
+        if (!validator.ServerValidateClose(this, senderClientId))
+            return false;
+
+        validator.ServerOnCloseAuthorized(this, senderClientId);
+        return true;
+    }
 
     /// <summary>
     /// Raised after the cell is unlocked with a player key (<see cref="ServerUnlockFromKey"/>, <see cref="ApplyLocalUnlock"/>, <see cref="ApplyProceduralRemoteUnlock"/>).
@@ -532,6 +576,8 @@ public class HingeInteractDoor : NetworkBehaviour
         else
         {
             // Player closing an open door: never lock (only JailCellDoorTripwire → ServerJailorCloseAndLock locks).
+            if (!ServerInvokeCloseValidator(closing: true, senderId))
+                return;
             _isOpen.Value = false;
         }
 

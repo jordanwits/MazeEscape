@@ -503,7 +503,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             MultiplayerSpawnRegistry.Instance.ResetInitialJoinRoundRobin();
         }
         TryRebuildRuntimeNavMesh(root);
-        TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize);
+        TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize, interiorPlan);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);
 
         MarkLocalMazeCollidersReadyAndResyncClientPlayer();
@@ -808,6 +808,21 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         float cx = minGridX + (footprintCellsX - 1) * 0.5f;
         float cz = minGridY + (footprintCellsZ - 1) * 0.5f;
         return _config.Origin + new Vector3(cx * cellSize, 0f, cz * cellSize);
+    }
+
+    /// <summary>
+    /// Horizontal origin for enemy/jailor spawn probes: interior anchor cells use the footprint center (matching built geometry).
+    /// Skip cells are excluded from candidates beforehand.
+    /// </summary>
+    Vector3 ResolveMazeEnemySpawnHorizontalCellOrigin(
+        Vector2Int cell,
+        float cellSize,
+        InteriorRoomBuildPlan interiorPlan)
+    {
+        if (interiorPlan.Anchors.TryGetValue(cell, out InteriorRoomPlacementEntry entry))
+            return CellRectCenterWorld(cell.x, cell.y, entry.Footprint.x, entry.Footprint.y, cellSize);
+
+        return CellToWorld(cell.x, cell.y, cellSize);
     }
 
     MazeLayout GenerateMazeLayout(int seed, int width, int height)
@@ -1998,7 +2013,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         if (hasInteriorRoomEntry)
         {
             MazePieceMatch forcedMatch = interiorRoomEntry.Match;
-            Instantiate(forcedMatch.Prefab, parent.position, forcedMatch.Rotation, parent);
+            GameObject forcedPiece = Instantiate(forcedMatch.Prefab, parent.position, forcedMatch.Rotation, parent);
+            TrySpawnElevatorFinishSyncIfPresent(forcedPiece);
 
             if (!forcedMatch.UseClosedFaceCaps || _config.EndCapPrefab == null)
                 return;
@@ -2031,7 +2047,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                     0xA11E5A1Du,
                     out MazePieceMatch jailMatch))
             {
-                Instantiate(jailMatch.Prefab, parent.position, jailMatch.Rotation, parent);
+                GameObject jailPiece = Instantiate(jailMatch.Prefab, parent.position, jailMatch.Rotation, parent);
+                TrySpawnElevatorFinishSyncIfPresent(jailPiece);
 
                 if (!jailMatch.UseClosedFaceCaps || _config.EndCapPrefab == null)
                     return;
@@ -2065,7 +2082,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             return;
         }
 
-        Instantiate(match.Prefab, parent.position, match.Rotation, parent);
+        GameObject matchPiece = Instantiate(match.Prefab, parent.position, match.Rotation, parent);
+        TrySpawnElevatorFinishSyncIfPresent(matchPiece);
 
         if (!match.UseClosedFaceCaps || _config.EndCapPrefab == null)
             return;
@@ -2080,6 +2098,44 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 * Quaternion.Euler(0f, _config.EndCapYawOffset, 0f);
             Instantiate(_config.EndCapPrefab, parent.position + localOffset, endCapRotation, parent);
         }
+    }
+
+    void TrySpawnElevatorFinishSyncIfPresent(GameObject pieceRoot)
+    {
+        if (pieceRoot == null || !IsServerListening() || _networkManager == null)
+            return;
+
+        ElevatorFinishSpawnMarker marker = pieceRoot.GetComponentInChildren<ElevatorFinishSpawnMarker>(true);
+        if (marker == null)
+            return;
+
+        ElevatorFinishController finish = pieceRoot.GetComponentInChildren<ElevatorFinishController>(true);
+        if (finish == null)
+        {
+            LogMazeWarningOnce(
+                "elevator-finish-embedded-missing",
+                "[Maze] This finish piece has ElevatorFinishSpawnMarker but no ElevatorFinishController child. Add the ElevatorFinishSync prefab under the chunk (see MG_Finish).",
+                marker);
+            return;
+        }
+
+        NetworkObject networkObject = finish.GetComponent<NetworkObject>();
+        if (networkObject == null)
+        {
+            LogMazeWarningOnce(
+                "elevator-finish-sync-no-netobj",
+                "[Maze] ElevatorFinishController must be on a GameObject with a NetworkObject.",
+                finish);
+            return;
+        }
+
+        if (networkObject.IsSpawned)
+            return;
+
+        if (finish.gameObject.scene != pieceRoot.scene)
+            SceneManager.MoveGameObjectToScene(finish.gameObject, pieceRoot.scene);
+
+        networkObject.Spawn();
     }
 
     void ValidateConfiguredPieceSetup()
@@ -2376,7 +2432,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         if (mesh == null || mesh.isReadable)
             return;
 
-        string key = $"navmesh_cpu_unreadable::{mesh.GetInstanceID()}";
+        string key = $"navmesh_cpu_unreadable::{mesh.GetEntityId()}";
         if (!_loggedMazeWarnings.Add(key))
             return;
 
@@ -2492,7 +2548,14 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         return hasBounds;
     }
 
-    void TrySpawnMazeEnemies(Transform mazeRoot, MazeCell[,] grid, Vector2Int start, Vector2Int exit, int seed, float cellSize)
+    void TrySpawnMazeEnemies(
+        Transform mazeRoot,
+        MazeCell[,] grid,
+        Vector2Int start,
+        Vector2Int exit,
+        int seed,
+        float cellSize,
+        InteriorRoomBuildPlan interiorPlan)
     {
         GameObject zombiePrefab = mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab;
         int zombieCountRequested = _config.MazeEnemyCount;
@@ -2518,6 +2581,10 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 if (grid[x, y].Openings == MazeFaceMask.None)
                     continue;
 
+                Vector2Int cellKey = new(x, y);
+                if (interiorPlan.SkipCells.Contains(cellKey))
+                    continue;
+
                 if (x == start.x && y == start.y)
                     continue;
 
@@ -2528,7 +2595,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 if (!d.HasValue || d.Value < _config.MazeEnemyMinCellsFromStart)
                     continue;
 
-                candidates.Add(new Vector2Int(x, y));
+                candidates.Add(cellKey);
             }
         }
 
@@ -2596,7 +2663,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 seed,
                 i,
                 placedEnemyPositions,
-                minSeparationXZ);
+                minSeparationXZ,
+                interiorPlan);
 
             placedEnemyPositions.Add(position);
             GameObject instance = Instantiate(zombiePrefab, position, Quaternion.identity, enemiesRoot);
@@ -2622,7 +2690,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 seed,
                 spawnKey,
                 placedEnemyPositions,
-                minSeparationXZ);
+                minSeparationXZ,
+                interiorPlan);
 
             placedEnemyPositions.Add(position);
             GameObject instance = Instantiate(jailorPrefab, position, Quaternion.identity, enemiesRoot);
@@ -3077,16 +3146,17 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int mazeSeed,
         int spawnIndex,
         List<Vector3> placed,
-        float minSeparationXZ)
+        float minSeparationXZ,
+        InteriorRoomBuildPlan interiorPlan)
     {
         const int maxAttempts = 18;
         float minSqr = minSeparationXZ * minSeparationXZ;
-        Vector3 best = GetMazeEnemySpawnWorldPosition(cell, cellSize, yOffset, mazeSeed, spawnIndex, 0);
+        Vector3 best = GetMazeEnemySpawnWorldPosition(cell, cellSize, yOffset, mazeSeed, spawnIndex, 0, interiorPlan);
         float bestScore = -1f;
 
         for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
-            Vector3 candidate = GetMazeEnemySpawnWorldPosition(cell, cellSize, yOffset, mazeSeed, spawnIndex, attempt);
+            Vector3 candidate = GetMazeEnemySpawnWorldPosition(cell, cellSize, yOffset, mazeSeed, spawnIndex, attempt, interiorPlan);
             if (IsFarEnoughXZ(candidate, placed, minSqr))
                 return candidate;
 
@@ -3138,9 +3208,10 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         float yOffset,
         int mazeSeed,
         int spawnIndex,
-        int placementAttempt)
+        int placementAttempt,
+        InteriorRoomBuildPlan interiorPlan)
     {
-        Vector3 cellCenter = CellToWorld(cell.x, cell.y, cellSize);
+        Vector3 cellCenter = ResolveMazeEnemySpawnHorizontalCellOrigin(cell, cellSize, interiorPlan);
         int jitterSeed = MixSeed(mazeSeed, MixSeed(spawnIndex, MixSeed(placementAttempt, unchecked((int)0x51A4EED5))));
         System.Random jitterRng = new(jitterSeed);
         float jitterRadius = Mathf.Min(cellSize * 0.48f, cellSize * 0.35f * (1f + placementAttempt * 0.14f));
@@ -3163,7 +3234,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             if (!NavMesh.SamplePosition(sampleFrom, out NavMeshHit navHit, snapRadii[i], NavMesh.AllAreas))
                 continue;
 
-            if (navHit.position.y <= floorPoint.y + 2.5f)
+            // Stay on the walkable layer the down-ray found — reject nearby NavMesh patches far above (roofs) or far below (pits).
+            const float navMaxAboveRayFloor = 1.65f;
+            const float navMaxBelowRayFloor = 1.2f;
+            if (navHit.position.y <= floorPoint.y + navMaxAboveRayFloor
+                && navHit.position.y >= floorPoint.y - navMaxBelowRayFloor)
                 return navHit.position + Vector3.up * yOffset;
         }
 

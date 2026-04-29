@@ -55,6 +55,8 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] GameObject pickupPromptRoot;
     [Tooltip("Optional UI Text for the pickup prompt. If empty, tries to find a Text under pickupPromptRoot.")]
     [SerializeField] Text pickupPromptText;
+    [Tooltip("Optional icon shown next to the elevator occupancy prompt (e.g. player silhouette).")]
+    [SerializeField] Image pickupPromptPlayerIcon;
     [SerializeField] string pickupPromptMessage = "Press E to pick up";
     [SerializeField] string chestPromptMessage = "Press E to open";
     [SerializeField] string doorUnlockPromptMessage = "Press E to unlock";
@@ -819,7 +821,7 @@ public partial class PlayerController : MonoBehaviour
         _sprintAction?.Disable();
         _interactAction?.Disable();
         _dropAction?.Disable();
-        _flashlightAction?.Disable();
+        _flashlightAction?.Enable();
         _attackAction?.Disable();
         _lookAction?.Enable();
         ApplyCursorLock();
@@ -853,6 +855,12 @@ public partial class PlayerController : MonoBehaviour
 
         if (UseNetworkedFlashlightFlow && _networkPlayerAvatar != null && _networkPlayerAvatar.IsOwner)
             _networkPlayerAvatar.PublishFlashlightLookPitch(_lookPitchDegrees);
+
+        bool flashlightPressed = _flashlightAction != null
+            ? _flashlightAction.WasPressedThisFrame()
+            : WasFlashlightPressedFallback();
+        if (flashlightPressed)
+            HandleFlashlightToggleInput();
     }
 
     void AcquireInputActions()
@@ -1507,6 +1515,21 @@ public partial class PlayerController : MonoBehaviour
             return;
         }
 
+        if (cam != null
+            && TryFindInteractableHingeDoor(cam, out HingeInteractDoor elevatorDoor)
+            && elevatorDoor != null
+            && !elevatorDoor.IsLocked
+            && elevatorDoor.IsOpen
+            && !elevatorDoor.IsBusy
+            && elevatorDoor.TryGetElevatorFinishController(out ElevatorFinishController elevatorFinish))
+        {
+            SetElevatorClosePromptVisible(
+                true,
+                elevatorFinish.LivingInsideDisplay,
+                elevatorFinish.LivingRequiredDisplay);
+            return;
+        }
+
         bool shouldShow = ShouldShowPickupPrompt();
         SetPickupPromptVisible(shouldShow, pickupPromptMessage);
     }
@@ -1748,12 +1771,47 @@ public partial class PlayerController : MonoBehaviour
             pickupPromptRoot.SetActive(visible);
         }
 
-        if (!visible || pickupPromptText == null)
+        if (!visible)
+        {
+            if (pickupPromptPlayerIcon != null)
+                pickupPromptPlayerIcon.enabled = false;
+            return;
+        }
+
+        if (pickupPromptPlayerIcon != null)
+            pickupPromptPlayerIcon.enabled = false;
+
+        if (pickupPromptText == null)
             return;
 
         string msg = messageForText ?? pickupPromptMessage;
         if (!string.IsNullOrEmpty(msg))
             pickupPromptText.text = msg;
+    }
+
+    void SetElevatorClosePromptVisible(bool visible, int insideLiving, int requiredLiving)
+    {
+        if (pickupPromptRoot == null)
+            return;
+
+        if (_pickupPromptVisible != visible)
+        {
+            _pickupPromptVisible = visible;
+            pickupPromptRoot.SetActive(visible);
+        }
+
+        if (!visible)
+        {
+            if (pickupPromptPlayerIcon != null)
+                pickupPromptPlayerIcon.enabled = false;
+            return;
+        }
+
+        if (pickupPromptText != null)
+            pickupPromptText.text = $"{insideLiving}/{requiredLiving}";
+
+        if (pickupPromptPlayerIcon != null)
+            pickupPromptPlayerIcon.enabled = true;
     }
 
     Vector3 GetFacingDirection(Transform cam, Vector3 groundMove)
