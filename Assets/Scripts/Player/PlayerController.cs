@@ -523,7 +523,10 @@ public partial class PlayerController : MonoBehaviour
             if (driveAnimator && animator != null)
             {
                 animator.SetFloat(speedParameter, 0f, locomotionBlendDampTime, Time.deltaTime);
-                animator.SetBool(groundedParameter, false);
+                // Stay visually grounded while waiting for replicated maze colliders. grounded=false
+                // drives an in-air pose and lowers the head; first-person camera follows the head, so
+                // other players (already standing) looked taller until the maze finished building.
+                animator.SetBool(groundedParameter, true);
                 animator.SetFloat(verticalVelocityParameter, 0f);
             }
             return;

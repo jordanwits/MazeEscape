@@ -153,6 +153,12 @@ public class ZombieAI : MonoBehaviour
     int _footstepShuffleIndex;
     float _nextGroanTime = -1f;
 
+    NetworkObject _networkObject;
+    bool _clientAudioInitialized;
+    Vector3 _clientLastPositionForAudio;
+    float _clientFootstepTimer;
+    float _clientNextGroanTime = -1f;
+
     public bool IsInvincible => _isCounterAttackInvincible;
 
     /// <summary>
@@ -185,6 +191,7 @@ public class ZombieAI : MonoBehaviour
 
     void Awake()
     {
+        _networkObject = GetComponent<NetworkObject>();
         CacheReferences();
         ConfigureVoiceAudioSource();
         ConfigureFootstepAudioSource();
@@ -215,9 +222,16 @@ public class ZombieAI : MonoBehaviour
 
     void Update()
     {
-        NetworkObject networkObject = GetComponent<NetworkObject>();
-        if (networkObject != null && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && !NetworkManager.Singleton.IsServer)
+        bool isNetworkClient = _networkObject != null
+            && NetworkManager.Singleton != null
+            && NetworkManager.Singleton.IsListening
+            && !NetworkManager.Singleton.IsServer;
+
+        if (isNetworkClient)
+        {
+            UpdateNetworkClientAudio();
             return;
+        }
 
         if (zombieHealth != null && zombieHealth.IsDead)
         {
@@ -317,6 +331,8 @@ public class ZombieAI : MonoBehaviour
         _isCounterAttackInvincible = false;
         _footstepTimer = 0f;
         _nextGroanTime = -1f;
+        _clientFootstepTimer = 0f;
+        _clientNextGroanTime = -1f;
 
         if (voiceAudioSource != null)
             voiceAudioSource.Stop();
@@ -325,6 +341,84 @@ public class ZombieAI : MonoBehaviour
             footstepAudioSource.Stop();
 
         PlayDeathVoice();
+    }
+
+    void UpdateNetworkClientAudio()
+    {
+        if (_state == ZombieState.Dead)
+            return;
+
+        if (!_clientAudioInitialized)
+        {
+            _clientLastPositionForAudio = transform.position;
+            _clientAudioInitialized = true;
+            return;
+        }
+
+        Vector3 pos = transform.position;
+        Vector3 horizontalDelta = pos - _clientLastPositionForAudio;
+        horizontalDelta.y = 0f;
+        _clientLastPositionForAudio = pos;
+
+        float dt = Time.deltaTime;
+        float horizontalSpeed = dt > 1e-6f ? horizontalDelta.magnitude / dt : 0f;
+
+        float animSpeed = animator != null ? animator.GetFloat(speedParameter) : 0f;
+        bool aggroVoiceProxy =
+            horizontalSpeed >= minimumFootstepSpeed * 0.75f
+            || animSpeed > 0.03f;
+
+        UpdateClientFootstepsFromMotion(horizontalSpeed);
+        UpdateClientPeriodicGroanFromMotion(aggroVoiceProxy);
+    }
+
+    void UpdateClientFootstepsFromMotion(float horizontalSpeed)
+    {
+        if (footstepAudioSource == null || _state == ZombieState.Dead)
+            return;
+
+        if (horizontalSpeed < minimumFootstepSpeed)
+        {
+            _clientFootstepTimer = 0f;
+            return;
+        }
+
+        float interval = Mathf.Max(0.05f, walkFootstepInterval * 2f);
+        _clientFootstepTimer -= Time.deltaTime;
+        if (_clientFootstepTimer > 0f)
+            return;
+
+        PlayFootstepOneShot();
+        _clientFootstepTimer = interval;
+    }
+
+    void UpdateClientPeriodicGroanFromMotion(bool aggroVoiceProxy)
+    {
+        if (voiceAudioSource == null || zombieGroanClip == null || _state == ZombieState.Dead)
+            return;
+
+        if (!aggroVoiceProxy)
+        {
+            _clientNextGroanTime = -1f;
+            return;
+        }
+
+        if (_clientNextGroanTime < 0f)
+        {
+            PlayGroanAndScheduleNextClient();
+            return;
+        }
+
+        if (Time.time < _clientNextGroanTime)
+            return;
+
+        PlayGroanAndScheduleNextClient();
+    }
+
+    void PlayGroanAndScheduleNextClient()
+    {
+        voiceAudioSource.PlayOneShot(zombieGroanClip, Mathf.Clamp01(groanVolume));
+        _clientNextGroanTime = Time.time + groanRepeatIntervalSeconds;
     }
 
     public bool TryHandleIncomingMeleeHit(Transform attacker, PlayerHealth attackerHealth)

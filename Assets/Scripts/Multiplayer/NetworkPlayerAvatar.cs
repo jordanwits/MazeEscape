@@ -53,6 +53,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     NetworkManager _networkManager;
     OwnerNetworkAnimator _ownerNetworkAnimator;
     Light _remoteFlashlightProxyLight;
+    Transform _blockingProxyRoot;
 
     public bool HasHeldFlashlight => playerInventory != null
         && playerInventory.IsSpawned
@@ -155,6 +156,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
         ResolveFlashlightAimPivot();
         EnsureAnimationSync();
+        EnsureRemoteBlockingProxyObject();
 
         if (playerHealth != null)
         {
@@ -349,6 +351,82 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             _ownerNetworkAnimator = avatarAnimator.gameObject.AddComponent<OwnerNetworkAnimator>();
     }
 
+    const string BlockingProxyObjectName = "NetworkPlayerBlockingProxy";
+
+    void EnsureRemoteBlockingProxyObject()
+    {
+        if (characterController == null)
+            return;
+
+        int ignoreRaycastLayer = LayerMask.NameToLayer("Ignore Raycast");
+
+        Transform existing = transform.Find(BlockingProxyObjectName);
+        if (existing != null)
+        {
+            _blockingProxyRoot = existing;
+            if (ignoreRaycastLayer >= 0)
+                existing.gameObject.layer = ignoreRaycastLayer;
+            SyncBlockingProxyCapsuleToCharacterController();
+            SetBlockingProxyActive(false);
+            return;
+        }
+
+        var proxyObject = new GameObject(BlockingProxyObjectName);
+        proxyObject.transform.SetParent(transform, false);
+        proxyObject.transform.localPosition = Vector3.zero;
+        proxyObject.transform.localRotation = Quaternion.identity;
+        proxyObject.transform.localScale = Vector3.one;
+        _blockingProxyRoot = proxyObject.transform;
+
+        Rigidbody rb = proxyObject.AddComponent<Rigidbody>();
+        rb.isKinematic = true;
+        rb.useGravity = false;
+        rb.interpolation = RigidbodyInterpolation.None;
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+
+        CapsuleCollider capsule = proxyObject.AddComponent<CapsuleCollider>();
+        capsule.isTrigger = false;
+
+        if (ignoreRaycastLayer >= 0)
+            proxyObject.layer = ignoreRaycastLayer;
+
+        SyncBlockingProxyCapsuleToCharacterController();
+        SetBlockingProxyActive(false);
+    }
+
+    void SyncBlockingProxyCapsuleToCharacterController()
+    {
+        if (characterController == null || _blockingProxyRoot == null)
+            return;
+
+        CapsuleCollider capsule = _blockingProxyRoot.GetComponent<CapsuleCollider>();
+        if (capsule == null)
+            return;
+
+        capsule.center = characterController.center;
+        capsule.radius = characterController.radius;
+        float minHeight = characterController.radius * 2f;
+        capsule.height = characterController.height < minHeight ? minHeight : characterController.height;
+        capsule.direction = 1;
+    }
+
+    void SetBlockingProxyActive(bool active)
+    {
+        if (_blockingProxyRoot != null)
+            _blockingProxyRoot.gameObject.SetActive(active);
+    }
+
+    void UpdateRemoteBlockingProxyEnabled(bool inNetSession, bool isLocalOwner, bool jailorCarried)
+    {
+        if (_blockingProxyRoot == null)
+            return;
+
+        SyncBlockingProxyCapsuleToCharacterController();
+
+        bool useProxy = _isAlive && inNetSession && !isLocalOwner && !jailorCarried;
+        SetBlockingProxyActive(useProxy);
+    }
+
     void EnsureRemoteFlashlightProxy()
     {
         if (_remoteFlashlightProxyLight != null)
@@ -485,15 +563,20 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         if (playerHealth != null)
             playerHealth.SetHudVisible(isLocalOwner && _isAlive);
 
+        NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
+        bool inNetSession = nm != null && nm.IsListening;
+
         if (characterController != null)
         {
             // Client-authoritative transform: remote player proxies should not run CharacterController
             // physics (no Move on host/client observer); that wastes work and can fight NetworkTransform.
-            NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
-            bool inNetSession = nm != null && nm.IsListening;
             bool enableCc = _isAlive && (!inNetSession || isLocalOwner) && !jailorCarried;
             characterController.enabled = enableCc;
         }
+
+        // CharacterControllers do not collide with each other in Unity. Remotes also have CC off.
+        // A kinematic capsule on a child gives other players' CharacterControllers something solid to slide against.
+        UpdateRemoteBlockingProxyEnabled(inNetSession, isLocalOwner, jailorCarried);
 
         if (localOnlyCameras != null)
         {
@@ -531,6 +614,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
             if (characterController != null)
                 characterController.enabled = false;
+
+            SetBlockingProxyActive(false);
 
             if (localOnlyCameras != null)
             {

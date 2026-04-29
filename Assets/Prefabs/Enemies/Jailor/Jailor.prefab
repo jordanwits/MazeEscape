@@ -1263,8 +1263,13 @@ MonoBehaviour:
   jailorWalkFootstepPhases: {x: 0.13, y: 0.63}
   jailorRunFootstepPhases: {x: 0.1, y: 0.6}
   offMeshJumpDuration: 0.72
+  offMeshJumpReferenceSpan: 5
+  offMeshJumpMinDuration: 0.42
+  offMeshJumpMaxDuration: 1.85
   offMeshJumpArcHeight: 1.05
+  offMeshJumpMaxArcScale: 1.55
   offMeshJumpLandingSnapDistance: 0.45
+  offMeshJumpLandingSnapSpanFraction: 0.14
   offMeshJumpCooldown: 0.12
 --- !u!114 &7541107775037098470
 MonoBehaviour:

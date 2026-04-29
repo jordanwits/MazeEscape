@@ -136,6 +136,8 @@ public class PitKillZone : MonoBehaviour
 
         _nextJailorRescueTime = Time.time + Mathf.Max(0.05f, jailorRescueCooldown);
 
+        jailor.AbortOffMeshJumpIfActive();
+
         Transform jailorTransform = jailor.transform;
         float sampleRadius = Mathf.Max(0.5f, jailorRescueSampleRadius);
         // Sample from several heights so deep pits still resolve to rim NavMesh; avoid relying on isOnNavMesh before Warp.

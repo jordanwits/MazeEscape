@@ -170,12 +170,19 @@ public class JailorAI : MonoBehaviour
     [SerializeField] Vector2 jailorRunFootstepPhases = new Vector2(0.1f, 0.6f);
 
     [Header("Off-mesh jump")]
-    [Tooltip("Seconds to traverse a pit NavMeshLink.")]
+    [Tooltip("Seconds to traverse a pit NavMeshLink at Off-mesh jump reference span (wider links scale up to min/max).")]
     [SerializeField] float offMeshJumpDuration = 0.72f;
-    [Tooltip("Extra vertical arc height applied during the pit jump.")]
+    [Tooltip("Horizontal distance (meters) that Off-mesh jump duration is tuned for (e.g. original MG_Pit link span).")]
+    [SerializeField, Min(0.25f)] float offMeshJumpReferenceSpan = 5f;
+    [SerializeField, Min(0.15f)] float offMeshJumpMinDuration = 0.42f;
+    [SerializeField, Min(0.15f)] float offMeshJumpMaxDuration = 1.85f;
+    [Tooltip("Extra vertical arc height applied during the pit jump (scales slightly for wider spans).")]
     [SerializeField] float offMeshJumpArcHeight = 1.05f;
-    [Tooltip("When this close to the end of the link, finish the traversal.")]
+    [SerializeField, Min(1f)] float offMeshJumpMaxArcScale = 1.55f;
+    [Tooltip("When this close to the end of the link, finish the traversal (also grows with link length).")]
     [SerializeField] float offMeshJumpLandingSnapDistance = 0.45f;
+    [Tooltip("Added landing snap radius per meter of horizontal link length (wider pits).")]
+    [SerializeField, Range(0f, 0.5f)] float offMeshJumpLandingSnapSpanFraction = 0.14f;
     [Tooltip("Small cooldown to avoid instant retrigger on nearby links.")]
     [SerializeField] float offMeshJumpCooldown = 0.12f;
 
@@ -233,6 +240,9 @@ public class JailorAI : MonoBehaviour
     Vector3 _offMeshJumpEnd;
     float _offMeshJumpStartedTime;
     float _nextOffMeshJumpAllowedTime;
+    float _offMeshJumpActiveDuration = 0.72f;
+    float _offMeshJumpActiveArcHeight = 1.05f;
+    float _offMeshJumpActiveLandingSnap = 0.45f;
     bool _hasPatrolDestination;
     Vector3 _patrolDestination;
     float _nextPatrolDestinationRefreshTime;
@@ -767,6 +777,24 @@ public class JailorAI : MonoBehaviour
         jailorFootstepAudioSource.PlayOneShot(jailorFootstepClip, Mathf.Clamp01(jailorFootstepVolume));
     }
 
+    /// <summary>
+    /// Clears scripted NavMesh link traversal (e.g. after an external warp from <see cref="PitKillZone"/>).
+    /// </summary>
+    public void AbortOffMeshJumpIfActive()
+    {
+        if (!_isTraversingOffMeshJump)
+            return;
+
+        _isTraversingOffMeshJump = false;
+
+        if (navMeshAgent == null || !navMeshAgent.enabled)
+            return;
+
+        navMeshAgent.isStopped = false;
+        if (navMeshAgent.isOnOffMeshLink)
+            navMeshAgent.CompleteOffMeshLink();
+    }
+
     bool TryHandleOffMeshJump(ref Vector3 desiredHorizontal)
     {
         if (navMeshAgent == null || !navMeshAgent.enabled || !navMeshAgent.isOnNavMesh)
@@ -806,6 +834,19 @@ public class JailorAI : MonoBehaviour
         _offMeshJumpStartedTime = Time.time;
         _verticalVelocity.y = 0f;
 
+        Vector3 horizontal = end - start;
+        horizontal.y = 0f;
+        float spanMeters = horizontal.magnitude;
+        float refSpan = Mathf.Max(0.25f, offMeshJumpReferenceSpan);
+        _offMeshJumpActiveDuration = Mathf.Clamp(
+            offMeshJumpDuration * (spanMeters / refSpan),
+            offMeshJumpMinDuration,
+            offMeshJumpMaxDuration);
+        float arcScale = Mathf.Clamp(spanMeters / refSpan, 1f, offMeshJumpMaxArcScale);
+        _offMeshJumpActiveArcHeight = offMeshJumpArcHeight * arcScale;
+        _offMeshJumpActiveLandingSnap =
+            offMeshJumpLandingSnapDistance + spanMeters * offMeshJumpLandingSnapSpanFraction;
+
         if (navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh)
             navMeshAgent.isStopped = true;
 
@@ -830,12 +871,12 @@ public class JailorAI : MonoBehaviour
         if (!_isTraversingOffMeshJump || characterController == null)
             return Vector3.zero;
 
-        float duration = Mathf.Max(0.1f, offMeshJumpDuration);
+        float duration = Mathf.Max(0.1f, _offMeshJumpActiveDuration);
         float elapsed = Mathf.Max(0f, Time.time - _offMeshJumpStartedTime);
         float t = Mathf.Clamp01(elapsed / duration);
 
         Vector3 target = Vector3.Lerp(_offMeshJumpStart, _offMeshJumpEnd, t);
-        target.y += Mathf.Sin(t * Mathf.PI) * Mathf.Max(0f, offMeshJumpArcHeight);
+        target.y += Mathf.Sin(t * Mathf.PI) * Mathf.Max(0f, _offMeshJumpActiveArcHeight);
 
         Vector3 delta = target - transform.position;
         characterController.Move(delta);
@@ -845,7 +886,7 @@ public class JailorAI : MonoBehaviour
 
         bool reachedByTime = t >= 1f;
         bool reachedByDistance = Vector3.Distance(transform.position, _offMeshJumpEnd)
-            <= Mathf.Max(0.05f, offMeshJumpLandingSnapDistance);
+            <= Mathf.Max(0.05f, _offMeshJumpActiveLandingSnap);
         if (reachedByTime || reachedByDistance)
             CompleteOffMeshJumpTraversal();
 
@@ -866,7 +907,7 @@ public class JailorAI : MonoBehaviour
         _isTraversingOffMeshJump = false;
 
         Vector3 finalPosition = _offMeshJumpEnd;
-        if (NavMesh.SamplePosition(_offMeshJumpEnd, out NavMeshHit hit, Mathf.Max(0.5f, offMeshJumpLandingSnapDistance), NavMesh.AllAreas))
+        if (NavMesh.SamplePosition(_offMeshJumpEnd, out NavMeshHit hit, Mathf.Max(0.5f, _offMeshJumpActiveLandingSnap), NavMesh.AllAreas))
             finalPosition = hit.position;
 
         transform.position = finalPosition;

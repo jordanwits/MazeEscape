@@ -57,8 +57,8 @@ public class NetworkZombieAvatar : NetworkBehaviour
     {
         bool shouldSimulate = !NetworkManager.Singleton || !NetworkManager.Singleton.IsListening || IsServer;
 
-        if (zombieAI != null)
-            zombieAI.enabled = shouldSimulate;
+        // ZombieAI must stay enabled on clients so groans/footsteps can run from replicated motion/animator.
+        // Movement and targeting remain server-only inside ZombieAI.Update.
 
         if (navMeshAgent != null)
             navMeshAgent.enabled = shouldSimulate;

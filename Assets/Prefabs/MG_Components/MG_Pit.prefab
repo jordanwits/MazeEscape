@@ -4471,8 +4471,8 @@ Transform:
   m_GameObject: {fileID: 1977222113096872309}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -2.4347, y: 0.5000005, z: 0.00000044703484}
-  m_LocalScale: {x: 1.1287, y: 1, z: 6}
+  m_LocalPosition: {x: -2.3612, y: 0.5000005, z: 0.00000044703484}
+  m_LocalScale: {x: 1.2757697, y: 1, z: 6}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 2108088878987770602}
@@ -5397,8 +5397,8 @@ Transform:
   m_GameObject: {fileID: 2283121977062205314}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 2.4366503, y: 0.5, z: 0.0000005364418}
-  m_LocalScale: {x: 1.1287, y: 1, z: 6}
+  m_LocalPosition: {x: 2.3818, y: 0.5, z: 0.0000005364418}
+  m_LocalScale: {x: 1.2382969, y: 1, z: 6}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 2108088878987770602}
@@ -5550,6 +5550,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PitKillZone
   destroyIfNoZombieHealth: 0
   addKinematicRigidbody: 1
+  rescueJailorFromPit: 1
+  jailorRescueCooldown: 0.2
+  jailorRescueSampleRadius: 20
+  jailorRescueLift: 0.08
   spikeStabClip: {fileID: 8300000, guid: 389e1c5c1af60c541ae3a7c26818d05d, type: 3}
   spikeStabVolume: 0.2
   spikeSoundSameColliderCooldown: 0.35
@@ -13369,10 +13373,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Unity.AI.Navigation::Unity.AI.Navigation.NavMeshLink
   m_SerializedVersion: 1
   m_AgentTypeID: 0
-  m_StartPoint: {x: 0, y: 0, z: -2.5}
-  m_EndPoint: {x: 0, y: 0, z: 2.5}
-  m_StartTransform: {fileID: 2326435820863086383}
-  m_EndTransform: {fileID: 5340871267162480518}
+  m_StartPoint: {x: -1.7233, y: 1, z: 0}
+  m_EndPoint: {x: 1.7627, y: 1, z: 0}
+  m_StartTransform: {fileID: 0}
+  m_EndTransform: {fileID: 0}
   m_Activated: 1
   m_Width: 0
   m_CostModifier: 1
@@ -21706,8 +21710,8 @@ Transform:
   m_GameObject: {fileID: 6902983022367434521}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: 0.7071068, w: 0.7071068}
-  m_LocalPosition: {x: 2.4349, y: -2.5016, z: 0.00000047683716}
-  m_LocalScale: {x: 6.9966, y: 1.1322731, z: 6}
+  m_LocalPosition: {x: 2.3794, y: -2.5016, z: 0.00000047683716}
+  m_LocalScale: {x: 6.9966, y: 1.243236, z: 6}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 2108088878987770602}
@@ -24543,8 +24547,8 @@ Transform:
   m_GameObject: {fileID: 7979029467854933901}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: 0.7071068, w: 0.7071068}
-  m_LocalPosition: {x: -2.4297, y: -2.5081, z: 0.00000047683716}
-  m_LocalScale: {x: 6.984, y: 1.1385645, z: 6}
+  m_LocalPosition: {x: -2.3588, y: -2.5081, z: 0.00000047683716}
+  m_LocalScale: {x: 6.984, y: 1.2803158, z: 6}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 2108088878987770602}
