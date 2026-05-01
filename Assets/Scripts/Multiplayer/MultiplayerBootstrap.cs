@@ -56,6 +56,9 @@ public class MultiplayerBootstrap : MonoBehaviour
         if (!TryGetComponent(out GameAudioManager _))
             gameObject.AddComponent<GameAudioManager>();
 
+        if (!TryGetComponent(out GameDisplayBrightness _))
+            gameObject.AddComponent<GameDisplayBrightness>();
+
         if (!TryGetComponent(out ProximityVoiceSession _))
             gameObject.AddComponent<ProximityVoiceSession>();
     }

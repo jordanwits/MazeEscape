@@ -101,6 +101,8 @@ public class MultiplayerMenuOverlay : MonoBehaviour
         else
             DrawInGameWindow();
 
+        DrawBrightnessControls();
+
         DrawPlaytestChecklist();
 
         GUILayout.Space(6f);
@@ -264,6 +266,22 @@ public class MultiplayerMenuOverlay : MonoBehaviour
 
         GUILayout.Space(8f);
         GUILayout.Label("From the menu scene you can Host or Join again.");
+    }
+
+    void DrawBrightnessControls()
+    {
+        if (GameDisplayBrightness.Instance == null)
+            return;
+
+        Scene active = SceneManager.GetActiveScene();
+        bool inMenu = active.IsValid() && active.name == MultiplayerSceneFlow.MenuSceneName;
+        if (inMenu)
+            return;
+
+        GUILayout.Space(10f);
+        GUILayout.Label("Environment light");
+        float v = GUILayout.HorizontalSlider(GameDisplayBrightness.Instance.BrightnessNormalized, 0f, 1f);
+        GameDisplayBrightness.Instance.SetBrightnessNormalized(v);
     }
 
     void DrawPlaytestChecklist()
