@@ -171,7 +171,10 @@ public class JailCellDoorTripwire : MonoBehaviour
         }
 
         if (occupantZone != null)
+        {
             occupantZone.ServerSealOccupantsInCell();
+            occupantZone.RefreshJailorTrappedInsideDoorBypass();
+        }
     }
 
     IEnumerator CloseAfterDelayRoutine()

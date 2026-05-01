@@ -1084,6 +1084,89 @@ public class NetworkPlayerInventory : NetworkBehaviour
         door.ApplyProceduralRemoteOpenState(open);
     }
 
+    /// <summary>
+    /// Procedural maze <see cref="HingeInteractDoor"/> copies are identical on host and clients but not Netcode-spawned,
+    /// so NetworkVariables never sync — mirror jury-rig jailor-driven state via ClientRpc after the server applies local changes.
+    /// </summary>
+    public static void ServerBroadcastProceduralJailSealIfNeeded(HingeInteractDoor door)
+    {
+        if (door == null)
+            return;
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return;
+
+        NetworkObject doorNo = door.GetComponent<NetworkObject>();
+        if (doorNo != null && doorNo.IsSpawned)
+            return;
+
+        NetworkPlayerInventory relay = ResolveServerRelayInventory();
+        if (relay == null)
+            return;
+
+        relay.ProceduralJailSealFromJailDoorClientRpc(door.DoorId, door.IdentityHintPosition);
+    }
+
+    /// <seealso cref="ServerBroadcastProceduralJailSealIfNeeded"/>
+    public static void ServerBroadcastProceduralJailorOpenEntryIfNeeded(HingeInteractDoor door)
+    {
+        if (door == null)
+            return;
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return;
+
+        NetworkObject doorNo = door.GetComponent<NetworkObject>();
+        if (doorNo != null && doorNo.IsSpawned)
+            return;
+
+        NetworkPlayerInventory relay = ResolveServerRelayInventory();
+        if (relay == null)
+            return;
+
+        relay.ProceduralJailorOpenForEntryMirrorClientRpc(door.DoorId, door.IdentityHintPosition);
+    }
+
+    static NetworkPlayerInventory ResolveServerRelayInventory()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return null;
+
+        if (nm.LocalClient != null && nm.LocalClient.PlayerObject != null
+            && nm.LocalClient.PlayerObject.TryGetComponent(out NetworkPlayerInventory local) && local != null
+            && local.IsSpawned)
+            return local;
+
+        foreach (var pair in nm.ConnectedClients)
+        {
+            if (pair.Value == null || pair.Value.PlayerObject == null)
+                continue;
+            if (pair.Value.PlayerObject.TryGetComponent(out NetworkPlayerInventory inv) && inv != null && inv.IsSpawned)
+                return inv;
+        }
+
+        return null;
+    }
+
+    [ClientRpc]
+    void ProceduralJailSealFromJailDoorClientRpc(ulong doorId, Vector3 hintPosition)
+    {
+        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
+            return;
+
+        door.ApplyProceduralRemoteJailSealFromServer();
+    }
+
+    [ClientRpc]
+    void ProceduralJailorOpenForEntryMirrorClientRpc(ulong doorId, Vector3 hintPosition)
+    {
+        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
+            return;
+
+        door.ApplyProceduralRemoteJailorOpenForEntryIncludingPaired();
+    }
+
     bool TryGetConnectedPlayerPosition(ulong clientId, out Vector3 playerPosition)
     {
         playerPosition = transform.position;

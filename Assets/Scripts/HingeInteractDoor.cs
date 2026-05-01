@@ -78,6 +78,7 @@ public class HingeInteractDoor : NetworkBehaviour
     AudioSource _sfx;
     static readonly Dictionary<AudioClip, AudioClip> s_reversedClipCache = new();
     static readonly Dictionary<ulong, HingeInteractDoor> s_registeredDoors = new();
+    static readonly HashSet<ulong> s_warnedUnspawnedJailStyleDoorIds = new();
     ulong _cachedDoorId;
     bool _hasCachedDoorId;
     Vector3 _identityHintPosition;
@@ -90,6 +91,8 @@ public class HingeInteractDoor : NetworkBehaviour
     public bool IsBusy => _moveRoutine != null;
     public float InteractMaxDistance => interactMaxDistance;
     public bool UseKeyToUnlock => useKeyToUnlock;
+    /// <summary>Jail-piece doors use a key slot and start unlocked until the Jailor seals the cell.</summary>
+    public bool IsJailCellStyleEntry => useKeyToUnlock && jailCellStartUnlocked;
     public bool IsLocked => useKeyToUnlock && (!IsSpawned ? _lockedOffline : _isLocked.Value);
     public ulong DoorId
     {
@@ -164,6 +167,9 @@ public class HingeInteractDoor : NetworkBehaviour
         ServerJailorOpenForEntryCore();
         if (pairedLeaf != null && !_jailorIncomingPairCall)
             pairedLeaf.SyncMateJailorOpenForEntry();
+
+        if (!_jailorIncomingPairCall)
+            NetworkPlayerInventory.ServerBroadcastProceduralJailorOpenEntryIfNeeded(this);
     }
 
     void SyncMateJailorOpenForEntry()
@@ -228,6 +234,9 @@ public class HingeInteractDoor : NetworkBehaviour
         ServerJailorCloseAndLockCore();
         if (pairedLeaf != null && !_jailorCloseIncomingPairCall)
             pairedLeaf.SyncMateJailorCloseAndLock();
+
+        if (!_jailorCloseIncomingPairCall)
+            NetworkPlayerInventory.ServerBroadcastProceduralJailSealIfNeeded(this);
     }
 
     void SyncMateJailorCloseAndLock()
@@ -304,11 +313,7 @@ public class HingeInteractDoor : NetworkBehaviour
             return;
         }
 
-        Quaternion restLocal = hinge.localRotation;
-        Quaternion openDelta = Quaternion.Euler(openLocalEuler);
-        _closedLocalRotation = hingeRestPoseIsOpen
-            ? restLocal * Quaternion.Inverse(openDelta)
-            : restLocal;
+        RefreshClosedLocalBasisFromRestPose();
 
         _lockedOffline = useKeyToUnlock && !jailCellStartUnlocked;
         _mayOpenUnlockedTime = 0f;
@@ -321,6 +326,99 @@ public class HingeInteractDoor : NetworkBehaviour
 
         EnsureSfxSource();
     }
+
+    void RefreshClosedLocalBasisFromRestPose()
+    {
+        if (hinge == null)
+            return;
+
+        Quaternion restLocal = hinge.localRotation;
+        Quaternion openDelta = Quaternion.Euler(openLocalEuler);
+        _closedLocalRotation = hingeRestPoseIsOpen
+            ? restLocal * Quaternion.Inverse(openDelta)
+            : restLocal;
+    }
+
+    void Start()
+    {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        StartCoroutine(WarnOnceIfUnspawnedJailStyleDoorCoroutine());
+#endif
+        EnsureInitialVisualAlignedWithDoorState();
+    }
+
+    /// <summary>
+    /// Awake caches closed/open math from whatever localRotation the hinge had in that frame. Maze Instantiate + parenting and
+    /// Netcode transform sync can change the hinge later; recomputes basis and snaps unspawned doors. Spawned doors get a short
+    /// corrective pass so late-applied replicated transforms do not stick the leaf in wall.
+    /// </summary>
+    void EnsureInitialVisualAlignedWithDoorState()
+    {
+        if (hinge == null)
+            return;
+
+        if (!IsSpawned)
+        {
+            RefreshClosedLocalBasisFromRestPose();
+            StartMoveToState(_isOpenOffline, true);
+            return;
+        }
+
+        RefreshClosedLocalBasisFromRestPose();
+        bool want = _isOpen.Value;
+        if (Quaternion.Angle(hinge.localRotation, TargetLocalRotationForState(want)) > 2f)
+            StartMoveToState(want, true);
+
+        StartCoroutine(CoHealLateAuthoritativeHingeSnap());
+    }
+
+    IEnumerator CoHealLateAuthoritativeHingeSnap()
+    {
+        for (int f = 0; f < 4; f++)
+        {
+            yield return null;
+
+            if (hinge == null || IsBusy)
+                yield break;
+
+            RefreshClosedLocalBasisFromRestPose();
+            Quaternion end = TargetLocalRotationForState(_isOpen.Value);
+            if (Quaternion.Angle(hinge.localRotation, end) > 2f)
+                StartMoveToState(_isOpen.Value, true);
+        }
+    }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+    IEnumerator WarnOnceIfUnspawnedJailStyleDoorCoroutine()
+    {
+        yield return null;
+        yield return null;
+
+        if (!useKeyToUnlock)
+            yield break;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening)
+            yield break;
+
+        // Key doors without a NetworkObject rely on DoorId + NetworkPlayerInventory procedural Rpcs (MG_Start, etc.).
+        if (!TryGetComponent(out NetworkObject networkObject))
+            yield break;
+
+        if (networkObject.IsSpawned)
+            yield break;
+
+        ulong id = DoorId;
+        if (!s_warnedUnspawnedJailStyleDoorIds.Add(id))
+            yield break;
+
+        Debug.LogWarning(
+            "[HingeInteractDoor] This door has Use Key To Unlock and a NetworkObject but is not Netcode-spawned while networking. "
+            + "Lock/open state will not replicate until the server spawns it (e.g. ProceduralMazeCoordinator.TrySpawnUseKeyHingeNetworkObjectsIfPresent for maze pieces). "
+            + "If you intend procedural replication only, remove NetworkObject and use the DoorId / NetworkPlayerInventory Rpcs.",
+            this);
+    }
+#endif
 
     public static bool TryResolveForSync(ulong doorId, Vector3 hintPosition, out HingeInteractDoor door)
     {
@@ -353,6 +451,8 @@ public class HingeInteractDoor : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        RefreshClosedLocalBasisFromRestPose();
+
         // Apply server defaults before subscribing so spawn does not fire unlock/open sounds or tween from wrong pose.
         if (IsServer)
         {
@@ -533,6 +633,97 @@ public class HingeInteractDoor : NetworkBehaviour
                 pairedLeaf._skipProceduralOpenPair = false;
             }
         }
+    }
+
+    /// <summary>
+    /// Procedural maze doors are not networked; server-only jailor paths must mirror visuals to joining clients (<see cref="NetworkPlayerInventory"/> Rpc).
+    /// </summary>
+    public void ApplyProceduralRemoteJailSealFromServer()
+    {
+        ApplyProceduralRemoteJailSealLeafIncludingPaired();
+    }
+
+    void ApplyProceduralRemoteJailSealLeafIncludingPaired()
+    {
+        ApplyProceduralRemoteJailSealLeaf();
+        if (pairedLeaf != null && !_jailorCloseIncomingPairCall)
+            pairedLeaf.SyncMateProceduralJailSealLeaf();
+    }
+
+    void SyncMateProceduralJailSealLeaf()
+    {
+        _jailorCloseIncomingPairCall = true;
+        try
+        {
+            ApplyProceduralRemoteJailSealLeaf();
+        }
+        finally
+        {
+            _jailorCloseIncomingPairCall = false;
+        }
+    }
+
+    void ApplyProceduralRemoteJailSealLeaf()
+    {
+        if (IsSpawned || hinge == null)
+            return;
+        if (!useKeyToUnlock)
+            return;
+
+        if (IsBusy)
+            StopDoorMoveRoutine();
+
+        _lockedOffline = true;
+        if (!_isOpenOffline)
+            return;
+
+        _isOpenOffline = false;
+        PlayDoorOpenSfx(false);
+        StartMoveToState(false, false);
+    }
+
+    /// <summary>Remote mirror for <see cref="ServerJailorOpenForEntryCore"/> offline path (paired leaf included).</summary>
+    public void ApplyProceduralRemoteJailorOpenForEntryIncludingPaired()
+    {
+        ApplyProceduralRemoteJailorOpenForEntryLeaf();
+        if (pairedLeaf != null && !_jailorIncomingPairCall)
+            pairedLeaf.SyncMateProceduralJailOpenEntryLeaf();
+    }
+
+    void SyncMateProceduralJailOpenEntryLeaf()
+    {
+        _jailorIncomingPairCall = true;
+        try
+        {
+            ApplyProceduralRemoteJailorOpenForEntryLeaf();
+        }
+        finally
+        {
+            _jailorIncomingPairCall = false;
+        }
+    }
+
+    void ApplyProceduralRemoteJailorOpenForEntryLeaf()
+    {
+        if (IsSpawned || hinge == null)
+            return;
+
+        if (IsBusy)
+            StopDoorMoveRoutine();
+
+        _lockedOffline = false;
+        _mayOpenUnlockedTime = 0f;
+
+        if (_isOpenOffline)
+        {
+            StartMoveToState(true, true);
+            return;
+        }
+
+        _isOpenOffline = true;
+        _openPromptOffline = false;
+        PlayDoorOpenSfx(true);
+        StartMoveToState(true, false);
     }
 
     public bool IsInInteractRange(Vector3 worldPosition)
@@ -850,6 +1041,33 @@ public class HingeInteractDoor : NetworkBehaviour
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Non-trigger colliders under this leaf's hinge (and optionally the paired double-door leaf). Used for Jailor stuck-in-cell bypass vs the closed door.
+    /// </summary>
+    public void AppendSolidDoorColliders(List<Collider> buffer, bool includePairedLeaf = true)
+    {
+        if (buffer == null)
+            return;
+
+        AppendSolidCollidersForHingeSubtree(hinge, buffer);
+        if (includePairedLeaf && pairedLeaf != null)
+            pairedLeaf.AppendSolidDoorColliders(buffer, includePairedLeaf: false);
+    }
+
+    static void AppendSolidCollidersForHingeSubtree(Transform hingeRoot, List<Collider> buffer)
+    {
+        if (hingeRoot == null)
+            return;
+
+        Collider[] cols = hingeRoot.GetComponentsInChildren<Collider>(true);
+        for (int i = 0; i < cols.Length; i++)
+        {
+            Collider c = cols[i];
+            if (c != null && !c.isTrigger)
+                buffer.Add(c);
+        }
     }
 
 #if UNITY_EDITOR

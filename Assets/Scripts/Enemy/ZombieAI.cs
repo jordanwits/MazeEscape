@@ -39,11 +39,8 @@ public class ZombieAI : MonoBehaviour
     [SerializeField, Range(0f, 1f)] float groanVolume = 0.3f;
     [SerializeField] AudioClip zombieDeathClip;
     [SerializeField, Range(0f, 1f)] float deathVoiceVolume = 1f;
-    [FormerlySerializedAs("screamSpatialBlend")]
     [SerializeField, Range(0f, 1f)] float voiceSpatialBlend = 1f;
-    [FormerlySerializedAs("scream3DMinDistance")]
     [SerializeField, Min(0.01f)] float voice3DMinDistance = 2f;
-    [FormerlySerializedAs("scream3DMaxDistance")]
     [SerializeField, Min(0.01f)] float voice3DMaxDistance = 70f;
     [Tooltip("Delay after each groan before the next (including after the alert groan).")]
     [FormerlySerializedAs("groanRepeatMinSeconds")]
@@ -158,6 +155,9 @@ public class ZombieAI : MonoBehaviour
     Vector3 _clientLastPositionForAudio;
     float _clientFootstepTimer;
     float _clientNextGroanTime = -1f;
+    /// <summary>Non-host clients: require motion/groan proxy to stay below threshold this long before resetting — stops NetTransform/anim jitter from stacking SFX.</summary>
+    float _clientFootstepBelowSpeedTimer;
+    float _clientGroanAggroOffTimer;
 
     public bool IsInvincible => _isCounterAttackInvincible;
 
@@ -333,6 +333,8 @@ public class ZombieAI : MonoBehaviour
         _nextGroanTime = -1f;
         _clientFootstepTimer = 0f;
         _clientNextGroanTime = -1f;
+        _clientFootstepBelowSpeedTimer = 0f;
+        _clientGroanAggroOffTimer = 0f;
 
         if (voiceAudioSource != null)
             voiceAudioSource.Stop();
@@ -346,6 +348,10 @@ public class ZombieAI : MonoBehaviour
     void UpdateNetworkClientAudio()
     {
         if (_state == ZombieState.Dead)
+            return;
+
+        // Server zeros velocity during HitReaction in ApplyMovement; match that here or transform jitter stacks footsteps/groans with melee impact.
+        if (animator != null && IsAnimatorInState(0, "HitReaction"))
             return;
 
         if (!_clientAudioInitialized)
@@ -379,9 +385,13 @@ public class ZombieAI : MonoBehaviour
 
         if (horizontalSpeed < minimumFootstepSpeed)
         {
-            _clientFootstepTimer = 0f;
+            _clientFootstepBelowSpeedTimer += Time.deltaTime;
+            if (_clientFootstepBelowSpeedTimer >= 0.12f)
+                _clientFootstepTimer = 0f;
             return;
         }
+
+        _clientFootstepBelowSpeedTimer = 0f;
 
         float interval = Mathf.Max(0.05f, walkFootstepInterval * 2f);
         _clientFootstepTimer -= Time.deltaTime;
@@ -399,9 +409,13 @@ public class ZombieAI : MonoBehaviour
 
         if (!aggroVoiceProxy)
         {
-            _clientNextGroanTime = -1f;
+            _clientGroanAggroOffTimer += Time.deltaTime;
+            if (_clientGroanAggroOffTimer >= 0.22f)
+                _clientNextGroanTime = -1f;
             return;
         }
+
+        _clientGroanAggroOffTimer = 0f;
 
         if (_clientNextGroanTime < 0f)
         {

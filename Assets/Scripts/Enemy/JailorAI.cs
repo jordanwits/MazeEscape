@@ -99,9 +99,11 @@ public class JailorAI : MonoBehaviour
     [Tooltip("Max horizontal distance from carry marker to still accept NavMesh snap for pathing (expand if the jailor never reaches the drop).")]
     [SerializeField] float carryDestinationNavSnapMaxDistance = 24f;
     [Tooltip(
-        "While carrying to jail, unlock/open the cell door when within this horizontal distance of the door. "
-        + "Needed when the door was left closed after an escape so NavMesh can path inside before the drop.")]
-    [SerializeField] float jailDoorPremptiveOpenDistance = 16f;
+        "While carrying to jail, unlock/open the resolved cell door early when within this horizontal distance (m). "
+        + "Needed when the door was left closed after an escape so NavMesh can path inside before the drop. "
+        + "Keep modest: very large values effectively open from far away; jail doors are chosen by preferring Jail Cell Start Unlocked hinge doors in the carry subtree.")]
+    [SerializeField]
+    float jailDoorPremptiveOpenDistance = 7f;
     [Header("Jailor key drop")]
     [Tooltip("Spawned when a player is grabbed. Add JailorKey to Default Network Prefabs if you use ForceSamePrefabs (no runtime AddNetworkPrefab).")]
     [SerializeField] GameObject jailorKeyWorldPrefab;
@@ -120,6 +122,17 @@ public class JailorAI : MonoBehaviour
     [SerializeField] float destinationRefreshMinDistance = 0.2f;
     [Tooltip("When chasing, use run speed (Jailor does not use stamina).")]
     [SerializeField] bool alwaysRunWhenChasing = true;
+    [Tooltip(
+        "CharacterController can snag on small prop colliders that still sit on the NavMesh. When intent speed stays high but "
+            + "actual motion stays near zero, nudge to a nearby NavMesh point and reset the path.")]
+    [SerializeField] float propStuckDesiredSpeedThreshold = 0.28f;
+    [SerializeField] float propStuckActualSpeedThreshold = 0.06f;
+    [SerializeField] float propStuckAccumulateSeconds = 0.55f;
+    [SerializeField] float propStuckRecoveryCooldown = 1.1f;
+    [SerializeField, Min(3)] int propStuckSampleAttempts = 12;
+    [SerializeField, Min(0.05f)] float propStuckNudgeMinRadius = 0.4f;
+    [SerializeField, Min(0.05f)] float propStuckNudgeMaxRadius = 2.1f;
+    [SerializeField, Min(0.25f)] float propStuckNavSampleRadius = 3.5f;
 
     [Header("Patrol")]
     [SerializeField] float patrolSpeed = 2.2f;
@@ -262,6 +275,9 @@ public class JailorAI : MonoBehaviour
     int _lastFootstepAnimStateHash;
     float _lastFootstepAnimNormalizedTime;
     bool _hasFootstepAnimSample;
+    Vector3 _positionBeforeCharacterMove;
+    float _propStuckAccumulatedTime;
+    float _nextPropStuckRecoveryTime;
 
     JailDeliveryPhase _jailDeliveryPhase;
     HingeInteractDoor _activeJailDoor;
@@ -339,28 +355,68 @@ public class JailorAI : MonoBehaviour
         {
             HingeInteractDoor[] doors = t.GetComponentsInChildren<HingeInteractDoor>(true);
             if (doors != null && doors.Length > 0)
-            {
-                HingeInteractDoor best = doors[0];
-                float bestSqr = (best.transform.position - referenceWorldPosition).sqrMagnitude;
-                for (int i = 1; i < doors.Length; i++)
-                {
-                    if (doors[i] == null)
-                        continue;
-                    float sqr = (doors[i].transform.position - referenceWorldPosition).sqrMagnitude;
-                    if (sqr < bestSqr)
-                    {
-                        bestSqr = sqr;
-                        best = doors[i];
-                    }
-                }
-
-                return best;
-            }
+                return PickJailDoorForCarrySubtree(doors, referenceWorldPosition);
 
             t = t.parent;
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// When a maze subtree contains multiple <see cref="HingeInteractDoor"/> (e.g. exit elevator + jail), taking the XY-nearest hinge
+    /// can pick the elevator. Prefer jail cells (Use Key + Jail Cell Start Unlocked), then any keyed door (excludes free-swing elevators), then legacy nearest-any.
+    /// </summary>
+    internal static HingeInteractDoor PickJailDoorForCarrySubtree(HingeInteractDoor[] doors, Vector3 referenceWorldPosition)
+    {
+        if (doors == null || doors.Length == 0)
+            return null;
+
+        HingeInteractDoor PickClosest(System.Func<HingeInteractDoor, bool> include)
+        {
+            HingeInteractDoor best = null;
+            float bestSqr = float.PositiveInfinity;
+            for (int i = 0; i < doors.Length; i++)
+            {
+                HingeInteractDoor d = doors[i];
+                if (d == null || !include(d))
+                    continue;
+
+                float sqr = (d.transform.position - referenceWorldPosition).sqrMagnitude;
+                if (sqr < bestSqr)
+                {
+                    bestSqr = sqr;
+                    best = d;
+                }
+            }
+
+            return best;
+        }
+
+        HingeInteractDoor pick = PickClosest(d => d.IsJailCellStyleEntry);
+        if (pick != null)
+            return pick;
+
+        pick = PickClosest(d => d.UseKeyToUnlock);
+        if (pick != null)
+            return pick;
+
+        pick = null;
+        float bestSq = float.PositiveInfinity;
+        for (int i = 0; i < doors.Length; i++)
+        {
+            if (doors[i] == null)
+                continue;
+
+            float sqr = (doors[i].transform.position - referenceWorldPosition).sqrMagnitude;
+            if (sqr < bestSq)
+            {
+                bestSq = sqr;
+                pick = doors[i];
+            }
+        }
+
+        return pick;
     }
 
     void ClearInvestigationState()
@@ -777,9 +833,7 @@ public class JailorAI : MonoBehaviour
         jailorFootstepAudioSource.PlayOneShot(jailorFootstepClip, Mathf.Clamp01(jailorFootstepVolume));
     }
 
-    /// <summary>
-    /// Clears scripted NavMesh link traversal (e.g. after an external warp from <see cref="PitKillZone"/>).
-    /// </summary>
+    /// <summary>Clears scripted NavMesh link traversal (e.g. after an external warp from <see cref="PitKillZone"/>).</summary>
     public void AbortOffMeshJumpIfActive()
     {
         if (!_isTraversingOffMeshJump)
@@ -793,6 +847,122 @@ public class JailorAI : MonoBehaviour
         navMeshAgent.isStopped = false;
         if (navMeshAgent.isOnOffMeshLink)
             navMeshAgent.CompleteOffMeshLink();
+    }
+
+    /// <summary>Moves the CharacterController root and syncs <see cref="NavMeshAgent"/> without imposing pit jump cooldowns.</summary>
+    void WarpTransformToNavMeshPoint(Vector3 safeWorldPosition)
+    {
+        bool ccWasEnabled = characterController != null && characterController.enabled;
+        if (characterController != null)
+            characterController.enabled = false;
+
+        transform.position = safeWorldPosition;
+
+        if (navMeshAgent != null && navMeshAgent.enabled)
+        {
+            if (navMeshAgent.isOnNavMesh)
+                navMeshAgent.Warp(safeWorldPosition);
+            navMeshAgent.isStopped = false;
+            navMeshAgent.ResetPath();
+            navMeshAgent.nextPosition = transform.position;
+            if (navMeshAgent.isOnOffMeshLink)
+                navMeshAgent.CompleteOffMeshLink();
+        }
+
+        if (characterController != null && ccWasEnabled)
+            characterController.enabled = true;
+
+        _verticalVelocity.y = 0f;
+    }
+
+    /// <summary>
+    /// Server-only rescue: aligns CC + agent after a pit warp so off-mesh jump scripted motion cannot re-trigger in the trap.
+    /// </summary>
+    public void NotifyRescuedFromPitWarp(Vector3 safeWorldPosition)
+    {
+        AbortOffMeshJumpIfActive();
+
+        WarpTransformToNavMeshPoint(safeWorldPosition);
+
+        _nextOffMeshJumpAllowedTime = Time.time + Mathf.Max(0.85f, offMeshJumpCooldown * 6f);
+    }
+
+    bool ShouldDetectPropStuck()
+    {
+        if (_isTraversingOffMeshJump)
+            return false;
+        if (_state == JailorState.Grabbing || _state == JailorState.JailDelivery)
+            return false;
+        return true;
+    }
+
+    bool TryRecoverFromPropStuck()
+    {
+        if (navMeshAgent == null || !navMeshAgent.enabled || !navMeshAgent.isOnNavMesh)
+            return false;
+
+        Vector3 origin = transform.position;
+        float navRadius = Mathf.Max(0.5f, propStuckNavSampleRadius);
+        int attempts = Mathf.Max(3, propStuckSampleAttempts);
+
+        Vector3 hintFlat = Vector3.zero;
+        if (navMeshAgent.hasPath
+            && navMeshAgent.path != null
+            && navMeshAgent.path.corners != null
+            && navMeshAgent.path.corners.Length >= 2)
+        {
+            hintFlat = navMeshAgent.path.corners[1] - origin;
+            hintFlat.y = 0f;
+            if (hintFlat.sqrMagnitude > 0.04f)
+                hintFlat.Normalize();
+            else
+                hintFlat = Vector3.zero;
+        }
+
+        if (hintFlat.sqrMagnitude < 0.01f)
+        {
+            Vector3 dv = navMeshAgent.desiredVelocity;
+            dv.y = 0f;
+            if (dv.sqrMagnitude > 0.04f)
+                hintFlat = dv.normalized;
+        }
+
+        float rMin = Mathf.Min(propStuckNudgeMinRadius, propStuckNudgeMaxRadius);
+        float rMax = Mathf.Max(propStuckNudgeMinRadius, propStuckNudgeMaxRadius);
+
+        for (int attempt = 0; attempt < attempts; attempt++)
+        {
+            Vector3 offset;
+            if (attempt == 0 && hintFlat.sqrMagnitude > 0.01f)
+                offset = hintFlat * Random.Range(rMin, rMax);
+            else
+            {
+                float ang = Random.Range(0f, Mathf.PI * 2f);
+                float rad = Random.Range(rMin, rMax);
+                offset = new Vector3(Mathf.Cos(ang) * rad, 0f, Mathf.Sin(ang) * rad);
+            }
+
+            Vector3 samplePoint = origin + offset;
+            if (!NavMesh.SamplePosition(samplePoint, out NavMeshHit hit, navRadius, NavMesh.AllAreas))
+                continue;
+
+            Vector3 deltaFlat = hit.position - origin;
+            deltaFlat.y = 0f;
+            if (deltaFlat.sqrMagnitude < 0.007f)
+                continue;
+
+            WarpTransformToNavMeshPoint(hit.position);
+            _nextDestinationRefreshTime = 0f;
+            _nextPatrolDestinationRefreshTime = 0f;
+            _patrolStuckAccumulatedTime = 0f;
+            return true;
+        }
+
+        navMeshAgent.ResetPath();
+        _nextDestinationRefreshTime = 0f;
+        _nextPatrolDestinationRefreshTime = 0f;
+        _patrolStuckAccumulatedTime = 0f;
+        return true;
     }
 
     bool TryHandleOffMeshJump(ref Vector3 desiredHorizontal)
@@ -2094,6 +2264,7 @@ public class JailorAI : MonoBehaviour
         ClearTarget();
         _hasPatrolDestination = false;
         _patrolStuckAccumulatedTime = 0f;
+        _propStuckAccumulatedTime = 0f;
 
         if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
         {
@@ -2276,6 +2447,8 @@ public class JailorAI : MonoBehaviour
         if (characterController == null)
             return;
 
+        _positionBeforeCharacterMove = transform.position;
+
         bool grounded = characterController.isGrounded;
         if (grounded && _verticalVelocity.y < 0f)
             _verticalVelocity.y = -groundedStickDown;
@@ -2300,6 +2473,36 @@ public class JailorAI : MonoBehaviour
                 targetRotation,
                 rotationSpeed * Time.deltaTime);
         }
+
+        if (ShouldDetectPropStuck() && Time.time >= _nextPropStuckRecoveryTime)
+        {
+            Vector3 desiredFlat = desiredHorizontalVelocity;
+            desiredFlat.y = 0f;
+            float desiredMag = desiredFlat.magnitude;
+
+            Vector3 movedFlat = transform.position - _positionBeforeCharacterMove;
+            movedFlat.y = 0f;
+            float dt = Mathf.Max(Time.deltaTime, 0.0001f);
+            float actualMag = movedFlat.magnitude / dt;
+
+            if (desiredMag >= propStuckDesiredSpeedThreshold && actualMag <= propStuckActualSpeedThreshold)
+                _propStuckAccumulatedTime += Time.deltaTime;
+            else
+                _propStuckAccumulatedTime = 0f;
+
+            if (_propStuckAccumulatedTime >= propStuckAccumulateSeconds)
+            {
+                if (TryRecoverFromPropStuck())
+                {
+                    _propStuckAccumulatedTime = 0f;
+                    _nextPropStuckRecoveryTime = Time.time + Mathf.Max(0.1f, propStuckRecoveryCooldown);
+                }
+                else
+                    _propStuckAccumulatedTime = 0f;
+            }
+        }
+        else
+            _propStuckAccumulatedTime = 0f;
     }
 
     void UpdateAnimatorParameters()

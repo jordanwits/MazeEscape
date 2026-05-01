@@ -136,8 +136,6 @@ public class PitKillZone : MonoBehaviour
 
         _nextJailorRescueTime = Time.time + Mathf.Max(0.05f, jailorRescueCooldown);
 
-        jailor.AbortOffMeshJumpIfActive();
-
         Transform jailorTransform = jailor.transform;
         float sampleRadius = Mathf.Max(0.5f, jailorRescueSampleRadius);
         // Sample from several heights so deep pits still resolve to rim NavMesh; avoid relying on isOnNavMesh before Warp.
@@ -166,26 +164,10 @@ public class PitKillZone : MonoBehaviour
         if (!sampled)
             return;
 
-        Vector3 safePosition = hit.position + Vector3.up * Mathf.Max(0f, jailorRescueLift);
-        NavMeshAgent jailorAgent = jailor.GetComponent<NavMeshAgent>();
-        CharacterController jailorController = jailor.GetComponent<CharacterController>();
-
-        bool ccWasEnabled = jailorController != null && jailorController.enabled;
-        if (jailorController != null)
-            jailorController.enabled = false;
-
-        if (jailorAgent != null && jailorAgent.enabled)
-        {
-            jailorAgent.Warp(safePosition);
-            if (ccWasEnabled && jailorController != null)
-                jailorController.enabled = true;
-            return;
-        }
-
-        jailorTransform.position = safePosition;
-
-        if (ccWasEnabled && jailorController != null)
-            jailorController.enabled = true;
+        // Extra vertical lift avoids sampling the pit floor NavMesh and reduces snap-back onto the pit link immediately after warp.
+        float lift = Mathf.Max(0.12f, jailorRescueLift);
+        Vector3 safePosition = hit.position + Vector3.up * lift;
+        jailor.NotifyRescuedFromPitWarp(safePosition);
     }
 
     static bool IsCarriedByJailor(PlayerHealth player)

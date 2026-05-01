@@ -183,7 +183,6 @@ GameObject:
   - component: {fileID: 513120056204751316}
   - component: {fileID: 6350418693834915202}
   - component: {fileID: 384554111345384514}
-  - component: {fileID: 501203491470774488}
   m_Layer: 0
   m_Name: ElevatorDoor1 (1)
   m_TagString: Untagged
@@ -203,7 +202,8 @@ Transform:
   m_LocalPosition: {x: 0.5883929, y: 0.6416974, z: -0.08896369}
   m_LocalScale: {x: -147.73001, y: 147.72998, z: 181.73494}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 8301122334455667002}
   m_Father: {fileID: 3819060494982001638}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &6350418693834915202
@@ -263,13 +263,77 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!64 &501203491470774488
-MeshCollider:
+--- !u!1 &8301122334455667001
+GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1501719271676716452}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8301122334455667002}
+  m_Layer: 0
+  m_Name: InverseScaleForBox
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8301122334455667002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8301122334455667001}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: -1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 8301122334455667011}
+  m_Father: {fileID: 513120056204751316}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &8301122334455667010
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8301122334455667011}
+  - component: {fileID: 501203491470774488}
+  m_Layer: 0
+  m_Name: DoorBoxCollider
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8301122334455667011
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8301122334455667010}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 8301122334455667002}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!65 &501203491470774488
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8301122334455667010}
   m_Material: {fileID: 0}
   m_IncludeLayers:
     serializedVersion: 2
@@ -281,10 +345,9 @@ MeshCollider:
   m_IsTrigger: 0
   m_ProvidesContacts: 0
   m_Enabled: 1
-  serializedVersion: 5
-  m_Convex: 1
-  m_CookingOptions: 30
-  m_Mesh: {fileID: 5461320835613783329, guid: dab3c4e8a8a73fd43a174fc6cd9281a9, type: 3}
+  serializedVersion: 3
+  m_Size: {x: 0.008341371, y: 0.0029984813, z: 0.019109705}
+  m_Center: {x: 0.000012905339, y: 0.000009417363, z: -0.000009529759}
 --- !u!1 &4740622900174366704
 GameObject:
   m_ObjectHideFlags: 0

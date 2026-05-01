@@ -1185,8 +1185,10 @@ MonoBehaviour:
   carryAttach: {fileID: 5011123456789012001}
   carriedPlayerLocalPositionOffset: {x: 0, y: 0, z: 0}
   carriedPlayerLocalEulerOffset: {x: 0, y: 0, z: 0}
+  playerRootToCarryAlignPointLocal: {x: 0, y: 1, z: 0}
   carryDestination: {fileID: 0}
   carryDestinationObjectName: 
+  jailCellDoor: {fileID: 0}
   detectionMask:
     serializedVersion: 2
     m_Bits: 0
@@ -1217,7 +1219,7 @@ MonoBehaviour:
   minCarrySecondsBeforeDrop: 0.85
   carryDestinationNavSnapMaxDistance: 24
   jailDoorPremptiveOpenDistance: 16
-  jailorKeyWorldPrefab: {fileID: 9109535346363733284, guid: 0ff25fe778bdd8e4086016be77e5b744, type: 3}
+  jailorKeyWorldPrefab: {fileID: 281694000005607643, guid: 682f72a1f8155ec4d8669ff542be63f6, type: 3}
   jailorKeyDropLocalOffset: {x: 0, y: 0.12, z: 0.55}
   walkSpeed: 2.6
   runSpeed: 4

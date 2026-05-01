@@ -82,7 +82,6 @@ public class ZombieHealth : MonoBehaviour
         if (animator != null)
         {
             animator.ResetTrigger("Attack");
-            animator.ResetTrigger("Scream");
             animator.ResetTrigger("HitReaction");
             animator.SetInteger(deathIndexParameter, deathIndex);
             animator.SetBool(isDeadParameter, true);

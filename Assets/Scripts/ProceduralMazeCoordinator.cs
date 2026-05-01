@@ -493,7 +493,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             }
         }
 
-        TrySpawnMazeTraps(root.transform, grid, builtCellRoots, start, exit, seed, cellSize);
+        (HashSet<Vector2Int> mazeTrapCells, List<Transform> mazeTrapRoots) =
+            TrySpawnMazeTraps(root.transform, grid, builtCellRoots, start, exit, seed, cellSize);
         TrySpawnMazeChests(root.transform, builtCellRoots, seed);
         TrySpawnMazeStartFlashlights(root.transform);
         CreateSpawnPoints(root.transform, start, cellSize, multiStartFootprint);
@@ -503,7 +504,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             MultiplayerSpawnRegistry.Instance.ResetInitialJoinRoundRobin();
         }
         TryRebuildRuntimeNavMesh(root);
-        TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize, interiorPlan);
+        TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize, interiorPlan, mazeTrapCells, mazeTrapRoots);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);
 
         MarkLocalMazeCollidersReadyAndResyncClientPlayer();
@@ -2015,6 +2016,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             MazePieceMatch forcedMatch = interiorRoomEntry.Match;
             GameObject forcedPiece = Instantiate(forcedMatch.Prefab, parent.position, forcedMatch.Rotation, parent);
             TrySpawnElevatorFinishSyncIfPresent(forcedPiece);
+            TrySpawnUseKeyHingeNetworkObjectsIfPresent(forcedPiece);
 
             if (!forcedMatch.UseClosedFaceCaps || _config.EndCapPrefab == null)
                 return;
@@ -2049,6 +2051,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             {
                 GameObject jailPiece = Instantiate(jailMatch.Prefab, parent.position, jailMatch.Rotation, parent);
                 TrySpawnElevatorFinishSyncIfPresent(jailPiece);
+                TrySpawnUseKeyHingeNetworkObjectsIfPresent(jailPiece);
 
                 if (!jailMatch.UseClosedFaceCaps || _config.EndCapPrefab == null)
                     return;
@@ -2084,6 +2087,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         GameObject matchPiece = Instantiate(match.Prefab, parent.position, match.Rotation, parent);
         TrySpawnElevatorFinishSyncIfPresent(matchPiece);
+        TrySpawnUseKeyHingeNetworkObjectsIfPresent(matchPiece);
 
         if (!match.UseClosedFaceCaps || _config.EndCapPrefab == null)
             return;
@@ -2136,6 +2140,31 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             SceneManager.MoveGameObjectToScene(finish.gameObject, pieceRoot.scene);
 
         networkObject.Spawn();
+    }
+
+    /// <summary>
+    /// Nested <see cref="HingeInteractDoor"/> with <c>Use Key To Unlock</c> may carry a <see cref="NetworkObject"/> (e.g. Door_A in Jail).
+    /// Server-spawn those objects so lock/open state replicates; doors without <see cref="NetworkObject"/> stay on the procedural Rpc path.
+    /// </summary>
+    void TrySpawnUseKeyHingeNetworkObjectsIfPresent(GameObject pieceRoot)
+    {
+        if (pieceRoot == null || !IsServerListening() || _networkManager == null)
+            return;
+
+        foreach (HingeInteractDoor door in pieceRoot.GetComponentsInChildren<HingeInteractDoor>(true))
+        {
+            if (door == null || !door.UseKeyToUnlock)
+                continue;
+            if (!door.TryGetComponent(out NetworkObject netObj) || netObj == null)
+                continue;
+            if (netObj.IsSpawned)
+                continue;
+
+            if (netObj.gameObject.scene != pieceRoot.scene)
+                SceneManager.MoveGameObjectToScene(netObj.gameObject, pieceRoot.scene);
+
+            netObj.Spawn();
+        }
     }
 
     void ValidateConfiguredPieceSetup()
@@ -2555,8 +2584,12 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         Vector2Int exit,
         int seed,
         float cellSize,
-        InteriorRoomBuildPlan interiorPlan)
+        InteriorRoomBuildPlan interiorPlan,
+        HashSet<Vector2Int> mazeTrapCells,
+        List<Transform> mazeTrapRoots)
     {
+        mazeTrapCells ??= new HashSet<Vector2Int>();
+        mazeTrapRoots ??= new List<Transform>();
         GameObject zombiePrefab = mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab;
         int zombieCountRequested = _config.MazeEnemyCount;
         GameObject jailorPrefab = _config.MazeJailorPrefab;
@@ -2593,6 +2626,9 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
                 int? d = distances[x, y];
                 if (!d.HasValue || d.Value < _config.MazeEnemyMinCellsFromStart)
+                    continue;
+
+                if (mazeTrapCells.Count > 0 && mazeTrapCells.Contains(cellKey))
                     continue;
 
                 candidates.Add(cellKey);
@@ -2664,7 +2700,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 i,
                 placedEnemyPositions,
                 minSeparationXZ,
-                interiorPlan);
+                interiorPlan,
+                mazeTrapRoots);
 
             placedEnemyPositions.Add(position);
             GameObject instance = Instantiate(zombiePrefab, position, Quaternion.identity, enemiesRoot);
@@ -2691,7 +2728,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 spawnKey,
                 placedEnemyPositions,
                 minSeparationXZ,
-                interiorPlan);
+                interiorPlan,
+                mazeTrapRoots);
 
             placedEnemyPositions.Add(position);
             GameObject instance = Instantiate(jailorPrefab, position, Quaternion.identity, enemiesRoot);
@@ -2758,7 +2796,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         // Same floor + NavMesh snap strategy as maze enemies so the marker isn't projected to a random
         // corridor corner when the cell center sits off-mesh (common in large interior cells).
         Vector3 cellCenter = CellToWorld(cell.x, cell.y, cellSize);
-        if (!TryFindMazeEnemySpawnFloor(cellCenter, cellSize, out Vector3 floorPoint))
+        if (!TryFindMazeEnemySpawnFloor(cellCenter, cellSize, out Vector3 floorPoint, null))
             floorPoint = cellCenter;
 
         Vector3 sampleFrom = floorPoint + Vector3.up * (0.35f + _config.JailorCarryDestinationYOffset);
@@ -2855,7 +2893,10 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         return first;
     }
 
-    void TrySpawnMazeTraps(
+    /// <summary>
+    /// Grid cells with a spawned trap and root transforms of each trap instance (roof/cap colliders may not be under <see cref="PitKillZone"/>).
+    /// </summary>
+    (HashSet<Vector2Int> cells, List<Transform> roots) TrySpawnMazeTraps(
         Transform mazeRoot,
         MazeCell[,] grid,
         IReadOnlyDictionary<Vector2Int, Transform> cellRoots,
@@ -2864,13 +2905,15 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int seed,
         float cellSize)
     {
+        HashSet<Vector2Int> spawnedTrapCells = new();
+        List<Transform> spawnedTrapRoots = new();
         GameObject prefab = _config.MazeTrapPrefab;
         int requestedCount = _config.MazeTrapCount;
         if (prefab == null || requestedCount <= 0)
-            return;
+            return (spawnedTrapCells, spawnedTrapRoots);
 
         if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
-            return;
+            return (spawnedTrapCells, spawnedTrapRoots);
 
         int?[,] distances = ComputeMazeCellDistances(grid, start);
         List<TrapAnchorCandidate> candidates = new();
@@ -2908,7 +2951,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 "maze-traps-no-anchors",
                 "[Maze] No valid TrapAnchor or TrapAnchor2 locations were found for maze traps. Add those children to generated maze prefabs and check min distance / exit exclusion settings.",
                 this);
-            return;
+            return (spawnedTrapCells, spawnedTrapRoots);
         }
 
         ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0x2D6E7A11))));
@@ -2931,6 +2974,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             GameObject instance = Instantiate(prefab, Vector3.zero, Quaternion.identity, trapsRoot);
             AlignTrapInstanceToAnchor(instance.transform, candidate.Anchor);
             spawnedCount++;
+            spawnedTrapCells.Add(candidate.Cell);
+            spawnedTrapRoots.Add(instance.transform);
 
             if (!spawnWithNetcode)
                 continue;
@@ -2946,7 +2991,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 "maze-traps-filtered-out",
                 "[Maze] Maze traps were configured but no anchors survived the spacing rules. Lower Maze Trap Min Separation or increase anchor coverage.",
                 this);
-            return;
+            return (spawnedTrapCells, spawnedTrapRoots);
         }
 
         if (spawnedCount < requestedCount)
@@ -2956,6 +3001,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 $"[Maze] Requested {requestedCount} maze traps but only spawned {spawnedCount} from {candidates.Count} TrapAnchor candidate(s).",
                 this);
         }
+
+        return (spawnedTrapCells, spawnedTrapRoots);
     }
 
     void TrySpawnMazeStartFlashlights(Transform mazeRoot)
@@ -3147,28 +3194,85 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int spawnIndex,
         List<Vector3> placed,
         float minSeparationXZ,
-        InteriorRoomBuildPlan interiorPlan)
+        InteriorRoomBuildPlan interiorPlan,
+        List<Transform> mazeTrapRoots)
     {
-        const int maxAttempts = 18;
+        bool tightTrapGeometry = mazeTrapRoots != null && mazeTrapRoots.Count > 0;
+        int maxAttempts = tightTrapGeometry ? 48 : 18;
         float minSqr = minSeparationXZ * minSeparationXZ;
-        Vector3 best = GetMazeEnemySpawnWorldPosition(cell, cellSize, yOffset, mazeSeed, spawnIndex, 0, interiorPlan);
+        Vector3 best = default;
         float bestScore = -1f;
+        bool hasValidBest = false;
 
         for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
-            Vector3 candidate = GetMazeEnemySpawnWorldPosition(cell, cellSize, yOffset, mazeSeed, spawnIndex, attempt, interiorPlan);
+            Vector3 candidate = GetMazeEnemySpawnWorldPosition(
+                cell, cellSize, yOffset, mazeSeed, spawnIndex, attempt, interiorPlan, mazeTrapRoots);
+            if (IsMazeEnemySpawnOverlappingTrapGeometry(candidate, mazeTrapRoots))
+                continue;
+
             if (IsFarEnoughXZ(candidate, placed, minSqr))
                 return candidate;
 
             float score = MinHorizontalSqrDistanceToAny(candidate, placed);
-            if (score > bestScore)
+            if (!hasValidBest || score > bestScore)
             {
                 bestScore = score;
                 best = candidate;
+                hasValidBest = true;
             }
         }
 
-        return best;
+        if (hasValidBest)
+            return best;
+
+        LogMazeWarningOnce(
+            "enemy-spawn-pit-overlap-fallback",
+            "[Maze] Could not find a spawn position outside maze trap geometry after retries; using raw jitter (may overlap trap). "
+            + "Check trap colliders vs. corridor width.",
+            this);
+        return GetMazeEnemySpawnWorldPosition(cell, cellSize, yOffset, mazeSeed, spawnIndex, 0, interiorPlan, mazeTrapRoots);
+    }
+
+    /// <summary>
+    /// True if a capsule around the spawn feet intersects pit triggers or any solid collider on a spawned maze-trap prefab (roof cap, etc.).
+    /// </summary>
+    static bool IsMazeEnemySpawnOverlappingTrapGeometry(Vector3 worldPosition, List<Transform> mazeTrapRoots)
+    {
+        Vector3 probeCenter = worldPosition + Vector3.up * 0.45f;
+        const float probeRadius = 0.55f;
+        Collider[] overlaps = Physics.OverlapSphere(probeCenter, probeRadius, ~0, QueryTriggerInteraction.Collide);
+        for (int i = 0; i < overlaps.Length; i++)
+        {
+            Collider c = overlaps[i];
+            if (c != null && IsColliderExcludedFromEnemySpawn(c, mazeTrapRoots))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Pit kill volumes and all geometry parented under spawned maze-trap instances (MG_Pit roof is often not under <see cref="PitKillZone"/>).</summary>
+    static bool IsColliderExcludedFromEnemySpawn(Collider collider, List<Transform> mazeTrapRoots)
+    {
+        if (collider == null)
+            return false;
+
+        if (collider.GetComponentInParent<PitKillZone>() != null)
+            return true;
+
+        if (mazeTrapRoots == null || mazeTrapRoots.Count == 0)
+            return false;
+
+        Transform t = collider.transform;
+        for (int r = 0; r < mazeTrapRoots.Count; r++)
+        {
+            Transform root = mazeTrapRoots[r];
+            if (root != null && t.IsChildOf(root))
+                return true;
+        }
+
+        return false;
     }
 
     static bool IsFarEnoughXZ(Vector3 candidate, List<Vector3> placed, float minSqr)
@@ -3209,7 +3313,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int mazeSeed,
         int spawnIndex,
         int placementAttempt,
-        InteriorRoomBuildPlan interiorPlan)
+        InteriorRoomBuildPlan interiorPlan,
+        List<Transform> mazeTrapRoots)
     {
         Vector3 cellCenter = ResolveMazeEnemySpawnHorizontalCellOrigin(cell, cellSize, interiorPlan);
         int jitterSeed = MixSeed(mazeSeed, MixSeed(spawnIndex, MixSeed(placementAttempt, unchecked((int)0x51A4EED5))));
@@ -3219,7 +3324,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         float jz = (float)(jitterRng.NextDouble() * 2d - 1d) * jitterRadius;
         Vector3 xzOnGrid = cellCenter + new Vector3(jx, 0f, jz);
 
-        if (!TryFindMazeEnemySpawnFloor(xzOnGrid, cellSize, out Vector3 floorPoint))
+        if (!TryFindMazeEnemySpawnFloor(xzOnGrid, cellSize, out Vector3 floorPoint, mazeTrapRoots))
             floorPoint = xzOnGrid;
 
         Vector3 sampleFrom = floorPoint + Vector3.up * 0.35f;
@@ -3250,7 +3355,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     /// several upward-facing colliders: exterior roof, corridor floor, pit floor, etc. We pick
     /// the one that is actually the corridor floor (not the min-Y pit bottom, not the max-Y roof).
     /// </summary>
-    static bool TryFindMazeEnemySpawnFloor(Vector3 xzOnGrid, float cellSize, out Vector3 floorPoint)
+    static bool TryFindMazeEnemySpawnFloor(
+        Vector3 xzOnGrid,
+        float cellSize,
+        out Vector3 floorPoint,
+        List<Transform> mazeTrapRoots)
     {
         floorPoint = default;
         float rayStartY = xzOnGrid.y + Mathf.Max(24f, cellSize * 2f);
@@ -3268,7 +3377,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             return false;
 
         const float minFloorNormalY = 0.55f;
-        if (!TryBuildUpFacingHitList(raw, minFloorNormalY, out var list) || list.Count == 0)
+        if (!TryBuildUpFacingHitList(raw, minFloorNormalY, mazeTrapRoots, out var list) || list.Count == 0)
             return false;
 
         list.Sort(CompareHitByYDesc);
@@ -3277,7 +3386,12 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         {
             RaycastHit only = list[0];
             if (only.point.y > 2.25f
-                && TryFindFloorFromInteriorProbe(xzOnGrid, only.point.y, minFloorNormalY, out Vector3 fromProbe))
+                && TryFindFloorFromInteriorProbe(
+                    xzOnGrid,
+                    only.point.y,
+                    minFloorNormalY,
+                    mazeTrapRoots,
+                    out Vector3 fromProbe))
             {
                 floorPoint = fromProbe;
                 return true;
@@ -3302,13 +3416,18 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     static bool TryBuildUpFacingHitList(
         RaycastHit[] raw,
         float minFloorNormalY,
+        List<Transform> mazeTrapRoots,
         out System.Collections.Generic.List<RaycastHit> list)
     {
         list = new System.Collections.Generic.List<RaycastHit>(raw.Length);
         for (int i = 0; i < raw.Length; i++)
         {
-            if (raw[i].normal.y >= minFloorNormalY)
-                list.Add(raw[i]);
+            if (raw[i].normal.y < minFloorNormalY)
+                continue;
+            if (IsColliderExcludedFromEnemySpawn(raw[i].collider, mazeTrapRoots))
+                continue;
+
+            list.Add(raw[i]);
         }
 
         return list.Count > 0;
@@ -3345,6 +3464,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         Vector3 xzOnGrid,
         float topSurfaceY,
         float minFloorNormalY,
+        List<Transform> mazeTrapRoots,
         out Vector3 floorPoint)
     {
         floorPoint = default;
@@ -3367,7 +3487,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             if (raw == null || raw.Length == 0)
                 continue;
 
-            if (!TryBuildUpFacingHitList(raw, minFloorNormalY, out var list) || list.Count == 0)
+            if (!TryBuildUpFacingHitList(raw, minFloorNormalY, mazeTrapRoots, out var list) || list.Count == 0)
                 continue;
 
             if (list.Count == 1)
