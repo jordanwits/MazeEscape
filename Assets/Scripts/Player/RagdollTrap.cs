@@ -45,6 +45,14 @@ public class RagdollTrap : MonoBehaviour
     EntityId _lastMetallicColliderEntity;
     float _nextMetallicSoundTime;
 
+    /// <summary>
+    /// Player prefabs often have multiple colliders (e.g. CharacterController + body trigger) that can all
+    /// fire <see cref="OnTriggerEnter"/> in the same physics step. Without this, one swing applies several hits.
+    /// </summary>
+    float _lastPlayerHitFixedTime = -1f;
+    int _lastPlayerHitHealthInstanceId = int.MinValue;
+    int _lastPlayerHitTrapInstanceId = int.MinValue;
+
     void Awake()
     {
         if (swingTrapDamageGate == null)
@@ -133,6 +141,27 @@ public class RagdollTrap : MonoBehaviour
         TryHit(other);
     }
 
+    bool IsDuplicatePlayerTrapHitThisPhysicsStep(PlayerHealth health)
+    {
+        if (health == null)
+            return false;
+
+        float t = Time.fixedTime;
+        int healthId = health.GetInstanceID();
+        int trapId = GetInstanceID();
+        if (Mathf.Approximately(t, _lastPlayerHitFixedTime)
+            && healthId == _lastPlayerHitHealthInstanceId
+            && trapId == _lastPlayerHitTrapInstanceId)
+        {
+            return true;
+        }
+
+        _lastPlayerHitFixedTime = t;
+        _lastPlayerHitHealthInstanceId = healthId;
+        _lastPlayerHitTrapInstanceId = trapId;
+        return false;
+    }
+
     void TryHit(Collider other)
     {
         if (swingTrapDamageGate != null && !swingTrapDamageGate.CanDealSwingTrapDamage)
@@ -173,8 +202,14 @@ public class RagdollTrap : MonoBehaviour
             return;
         }
 
-        NetworkPlayerRagdoll netRagdoll = other.GetComponentInParent<NetworkPlayerRagdoll>();
         PlayerRagdollController ragdoll = other.GetComponentInParent<PlayerRagdollController>();
+        if (ragdoll != null && ragdoll.IsRagdolled)
+            return;
+
+        if (playerHealth != null && IsDuplicatePlayerTrapHitThisPhysicsStep(playerHealth))
+            return;
+
+        NetworkPlayerRagdoll netRagdoll = other.GetComponentInParent<NetworkPlayerRagdoll>();
 
         Vector3 hitCenter = other.bounds.center;
         Vector3 dir = ResolveKnockbackDirection(hitCenter);

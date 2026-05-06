@@ -530,25 +530,34 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         if (!IsPureNetworkClient())
             return;
-        if (_networkManager == null
-            || !_networkManager.ConnectedClients.TryGetValue(
+
+        if (_networkManager != null
+            && _networkManager.ConnectedClients.TryGetValue(
                 _networkManager.LocalClientId, out NetworkClient client)
-            || client.PlayerObject == null)
-            return;
+            && client.PlayerObject != null)
+        {
+            CharacterController characterController = client.PlayerObject.GetComponent<CharacterController>();
+            if (characterController != null)
+            {
+                Vector3 p = client.PlayerObject.transform.position;
+                Quaternion r = client.PlayerObject.transform.rotation;
+                characterController.enabled = false;
+                client.PlayerObject.transform.SetPositionAndRotation(p, r);
+                Physics.SyncTransforms();
+                characterController.enabled = true;
+            }
 
-        CharacterController characterController = client.PlayerObject.GetComponent<CharacterController>();
-        if (characterController == null)
-            return;
+            PlayerController playerController = client.PlayerObject.GetComponent<PlayerController>();
+            playerController?.OnClientMazeCollidersBecameReady();
+        }
 
-        Vector3 p = client.PlayerObject.transform.position;
-        Quaternion r = client.PlayerObject.transform.rotation;
-        characterController.enabled = false;
-        client.PlayerObject.transform.SetPositionAndRotation(p, r);
+        foreach (OwnerNetworkTransform ownerNetTransform in FindObjectsByType<OwnerNetworkTransform>(FindObjectsSortMode.None))
+        {
+            if (ownerNetTransform != null)
+                ownerNetTransform.SnapObserverToLatestNetworkState();
+        }
+
         Physics.SyncTransforms();
-        characterController.enabled = true;
-
-        PlayerController playerController = client.PlayerObject.GetComponent<PlayerController>();
-        playerController?.OnClientMazeCollidersBecameReady();
     }
 
     /// <summary>
@@ -2145,26 +2154,46 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     /// <summary>
     /// Nested <see cref="HingeInteractDoor"/> with <c>Use Key To Unlock</c> may carry a <see cref="NetworkObject"/> (e.g. Door_A in Jail).
     /// Server-spawn those objects so lock/open state replicates; doors without <see cref="NetworkObject"/> stay on the procedural Rpc path.
+    /// Double doors: every leaf in the <see cref="HingeInteractDoor.PairedLeaf"/> loop for a keyed door is included so both
+    /// NetworkObjects spawn when the prefab has them (purely keyed mates do not need their own Use Key flag).
     /// </summary>
     void TrySpawnUseKeyHingeNetworkObjectsIfPresent(GameObject pieceRoot)
     {
         if (pieceRoot == null || !IsServerListening() || _networkManager == null)
             return;
 
-        foreach (HingeInteractDoor door in pieceRoot.GetComponentsInChildren<HingeInteractDoor>(true))
+        HingeInteractDoor[] hinges = pieceRoot.GetComponentsInChildren<HingeInteractDoor>(true);
+        HashSet<HingeInteractDoor> keyedDoorCluster = new HashSet<HingeInteractDoor>();
+        foreach (HingeInteractDoor door in hinges)
         {
-            if (door == null || !door.UseKeyToUnlock)
-                continue;
-            if (!door.TryGetComponent(out NetworkObject netObj) || netObj == null)
-                continue;
-            if (netObj.IsSpawned)
-                continue;
-
-            if (netObj.gameObject.scene != pieceRoot.scene)
-                SceneManager.MoveGameObjectToScene(netObj.gameObject, pieceRoot.scene);
-
-            netObj.Spawn();
+            if (door != null && door.UseKeyToUnlock)
+                AddKeyedHingePairChainToSet(door, keyedDoorCluster);
         }
+
+        foreach (HingeInteractDoor door in keyedDoorCluster)
+            TrySpawnHingeDoorNetworkObjectInPieceScene(door, pieceRoot);
+    }
+
+    static void AddKeyedHingePairChainToSet(HingeInteractDoor seed, HashSet<HingeInteractDoor> bucket)
+    {
+        for (HingeInteractDoor step = seed; step != null; step = step.PairedLeaf)
+        {
+            if (!bucket.Add(step))
+                break;
+        }
+    }
+
+    void TrySpawnHingeDoorNetworkObjectInPieceScene(HingeInteractDoor door, GameObject pieceRoot)
+    {
+        if (door == null || !door.TryGetComponent(out NetworkObject netObj) || netObj == null)
+            return;
+        if (netObj.IsSpawned)
+            return;
+
+        if (netObj.gameObject.scene != pieceRoot.scene)
+            SceneManager.MoveGameObjectToScene(netObj.gameObject, pieceRoot.scene);
+
+        netObj.Spawn();
     }
 
     void ValidateConfiguredPieceSetup()

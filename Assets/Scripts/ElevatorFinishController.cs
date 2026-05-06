@@ -51,28 +51,38 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
 
     public override void OnNetworkSpawn()
     {
-        if (IsServer)
-            ServerBindDoors();
-    }
-
-    void ServerBindDoors()
-    {
-        ElevatorFinishSpawnMarker marker = TryResolveSpawnMarkerForThisSync();
-        if (marker == null)
-        {
-            Debug.LogWarning(
-                "[ElevatorFinish] ElevatorFinishSpawnMarker not found (parent chain or nearest in scene); door gating will not work.",
-                this);
+        // Bind doors on clients too so localized prompts can resolve this controller (counts replicate via Netvars).
+        if (!TryGetDoorsNearMarker(out HingeInteractDoor[] doors))
             return;
-        }
 
-        HingeInteractDoor[] doors = marker.GetComponentsInChildren<HingeInteractDoor>(true);
         foreach (HingeInteractDoor d in doors)
         {
             if (d != null)
                 d.AssignRuntimeCloseValidator(this);
         }
 
+        if (IsServer)
+            ServerCacheDoorPairsForIdleCheck(doors);
+    }
+
+    bool TryGetDoorsNearMarker(out HingeInteractDoor[] doors)
+    {
+        doors = System.Array.Empty<HingeInteractDoor>();
+        ElevatorFinishSpawnMarker marker = TryResolveSpawnMarkerForThisSync();
+        if (marker == null)
+        {
+            Debug.LogWarning(
+                "[ElevatorFinish] ElevatorFinishSpawnMarker not found (parent chain or nearest in scene); door gating will not work.",
+                this);
+            return false;
+        }
+
+        doors = marker.GetComponentsInChildren<HingeInteractDoor>(true);
+        return true;
+    }
+
+    void ServerCacheDoorPairsForIdleCheck(HingeInteractDoor[] doors)
+    {
         if (doors.Length >= 2)
         {
             _doorA = doors[0];
@@ -89,6 +99,7 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
             _doorB = null;
         }
     }
+
 
     /// <summary>
     /// Sync may be a scene root (cannot parent under MG_Finish without Netcode reparent errors). Prefer hierarchy; otherwise nearest marker in the same scene by anchor position.

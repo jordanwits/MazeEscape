@@ -1087,6 +1087,8 @@ public class NetworkPlayerInventory : NetworkBehaviour
     /// <summary>
     /// Procedural maze <see cref="HingeInteractDoor"/> copies are identical on host and clients but not Netcode-spawned,
     /// so NetworkVariables never sync — mirror jury-rig jailor-driven state via ClientRpc after the server applies local changes.
+    /// Double doors: if only one leaf has a spawned <see cref="NetworkObject"/>, the other still uses offline fields on clients
+    /// unless this Rpc runs (host runs server-side offline updates for both leaves).
     /// </summary>
     public static void ServerBroadcastProceduralJailSealIfNeeded(HingeInteractDoor door)
     {
@@ -1096,8 +1098,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         if (nm == null || !nm.IsListening || !nm.IsServer)
             return;
 
-        NetworkObject doorNo = door.GetComponent<NetworkObject>();
-        if (doorNo != null && doorNo.IsSpawned)
+        if (!AnyJailDoorLeafNeedsProceduralMirrorRpc(door))
             return;
 
         NetworkPlayerInventory relay = ResolveServerRelayInventory();
@@ -1116,8 +1117,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         if (nm == null || !nm.IsListening || !nm.IsServer)
             return;
 
-        NetworkObject doorNo = door.GetComponent<NetworkObject>();
-        if (doorNo != null && doorNo.IsSpawned)
+        if (!AnyJailDoorLeafNeedsProceduralMirrorRpc(door))
             return;
 
         NetworkPlayerInventory relay = ResolveServerRelayInventory();
@@ -1125,6 +1125,27 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
 
         relay.ProceduralJailorOpenForEntryMirrorClientRpc(door.DoorId, door.IdentityHintPosition);
+    }
+
+    /// <summary>
+    /// True when any referenced door leaf is missing a spawned <see cref="NetworkObject"/> (procedural / offline replicated path).
+    /// When both leaves are spawned, <see cref="HingeInteractDoor"/> NetworkVariables carry state and Rpc mirroring is skipped.
+    /// </summary>
+    static bool AnyJailDoorLeafNeedsProceduralMirrorRpc(HingeInteractDoor door)
+    {
+        if (!IsHingeDoorLeafNetworkSpawned(door))
+            return true;
+
+        HingeInteractDoor paired = door.PairedLeaf;
+        return paired != null && !IsHingeDoorLeafNetworkSpawned(paired);
+    }
+
+    static bool IsHingeDoorLeafNetworkSpawned(HingeInteractDoor leaf)
+    {
+        return leaf != null
+            && leaf.TryGetComponent(out NetworkObject netObj)
+            && netObj != null
+            && netObj.IsSpawned;
     }
 
     static NetworkPlayerInventory ResolveServerRelayInventory()
