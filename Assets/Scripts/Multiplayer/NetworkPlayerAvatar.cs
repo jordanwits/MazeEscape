@@ -247,8 +247,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
         if (IsOwner
             && !IsServer
-            && UnityEngine.SceneManagement.SceneManager.GetActiveScene().name
-                == MultiplayerSceneFlow.GameSceneName)
+            && MultiplayerSceneFlow.IsMazeGameplayScene(
+                UnityEngine.SceneManagement.SceneManager.GetActiveScene().name))
         {
             RequestMazeSeedFromHostServerRpc();
         }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
@@ -13,6 +14,29 @@ public class MultiplayerSceneFlow : MonoBehaviour
 {
     public const string MenuSceneName = "Menu";
     public const string GameSceneName = "Level01";
+
+    /// <summary>Gameplay scenes that have a matching <c>ProceduralMazeConfig</c> under <c>Resources/MazeConfigs</c> (see <see cref="ProceduralMazeCoordinator"/>).</summary>
+    public static readonly string[] MazeSectionSceneNames =
+    {
+        "Level01",
+        "Level02",
+        "Level03",
+        "Level04",
+    };
+
+    public static bool IsMazeGameplayScene(string sceneName)
+    {
+        if (string.IsNullOrEmpty(sceneName))
+            return false;
+
+        for (int i = 0; i < MazeSectionSceneNames.Length; i++)
+        {
+            if (string.Equals(MazeSectionSceneNames[i], sceneName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
 
     [SerializeField] MultiplayerSessionController session;
 
@@ -52,7 +76,7 @@ public class MultiplayerSceneFlow : MonoBehaviour
             return;
 
         Scene active = SceneManager.GetActiveScene();
-        if (active.IsValid() && active.name == GameSceneName)
+        if (active.IsValid() && IsMazeGameplayScene(active.name))
             SceneManager.LoadScene(MenuSceneName, LoadSceneMode.Single);
     }
 

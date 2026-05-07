@@ -50,8 +50,8 @@ public class RagdollTrap : MonoBehaviour
     /// fire <see cref="OnTriggerEnter"/> in the same physics step. Without this, one swing applies several hits.
     /// </summary>
     float _lastPlayerHitFixedTime = -1f;
-    int _lastPlayerHitHealthInstanceId = int.MinValue;
-    int _lastPlayerHitTrapInstanceId = int.MinValue;
+    EntityId _lastPlayerHitHealthEntity;
+    EntityId _lastPlayerHitTrapEntity;
 
     void Awake()
     {
@@ -147,18 +147,18 @@ public class RagdollTrap : MonoBehaviour
             return false;
 
         float t = Time.fixedTime;
-        int healthId = health.GetInstanceID();
-        int trapId = GetInstanceID();
+        EntityId healthEntity = health.GetEntityId();
+        EntityId trapEntity = GetEntityId();
         if (Mathf.Approximately(t, _lastPlayerHitFixedTime)
-            && healthId == _lastPlayerHitHealthInstanceId
-            && trapId == _lastPlayerHitTrapInstanceId)
+            && healthEntity == _lastPlayerHitHealthEntity
+            && trapEntity == _lastPlayerHitTrapEntity)
         {
             return true;
         }
 
         _lastPlayerHitFixedTime = t;
-        _lastPlayerHitHealthInstanceId = healthId;
-        _lastPlayerHitTrapInstanceId = trapId;
+        _lastPlayerHitHealthEntity = healthEntity;
+        _lastPlayerHitTrapEntity = trapEntity;
         return false;
     }
 

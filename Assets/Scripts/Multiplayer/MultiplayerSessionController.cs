@@ -528,7 +528,7 @@ public class MultiplayerSessionController : MonoBehaviour
         if (_networkManager == null || !_networkManager.IsServer)
             return;
 
-        if (scene.name != MultiplayerSceneFlow.GameSceneName)
+        if (!MultiplayerSceneFlow.IsMazeGameplayScene(scene.name))
             return;
 
         QueueSpawnOrMoveAllPlayersToLevelStart();
@@ -745,7 +745,7 @@ public class MultiplayerSessionController : MonoBehaviour
             return;
 
         Scene activeScene = SceneManager.GetActiveScene();
-        if (!activeScene.IsValid() || activeScene.name != MultiplayerSceneFlow.GameSceneName)
+        if (!activeScene.IsValid() || !MultiplayerSceneFlow.IsMazeGameplayScene(activeScene.name))
             return;
 
         if (_pendingSpawnMoves.ContainsKey(clientId))

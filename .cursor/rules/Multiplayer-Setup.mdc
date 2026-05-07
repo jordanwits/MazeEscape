@@ -1,5 +1,208 @@
 ---
 alwaysApply: true
+description: Steam + Netcode for GameObjects - how to add networked gameplay safely
 ---
 
-this is a steam multiplayer game, make sure when items and other multiplayer dependent things are made, they are set up as network items, or however they need to be for the multiplayer setup.
+This is a Steam multiplayer game using **Unity Netcode for GameObjects (NGO)**. New gameplay features must follow **server authority** unless there is a deliberate, documented exception such as purely cosmetic FX.
+
+## Core rule
+
+For any shared gameplay state, there must be **one source of truth**. In this project, that source of truth is normally the **server**.
+
+Clients may:
+- send input
+- request interactions
+- read replicated state
+- render visuals from replicated state
+
+Clients must **not**:
+- change shared gameplay state locally and assume it will stay correct
+- use local animator state, local booleans, or local transforms as the source of truth
+- invent a separate sync path when an existing server-authoritative pattern already fits
+
+## Authority pipeline (default for every networked thing)
+
+Use this mental model for **doors, items, traps, enemies, and shared UI-relevant gameplay flags**:
+
+1. **Client**  
+   Input only. Call a **`ServerRpc`** or trigger code that does, or read replicated state.  
+   **Do not** change shared game state only on the client.
+
+2. **Server**  
+   Validate the request using rules like range, cooldown, inventory, ownership, game phase, and object state.  
+   Then mutate the one source of truth.
+
+3. **Authority / replication**  
+   Prefer:
+   - **`NetworkVariable<T>`** with **`NetworkVariableWritePermission.Server`** for small persistent state such as open/locked, chest opened, trap phase, is dead, inventory slot IDs
+   - **`NetworkTransform`** or **`OwnerNetworkTransform`** when position/rotation must replicate
+   - **server-driven animator params** or **`ServerNetworkAnimator`** so animation matches replicated state
+
+4. **Broadcast**  
+   NGO pushes Netvars and transform deltas automatically.  
+   Use **`ClientRpc`** only for **one-shot** events like SFX, VFX, hit flashes, or temporary cues where late joiners do not need historical playback.  
+   If a late joiner **must** know the end state, that state must live in a **Netvar**, server-owned component state, or an explicit join snapshot. It must **not** exist only in an Rpc.
+
+5. **Clients**  
+   Render from replicated data only.  
+   Local prediction is allowed **only when explicitly requested for a feature** and must reconcile cleanly with server state. Do not add prediction by default.
+
+## Visual rule
+
+Animator parameters, VFX, SFX, and local presentation code must only reflect replicated or server-owned state.
+
+Do not use:
+- animator state
+- local booleans
+- client-only transforms
+- locally inferred FX state
+
+as the source of truth for gameplay decisions.
+
+Visuals may react to state. Visuals must never define state.
+
+## Spawn-time state rule
+
+Any object using **`NetworkVariable`** state must apply its **current replicated value on spawn/initialization**, not only in **`OnValueChanged`** callbacks.
+
+This prevents late join bugs where:
+- connected players see the correct state
+- newly joined players see the prefab default state
+
+For example, if a door open state is a Netvar, the object must read and apply the current value during spawn/init, then also subscribe to future changes.
+
+## Patterns already used in this project (match these)
+
+- **Player inventory**  
+  `NetworkPlayerInventory`: server owns slot **`NetworkVariable`** values; pickup, drop, and use go through **`ServerRpc -> server logic`**, sometimes followed by **`ClientRpc`** to align world **`GrabbableInventoryItem`** poses.  
+  Extend this style instead of inventing a parallel sync pattern.
+
+- **Melee**  
+  `NetworkPlayerCombat`: client requests; **server** runs `ApplyServerAuthoritativeMeleeDamage`; clients get FX through Rpc.  
+  Do not call `ZombieHealth.TakeDamage` or `PlayerHealth.TakeDamage` from clients on networked entities.
+
+- **Zombies**  
+  `ZombieAI` skips AI on pure clients; `ZombieHealth` and `NetworkZombieAvatar` keep death in sync.  
+  New enemy logic must be **server-only simulation** with replicated pose, animation, and state.
+
+- **Doors / chests**  
+  `HingeInteractDoor` and `MazeChest`: **`NetworkVariable`** plus **`ServerRpc`** for toggles; clients subscribe to **`OnValueChanged`** and must also apply the current value on spawn/init to animate correctly.
+
+## Prefab and spawn checklist
+
+- Anything that exists in the world for multiple players and can move, change state, or be interacted with needs a **`NetworkObject`** and must be **spawned on the server**.
+- Do not put a **`NetworkObject`** on a prefab and then forget to server-spawn it during online play.
+- Avoid Rpc-only mirroring for persistent gameplay objects when late joiners must see their current state.
+- If the object is shared and persistent, prefer a spawned networked object with replicated state.
+- **Chest / deterministic loot**: loot is spawned locally on each peer from the same seed; logical identity is the computed **`ItemId`**. Do not add randomness that differs per client when spawning the same loot.
+
+## Ownership rule
+
+Do not assume the interacting client owns a **`NetworkObject`**.
+
+For shared world interactables like:
+- doors
+- chests
+- pickups
+- switches
+- traps
+
+the caller often does **not** own the object.
+
+Use **`RequireOwnership = false`** on `ServerRpc` only when appropriate, and always validate the caller on the server. Validation may include:
+- distance to target
+- line of sight
+- alive / active state
+- cooldown
+- current game phase
+- allowed interaction type
+
+## Dedicated server rule
+
+Do not rely on host-only behavior or on client code paths executing on the server.
+
+Any gameplay-critical logic for:
+- spawning
+- validation
+- state mutation
+- damage
+- interaction resolution
+
+must work on a **dedicated server**, not only in host mode.
+
+If a pattern only works because the host is both client and server, treat it as fragile and fix it before building on top of it.
+
+## Known fragile areas (extra care)
+
+- **Procedural doors** without spawned **`NetworkObject`** use inventory `ClientRpc` mirroring  
+  This can work for already connected clients, but it is fragile for late join unless a snapshot path or proper spawned network object is added.
+
+- **`ClientRpc`-only spawned objects** such as split-stack glowstick drops  
+  These may assume a listen server or host runs client code paths. A dedicated server may need the same gameplay-critical spawn logic executed on the server too.
+
+- **World items** use `GrabbableMazeClientPhysics` to freeze rigidbodies until procedural maze colliders exist on that client  
+  This is presentation / local stabilization only, not gameplay authority. The server still validates pickup and world state.
+
+## Do not invent new sync patterns
+
+When adding a feature:
+- first look for an existing project pattern that already fits
+- extend that pattern
+- only create a new networking pattern when there is a clear reason and it is explicitly documented
+
+Do not let similar features use different sync models without a strong reason.
+
+Bad example:
+- Door A uses `NetworkVariable`
+- Door B uses only `ClientRpc`
+- Door C uses local bool plus transform sync
+- Trap D uses a custom hybrid without late-join support
+
+Good example:
+- all shared toggled interactables follow one server-authoritative pattern
+- all persistent state has a late-join-safe representation
+
+## Red flags (review before merging)
+
+- Writing shared gameplay state from **`IsClient && !IsServer`** code
+- Input or `OnTriggerEnter` directly changing world state without a server path
+- Using animator state or local booleans as gameplay authority
+- Two scripts on the same object both writing open, health, or transform state from different places
+- Relying on **`ClientRpc`** alone for state that joining players must see
+- Adding local randomness for shared objects that are expected to be deterministic
+- Assuming host behavior proves dedicated-server correctness
+- Introducing a second sync pattern for a feature that already has a project-standard pattern
+
+## Required checklist for every new networked gameplay feature
+
+Before merging a new feature, define all of the following:
+
+1. **What is the server-owned source of truth?**  
+   Is it a `NetworkVariable`, server-only component state, or another authoritative server-owned value?
+
+2. **How does the client request a change?**  
+   Usually with a `ServerRpc`, not local mutation.
+
+3. **How do connected clients update?**  
+   Through Netvar replication, transform replication, server-driven animator state, or a one-shot Rpc for non-persistent events.
+
+4. **How does a late-joining client learn the correct current state?**  
+   Through Netvar current value, authoritative spawn state, or an explicit join snapshot.
+
+5. **Does it work on a dedicated server?**  
+   Do not assume host mode proves correctness.
+
+6. **Does it reuse an existing project pattern?**  
+   If not, explain why a new pattern is necessary.
+
+## Final rule for implementation notes
+
+When adding a feature, state explicitly:
+
+- what the **server-owned field** is
+- who is allowed to mutate it
+- how clients request changes
+- how visuals react to it
+- how a client that joins mid-game learns it
+
+If those answers are unclear, the feature is not ready to implement safely.

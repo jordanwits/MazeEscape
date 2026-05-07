@@ -95,6 +95,9 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     }
 
     const string ConfigResourceName = "ProceduralMazeConfig";
+    /// <summary>Subfolder under a Resources folder: <c>Assets/Resources/MazeConfigs/*.asset</c>.
+    /// Each asset's <see cref="ProceduralMazeConfig.TargetSceneName"/> selects it when that scene loads.</summary>
+    const string SectionConfigsResourcesPath = "MazeConfigs";
 
     /// <summary>
     /// False while a <b>client</b> (not host) has loaded the target maze scene but the procedural
@@ -118,7 +121,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     };
 
     [Header("Config")]
-    [Tooltip("If set, used instead of Resources/ProceduralMazeConfig. Use per-scene or per-mode maze + enemy settings.")]
+    [Tooltip("If set, always uses this config (ignores Resources/MazeConfigs). Leave empty for normal play: one ProceduralMazeConfig per level under Resources/MazeConfigs, matched by Target Scene Name.")]
     [SerializeField] ProceduralMazeConfig configOverride;
     [Tooltip("If set, used instead of Maze Enemy Prefab on the config (same maze asset, different enemy per scene).")]
     [SerializeField] GameObject mazeEnemyPrefabOverride;
@@ -139,13 +142,13 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     readonly HashSet<string> _loggedMazeWarnings = new();
     string _lastServerMazeBuildSceneName;
     int _lastServerMazeBuildSeed = int.MinValue;
+    Dictionary<string, ProceduralMazeConfig> _sectionConfigsByTargetScene;
+    bool _sectionConfigsIndexed;
 
     void Awake()
     {
-        _config = configOverride != null
-            ? configOverride
-            : Resources.Load<ProceduralMazeConfig>(ConfigResourceName);
         _networkManager = GetComponent<NetworkManager>();
+        EnsureConfigForScene(SceneManager.GetActiveScene().name);
 
         if (_config == null)
             Debug.LogWarning("[Maze] Assign config Override on ProceduralMazeCoordinator or add ProceduralMazeConfig to Resources.", this);
@@ -167,6 +170,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
     void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
     {
+        EnsureConfigForScene(scene.name);
+
         if (!ShouldManageScene(scene))
             return;
 
@@ -235,13 +240,15 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
     void HandleServerStarted()
     {
+        Scene activeScene = SceneManager.GetActiveScene();
+        EnsureConfigForScene(activeScene.name);
+
         if (_config == null || !_config.EnableGeneration)
             return;
 
         _currentSeed = _config.RandomizeHostSeed ? UnityEngine.Random.Range(int.MinValue, int.MaxValue) : _config.OfflineSeed;
         _hasCurrentSeed = true;
 
-        Scene activeScene = SceneManager.GetActiveScene();
         if (ShouldManageScene(activeScene))
             BuildMazeInScene(activeScene, _currentSeed);
     }
@@ -302,6 +309,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         _hasCurrentSeed = true;
 
         Scene activeScene = SceneManager.GetActiveScene();
+        EnsureConfigForScene(activeScene.name);
         if (ShouldManageScene(activeScene))
             BuildMazeInScene(activeScene, seed);
     }
@@ -344,6 +352,80 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
     }
 
+    void EnsureSectionConfigsIndexed()
+    {
+        if (_sectionConfigsIndexed)
+            return;
+
+        _sectionConfigsIndexed = true;
+        _sectionConfigsByTargetScene = new Dictionary<string, ProceduralMazeConfig>(StringComparer.OrdinalIgnoreCase);
+        ProceduralMazeConfig[] sectionAssets = Resources.LoadAll<ProceduralMazeConfig>(SectionConfigsResourcesPath);
+        foreach (ProceduralMazeConfig candidate in sectionAssets)
+        {
+            if (candidate == null)
+                continue;
+
+            string target = candidate.TargetSceneName;
+            if (string.IsNullOrWhiteSpace(target))
+                continue;
+
+            target = target.Trim();
+            if (_sectionConfigsByTargetScene.TryGetValue(target, out ProceduralMazeConfig existing))
+            {
+                LogMazeWarningOnce(
+                    $"dup-maze-section-config:{target}",
+                    $"[Maze] Multiple ProceduralMazeConfig assets in Resources/{SectionConfigsResourcesPath} use Target Scene Name \"{target}\". " +
+                    $"Using \"{existing.name}\"; ignoring \"{candidate.name}\".",
+                    this);
+                continue;
+            }
+
+            _sectionConfigsByTargetScene[target] = candidate;
+        }
+    }
+
+    bool TryGetSectionConfigForScene(string sceneName, out ProceduralMazeConfig config)
+    {
+        config = null;
+        if (string.IsNullOrEmpty(sceneName))
+            return false;
+
+        EnsureSectionConfigsIndexed();
+        return _sectionConfigsByTargetScene.TryGetValue(sceneName, out config);
+    }
+
+    void EnsureConfigForScene(string sceneName)
+    {
+        if (configOverride != null)
+            _config = configOverride;
+        else if (TryGetSectionConfigForScene(sceneName, out ProceduralMazeConfig sectionConfig))
+            _config = sectionConfig;
+        else
+        {
+            _config = Resources.Load<ProceduralMazeConfig>(ConfigResourceName);
+            WarnIfFallbackMismatchesScene(sceneName);
+        }
+    }
+
+    void WarnIfFallbackMismatchesScene(string sceneName)
+    {
+        if (_config == null || string.IsNullOrEmpty(sceneName))
+            return;
+        if (string.Equals(_config.TargetSceneName, sceneName, StringComparison.OrdinalIgnoreCase))
+            return;
+        if (!IsLikelyProceduralMazeSceneName(sceneName))
+            return;
+
+        LogMazeWarningOnce(
+            $"maze-config-missing:{sceneName}",
+            $"[Maze] No ProceduralMazeConfig under Resources/{SectionConfigsResourcesPath} with Target Scene Name \"{sceneName}\". " +
+            $"Using fallback \"{_config.name}\" (Target Scene \"{_config.TargetSceneName}\"). Add a config asset there or assign config Override.",
+            this);
+    }
+
+    static bool IsLikelyProceduralMazeSceneName(string sceneName)
+        => sceneName.StartsWith("Level", StringComparison.OrdinalIgnoreCase);
+
     bool ShouldManageScene(Scene scene)
     {
         return _config != null
@@ -351,7 +433,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             && _config.HasMinimumStarterSet
             && scene.IsValid()
             && scene.isLoaded
-            && string.Equals(scene.name, _config.TargetSceneName, StringComparison.Ordinal);
+            && string.Equals(scene.name, _config.TargetSceneName, StringComparison.OrdinalIgnoreCase);
     }
 
     bool IsServerListening()
@@ -374,6 +456,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
     void BuildMazeInScene(Scene scene, int seed)
     {
+        EnsureConfigForScene(scene.name);
+
         if (!ShouldManageScene(scene))
             return;
 
@@ -551,7 +635,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             playerController?.OnClientMazeCollidersBecameReady();
         }
 
-        foreach (OwnerNetworkTransform ownerNetTransform in FindObjectsByType<OwnerNetworkTransform>(FindObjectsSortMode.None))
+        foreach (OwnerNetworkTransform ownerNetTransform in FindObjectsByType<OwnerNetworkTransform>())
         {
             if (ownerNetTransform != null)
                 ownerNetTransform.SnapObserverToLatestNetworkState();

@@ -59,7 +59,7 @@ public class MultiplayerMenuOverlay : MonoBehaviour
 
     void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        if (scene.name == MultiplayerSceneFlow.GameSceneName)
+        if (MultiplayerSceneFlow.IsMazeGameplayScene(scene.name))
             SetVisible(false);
     }
 
