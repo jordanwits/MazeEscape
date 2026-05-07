@@ -13,7 +13,7 @@ using UnityEngine.SceneManagement;
 public class MultiplayerSceneFlow : MonoBehaviour
 {
     public const string MenuSceneName = "Menu";
-    public const string GameSceneName = "Level01";
+    public const string GameSceneName = "Level02";
 
     /// <summary>Gameplay scenes that have a matching <c>ProceduralMazeConfig</c> under <c>Resources/MazeConfigs</c> (see <see cref="ProceduralMazeCoordinator"/>).</summary>
     public static readonly string[] MazeSectionSceneNames =
