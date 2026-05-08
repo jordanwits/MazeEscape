@@ -440,7 +440,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: a58a01329c3744b46a8a2190b9fcf280, type: 2}
+  - {fileID: 2100000, guid: cf90a0dbad91b724e859f07a249df00c, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -552,7 +552,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: a58a01329c3744b46a8a2190b9fcf280, type: 2}
+  - {fileID: 2100000, guid: cf90a0dbad91b724e859f07a249df00c, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -916,7 +916,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: cf90a0dbad91b724e859f07a249df00c, type: 2}
+  - {fileID: 2100000, guid: 32b88ae75b521c448bbfe80449023ca6, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -1090,7 +1090,7 @@ GameObject:
   - component: {fileID: 5160615533386218349}
   - component: {fileID: 8762458870442998900}
   m_Layer: 0
-  m_Name: MG_Pit
+  m_Name: CarnivalPit1
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1185,20 +1185,20 @@ AudioReverbZone:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5114175203983525120}
   m_Enabled: 1
-  m_MinDistance: 4.4926405
-  m_MaxDistance: 5.7426405
-  m_ReverbPreset: 9
+  m_MinDistance: 12.9779215
+  m_MaxDistance: 14.2279215
+  m_ReverbPreset: 27
   m_Room: -1000
-  m_RoomHF: 0
-  m_DecayTime: 1.45
-  m_DecayHFRatio: 1.3
-  m_Reflections: -850
-  m_ReflectionsDelay: 0.015
-  m_Reverb: -520
-  m_ReverbDelay: 0.022
+  m_RoomHF: -100
+  m_DecayTime: 1.49
+  m_DecayHFRatio: 0.83
+  m_Reflections: -2602
+  m_ReflectionsDelay: 0.007
+  m_Reverb: 50
+  m_ReverbDelay: 0.011
   m_HFReference: 5000
-  m_Diffusion: 82
-  m_Density: 85
+  m_Diffusion: 100
+  m_Density: 100
   m_LFReference: 250
   m_RoomLF: 0
 --- !u!1 &5631570317164394106
