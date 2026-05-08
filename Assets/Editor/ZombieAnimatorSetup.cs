@@ -7,23 +7,23 @@ using UnityEngine;
 
 public static class ZombieAnimatorSetup
 {
-    const string ZombiePrefabPath = "Assets/Prefabs/Enemies/Zombie/Zombie.prefab";
-    const string ZombieControllerPath = "Assets/Prefabs/Enemies/Zombie/ZombieAnimator.controller";
-    const string UpperBodyMaskPath = "Assets/Prefabs/Enemies/ZombieUpperBodyMask.mask";
+    const string ZombiePrefabPath = "Assets/Prefabs/Enemies/Dungeon/Zombie/Zombie.prefab";
+    const string ZombieControllerPath = "Assets/Prefabs/Enemies/Dungeon/Zombie/ZombieAnimator.controller";
+    const string UpperBodyMaskPath = "Assets/Prefabs/Enemies/Dungeon/Zombie/ZombieUpperBodyMask.mask";
     const string AutoRepairSessionKey = "MazeEscape.ZombieAnimatorAutoRepairRan";
 
     static readonly string[] ZombieModelPaths =
     {
-        "Assets/Prefabs/Enemies/Warzombie F Pedroso.fbx",
-        "Assets/Enemy/Warzombie F Pedroso.fbx"
+        "Assets/Prefabs/Enemies/Dungeon/Zombie/Warzombie F Pedroso.fbx",
+        "Assets/Enemy/Zombie/Warzombie F Pedroso.fbx"
     };
 
-    const string IdleClipPath = "Assets/Prefabs/Enemies/ZombieIdle.anim";
-    const string WalkClipPath = "Assets/Prefabs/Enemies/ZombieWalk.anim";
-    const string AttackClipPath = "Assets/Prefabs/Enemies/ZombieAttack.anim";
-    const string HitReactionClipPath = "Assets/Enemy/HitReaction.anim";
-    const string Death1ClipPath = "Assets/Prefabs/Enemies/ZombieDeath1.anim";
-    const string Death2ClipPath = "Assets/Prefabs/Enemies/ZombieDeath2.anim";
+    const string IdleClipPath = "Assets/Prefabs/Enemies/Dungeon/Zombie/ZombieIdle.anim";
+    const string WalkClipPath = "Assets/Prefabs/Enemies/Dungeon/Zombie/ZombieWalk.anim";
+    const string AttackClipPath = "Assets/Prefabs/Enemies/Dungeon/Zombie/ZombieAttack.anim";
+    const string HitReactionClipPath = "Assets/Enemy/Zombie/HitReaction.anim";
+    const string Death1ClipPath = "Assets/Prefabs/Enemies/Dungeon/Zombie/ZombieDeath1.anim";
+    const string Death2ClipPath = "Assets/Prefabs/Enemies/Dungeon/Zombie/ZombieDeath2.anim";
 
     [InitializeOnLoadMethod]
     static void AutoRepairBrokenControllerOnce()
@@ -86,6 +86,8 @@ public static class ZombieAnimatorSetup
     {
         DeleteControllerFilePreservingMeta();
         AssetDatabase.Refresh();
+
+        EnsureFolderExistsForAssetPath(ZombieControllerPath);
 
         AnimatorController controller = AnimatorController.CreateAnimatorControllerAtPath(ZombieControllerPath);
         if (controller == null)
@@ -302,6 +304,34 @@ public static class ZombieAnimatorSetup
     static string GetAbsoluteProjectPath(string assetPath)
     {
         return Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), assetPath));
+    }
+
+    /// <summary>
+    /// Unity's CreateAnimatorControllerAtPath fails if intermediate Asset folders do not exist.
+    /// </summary>
+    static void EnsureFolderExistsForAssetPath(string assetPath)
+    {
+        string directory = Path.GetDirectoryName(assetPath);
+        if (string.IsNullOrEmpty(directory))
+            return;
+
+        EnsureFolderExists(directory.Replace('\\', '/'));
+    }
+
+    static void EnsureFolderExists(string folderAssetPath)
+    {
+        folderAssetPath = folderAssetPath.Replace('\\', '/');
+        if (AssetDatabase.IsValidFolder(folderAssetPath))
+            return;
+
+        string parent = Path.GetDirectoryName(folderAssetPath);
+        if (!string.IsNullOrEmpty(parent))
+            EnsureFolderExists(parent.Replace('\\', '/'));
+
+        string newFolderName = Path.GetFileName(folderAssetPath);
+        string parentForCreate = string.IsNullOrEmpty(parent) ? "Assets" : parent.Replace('\\', '/');
+        if (!AssetDatabase.IsValidFolder(folderAssetPath))
+            AssetDatabase.CreateFolder(parentForCreate, newFolderName);
     }
 
     static T GetOrAddComponent<T>(GameObject target) where T : Component

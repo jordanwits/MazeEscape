@@ -245,6 +245,8 @@ public class JailorAI : MonoBehaviour
     bool _grabAttachCompleted;
     float _grabbingStartedTime;
     bool _enteredCarrying;
+    ObstacleAvoidanceType _resumeObstacleAvoidanceAfterCarry;
+    bool _suspendedAvoidanceDuringCarry;
     float _suppressChaseUntil;
     float _carryPhaseStartedTime;
     Vector3 _carryPreservedPlayerLossyScale = Vector3.one;
@@ -651,6 +653,26 @@ public class JailorAI : MonoBehaviour
             characterController.skinWidth = 0.02f;
             characterController.minMoveDistance = 0.001f;
         }
+    }
+
+    /// <summary>
+    /// While carrying, high-quality avoidance plus preferring NavMeshAgent.velocity can lock motion to corridor walls after CC slide.
+    /// </summary>
+    void SuspendNavObstacleAvoidanceForCarry()
+    {
+        if (navMeshAgent == null || _suspendedAvoidanceDuringCarry)
+            return;
+        _resumeObstacleAvoidanceAfterCarry = navMeshAgent.obstacleAvoidanceType;
+        navMeshAgent.obstacleAvoidanceType = ObstacleAvoidanceType.NoObstacleAvoidance;
+        _suspendedAvoidanceDuringCarry = true;
+    }
+
+    void ResumeNavObstacleAvoidanceAfterCarry()
+    {
+        if (navMeshAgent == null || !_suspendedAvoidanceDuringCarry)
+            return;
+        navMeshAgent.obstacleAvoidanceType = _resumeObstacleAvoidanceAfterCarry;
+        _suspendedAvoidanceDuringCarry = false;
     }
 
     bool ShouldRunSimulation()
@@ -1608,6 +1630,8 @@ public class JailorAI : MonoBehaviour
         if (!TrySnapToNavMesh())
             return Vector3.zero;
 
+        SuspendNavObstacleAvoidanceForCarry();
+
         if (!TryGetCarryDestination(out Vector3 destination))
             return Vector3.zero;
 
@@ -1672,10 +1696,15 @@ public class JailorAI : MonoBehaviour
             return Vector3.zero;
         }
 
-        Vector3 desiredVelocity = navMeshAgent.velocity.sqrMagnitude > 0.0001f
-            ? navMeshAgent.velocity
-            : navMeshAgent.desiredVelocity;
-        desiredVelocity.y = 0f;
+        Vector3 flatSteer = navMeshAgent.desiredVelocity;
+        flatSteer.y = 0f;
+        if (flatSteer.sqrMagnitude < 0.001f)
+        {
+            flatSteer = navMeshAgent.velocity;
+            flatSteer.y = 0f;
+        }
+
+        Vector3 desiredVelocity = flatSteer;
         if (desiredVelocity.sqrMagnitude > carrySpeed * carrySpeed)
             desiredVelocity = desiredVelocity.normalized * carrySpeed;
 
@@ -1735,6 +1764,8 @@ public class JailorAI : MonoBehaviour
     /// <param name="sealDroppedPlayerAsJailPrisoner">If true, marks the dropped player as sealed in jail immediately so AI does not re-grab before the door tripwire closes.</param>
     void ApplyCarryDropRelease(bool applyPostDropChaseCooldown = true, bool sealDroppedPlayerAsJailPrisoner = false)
     {
+        ResumeNavObstacleAvoidanceAfterCarry();
+
         ClearInvestigationState();
         PlayerHealth ph = _targetHealth;
         NetworkObject playerNo = ph != null ? ph.GetComponent<NetworkObject>() : null;
@@ -1902,6 +1933,8 @@ public class JailorAI : MonoBehaviour
         PlayerHealth ph = _targetHealth;
         if (ph == null)
             return;
+
+        ResumeNavObstacleAvoidanceAfterCarry();
 
         NetworkObject playerNo = ph.GetComponent<NetworkObject>();
         if (playerNo != null)
