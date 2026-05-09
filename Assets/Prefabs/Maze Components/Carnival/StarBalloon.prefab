@@ -27,10 +27,11 @@ Transform:
   m_GameObject: {fileID: 4970773003101508670}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -0.00045924814, y: 0.00026474116, z: -0.031750917}
-  m_LocalScale: {x: 2.337285, y: 2.337285, z: 2.337285}
+  m_LocalPosition: {x: -0.00045924814, y: 0.000265, z: -0.028006}
+  m_LocalScale: {x: 2.337285, y: 2.337285, z: 1.9441934}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 9100000000000000403}
   m_Father: {fileID: 9100000000000000051}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &8035608896798857245
@@ -138,11 +139,11 @@ GameObject:
   - component: {fileID: 9200000000000000203}
   - component: {fileID: 9200000000000000204}
   - component: {fileID: 9200000000000000201}
-  - component: {fileID: 9200000000000000205}
   - component: {fileID: 9200000000000000206}
   - component: {fileID: 9200000000000000207}
   - component: {fileID: 9200000000000000208}
   - component: {fileID: 9200000000000000209}
+  - component: {fileID: 7077647510269272617}
   m_Layer: 0
   m_Name: StarBalloon_Body
   m_TagString: Untagged
@@ -158,12 +159,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 9100000000000000050}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 2159037066921057478}
+  - {fileID: 9100000000000000401}
   m_Father: {fileID: 2267473745369256889}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &4886669807758689071
@@ -319,9 +321,9 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 9100000000000000050}
   serializedVersion: 5
-  m_Mass: 10
-  m_LinearDamping: 0.35
-  m_AngularDamping: 0.28
+  m_Mass: 5
+  m_LinearDamping: 0.28
+  m_AngularDamping: 0.22
   m_CenterOfMass: {x: 0, y: 0, z: -0.014}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
   m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
@@ -336,29 +338,8 @@ Rigidbody:
   m_UseGravity: 1
   m_IsKinematic: 0
   m_Interpolate: 1
-  m_Constraints: 0
+  m_Constraints: 64
   m_CollisionDetection: 1
---- !u!135 &9200000000000000205
-SphereCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 9100000000000000050}
-  m_Material: {fileID: 13400000, guid: fb12c94e8acd4ea7b6c3d8912a7e9044, type: 2}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Radius: 0.009557664
-  m_Center: {x: 0.000009744894, y: 0.000007939992, z: -0.000006979799}
 --- !u!114 &9200000000000000206
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -383,7 +364,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a74e8cbb2d9649d5b5d6e9014f2238d1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerPhysicsPushReceiver
-  pushGainMultiplier: 1
+  pushGainMultiplier: 0.01
 --- !u!114 &9200000000000000208
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -400,18 +381,23 @@ MonoBehaviour:
   interactionMaxHorizontalDistance: 2.95
   planarSpeedScaleVsPlayerController: 1.05
   planarSpeedCapDelta: 4.25
-  balloonHeliumMode: 0
-  balloonTieAnchorRigidbody: {fileID: 0}
+  balloonHeliumMode: 1
+  balloonTieAnchorRigidbody: {fileID: 9100000000000000303}
+  balloonTetherBodyAttachPoint: {fileID: 9100000000000000401}
+  balloonTetherStringEndPoint: {fileID: 9100000000000000403}
+  balloonSnapTieAnchorToStringEnd: 0
+  balloonTetherTieWorldOffset: {x: 0, y: 0, z: 1}
   balloonAttachmentLocalPosition: {x: 0, y: 0, z: -0.008}
-  balloonBuoyancyAcceleration: 11
+  balloonBuoyancyAcceleration: 20
   balloonBuoyancyForceOffsetLocal: {x: 0, y: 0, z: 0.004}
   balloonExtraLinearDrag: 0.35
   balloonUprightTorqueAcceleration: 22
   balloonVisualUpLocal: {x: 0, y: 1, z: 0}
-  balloonTetherSpring: 260
-  balloonTetherDamper: 32
-  balloonTetherMinDistance: 0.55
-  balloonTetherMaxDistance: 1.05
+  balloonTetherSpring: 420
+  balloonTetherDamper: 38
+  balloonTetherMinDistance: 0.28
+  balloonTetherMaxDistance: 1.35
+  balloonReapplyTetherPoseAfterFirstFixedUpdate: 1
 --- !u!114 &9200000000000000209
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -425,8 +411,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RigidbodyImpactSfx
   ShowTopMostFoldoutHeaderGroup: 1
-  impactClip: {fileID: 8300000, guid: e2a9957595cb3284b9a9e9c6046cce6b, type: 3}
-  impactVolumeMax: 0.2
+  impactClip: {fileID: 8300000, guid: 3494ac5c039668b45b42b5dca9fdc5b0, type: 3}
+  impactVolumeMax: 0.1
   impactVolumeQuiet: 0.02
   impactVolumeHardCap: 0.42
   impactSpeedWeight: 0.28
@@ -447,6 +433,27 @@ MonoBehaviour:
   sfxPriority: 88
   spatialMinDistance: 0.65
   spatialMaxDistance: 38
+--- !u!135 &7077647510269272617
+SphereCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9100000000000000050}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Radius: 0.011501772
+  m_Center: {x: 0.000011019807, y: 0.000008710086, z: -0.0019565802}
 --- !u!1 &9100000000000000300
 GameObject:
   m_ObjectHideFlags: 0
@@ -472,8 +479,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 9100000000000000300}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: -0.0025, z: -0.036}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -0.0004410115, y: 0.0005, z: -0.0447}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -506,3 +513,65 @@ Rigidbody:
   m_Interpolate: 0
   m_Constraints: 126
   m_CollisionDetection: 0
+--- !u!1 &9100000000000000400
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 9100000000000000401}
+  m_Layer: 0
+  m_Name: Tether_JointOnBody
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &9100000000000000401
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9100000000000000400}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: -0, z: -0.0103}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 9100000000000000051}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &9100000000000000402
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 9100000000000000403}
+  m_Layer: 0
+  m_Name: Tether_StringEnd
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &9100000000000000403
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9100000000000000402}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: -0, z: -0.00232}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2159037066921057478}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}

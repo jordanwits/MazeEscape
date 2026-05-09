@@ -1,3 +1,4 @@
+using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -22,6 +23,14 @@ public sealed class NetworkedPhysicsPropPush : NetworkBehaviour
     [Header("Optional tethered balloon (server physics)")]
     [SerializeField] bool balloonHeliumMode;
     [SerializeField] Rigidbody balloonTieAnchorRigidbody;
+    [Tooltip("Optional. Child of the balloon body: where the rope meets the balloon mesh (KNOT). Do not place this at the dangling tip — use String End Point for that.")]
+    [SerializeField] Transform balloonTetherBodyAttachPoint;
+    [Tooltip("Optional. Child under the rope/visuals: reference for layout / snap. Tie position is only changed at runtime if Snap Tie Anchor To String End is enabled.")]
+    [SerializeField] Transform balloonTetherStringEndPoint;
+    [Tooltip("If enabled, moves StarBalloon_TieAnchor to match String End each spawn. Disable to keep the tie exactly where you placed it.")]
+    [SerializeField] bool balloonSnapTieAnchorToStringEnd;
+    [Tooltip("Added when snapping: offset from the string-end in world space.")]
+    [SerializeField] Vector3 balloonTetherTieWorldOffset;
     [SerializeField] Vector3 balloonAttachmentLocalPosition = new Vector3(0f, 0f, -0.008f);
     [SerializeField, Min(0f)] float balloonBuoyancyAcceleration = 11f;
     [SerializeField] Vector3 balloonBuoyancyForceOffsetLocal = new Vector3(0f, 0f, 0.004f);
@@ -36,25 +45,148 @@ public sealed class NetworkedPhysicsPropPush : NetworkBehaviour
     Rigidbody _rb;
     SpringJoint _balloonJoint;
 
+    [SerializeField, Tooltip("Runs one physics step after spawn to re-snap the tie after maze placement / transform init.")]
+    bool balloonReapplyTetherPoseAfterFirstFixedUpdate = true;
+
     bool BalloonSimulatePhysicsForce =>
         NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening || IsServer;
 
     void Awake()
     {
         _rb = GetComponent<Rigidbody>();
+        if (balloonHeliumMode)
+        {
+            _rb.constraints |= RigidbodyConstraints.FreezeRotationZ;
+            _rb.angularVelocity = new Vector3(_rb.angularVelocity.x, _rb.angularVelocity.y, 0f);
+        }
+
+        if (balloonHeliumMode && balloonTieAnchorRigidbody == null)
+            TryResolveBalloonTieAnchorUnderPrefabRoot();
+
+        if (balloonHeliumMode)
+            ApplyBalloonTetherReferencePose();
+    }
+
+    void ApplyBalloonTetherReferencePose()
+    {
+        if (balloonTetherBodyAttachPoint != null)
+        {
+            balloonAttachmentLocalPosition =
+                transform.InverseTransformPoint(balloonTetherBodyAttachPoint.position);
+        }
+
+        if (balloonSnapTieAnchorToStringEnd && balloonTetherStringEndPoint != null && balloonTieAnchorRigidbody != null)
+            SnapTieAnchorToStringEndPoint();
+
+        EnsureBalloonTieAnchorRigidbodyLocked();
+        Physics.SyncTransforms();
+    }
+
+    void SnapTieAnchorToStringEndPoint()
+    {
+        Rigidbody anchorRb = balloonTieAnchorRigidbody;
+        Transform tieT = anchorRb.transform;
+        Transform endT = balloonTetherStringEndPoint;
+        Vector3 desiredTipWorld = endT.position + balloonTetherTieWorldOffset;
+
+        if (endT == tieT)
+            return;
+
+        // String end is under the tie: translate the tie so the tip ends up at desired world position.
+        if (endT.IsChildOf(tieT))
+        {
+            Vector3 delta = desiredTipWorld - endT.position;
+            tieT.position += delta;
+        }
+        else
+        {
+            tieT.position = desiredTipWorld;
+        }
+
+        anchorRb.position = tieT.position;
+    }
+
+    /// <summary>
+    /// The tie must stay kinematic with no gravity or it falls to the floor while the balloon simulates.
+    /// </summary>
+    void EnsureBalloonTieAnchorRigidbodyLocked()
+    {
+        if (balloonTieAnchorRigidbody == null)
+            return;
+
+        Rigidbody a = balloonTieAnchorRigidbody;
+        // Velocity cannot be set on kinematic bodies (Unity 6 warns); clear while still dynamic.
+        if (!a.isKinematic)
+        {
+            a.linearVelocity = Vector3.zero;
+            a.angularVelocity = Vector3.zero;
+        }
+
+        a.isKinematic = true;
+        a.useGravity = false;
+    }
+
+    /// <summary>
+    /// Unity sometimes drops cross-object Rigidbody refs on prefab save; resolve sibling tie anchor by convention.
+    /// </summary>
+    void TryResolveBalloonTieAnchorUnderPrefabRoot()
+    {
+        Transform parent = transform.parent;
+        if (parent == null)
+            return;
+
+        for (int i = 0; i < parent.childCount; i++)
+        {
+            Transform child = parent.GetChild(i);
+            if (child == transform)
+                continue;
+
+            if (!child.name.Contains("TieAnchor", System.StringComparison.Ordinal))
+                continue;
+
+            if (child.TryGetComponent(out Rigidbody anchorRb))
+            {
+                balloonTieAnchorRigidbody = anchorRb;
+                return;
+            }
+        }
     }
 
     public override void OnNetworkSpawn()
     {
         base.OnNetworkSpawn();
-        if (balloonHeliumMode && IsServer)
-            EnsureBalloonTetherJoint();
+        if (balloonHeliumMode)
+        {
+            ApplyBalloonTetherReferencePose();
+            if (IsServer)
+                EnsureBalloonTetherJoint();
+            if (balloonReapplyTetherPoseAfterFirstFixedUpdate && balloonSnapTieAnchorToStringEnd
+                && balloonTetherStringEndPoint != null)
+                StartCoroutine(ReapplyBalloonTetherPoseAfterPhysicsStep());
+        }
+    }
+
+    IEnumerator ReapplyBalloonTetherPoseAfterPhysicsStep()
+    {
+        for (int step = 0; step < 4; step++)
+        {
+            yield return new WaitForFixedUpdate();
+            if (this == null || !balloonHeliumMode || !balloonSnapTieAnchorToStringEnd)
+                yield break;
+            ApplyBalloonTetherReferencePose();
+        }
     }
 
     void Start()
     {
         if (!balloonHeliumMode)
             return;
+
+        ApplyBalloonTetherReferencePose();
+        if (balloonReapplyTetherPoseAfterFirstFixedUpdate && balloonSnapTieAnchorToStringEnd
+            && balloonTetherStringEndPoint != null
+            && (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening))
+            StartCoroutine(ReapplyBalloonTetherPoseAfterPhysicsStep());
 
         NetworkManager nm = NetworkManager.Singleton;
         if (nm != null && nm.IsListening)
@@ -116,6 +248,10 @@ public sealed class NetworkedPhysicsPropPush : NetworkBehaviour
 
     void ApplyBalloonUprightTorque()
     {
+        if (_rb != null
+            && (_rb.constraints & RigidbodyConstraints.FreezeRotation) == RigidbodyConstraints.FreezeRotation)
+            return;
+
         if (balloonUprightTorqueAcceleration <= 0f)
             return;
 
