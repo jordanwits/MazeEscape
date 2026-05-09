@@ -2,13 +2,14 @@ using Unity.Netcode;
 using UnityEngine;
 
 /// <summary>
-/// On non-server clients, keeps world physics off for <see cref="GrabbableInventoryItem"/> until local procedural maze
-/// colliders exist. Prevents Rigidbodies from falling through tables/floors while the maze is still building or before
+/// On non-server clients, keeps world physics off until local procedural maze colliders exist. Prevents Rigidbodies
+/// from falling through floors while the maze is still building or before
 /// <see cref="ProceduralMazeCoordinator.IsLocalMazeCollidersReady"/> becomes true.
+/// When <see cref="GrabbableInventoryItem"/> is present, the body stays kinematic while the item is held.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
-[RequireComponent(typeof(GrabbableInventoryItem))]
+[RequireComponent(typeof(Rigidbody))]
 public class GrabbableMazeClientPhysics : NetworkBehaviour
 {
     GrabbableInventoryItem _item;
@@ -17,7 +18,7 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        _item = GetComponent<GrabbableInventoryItem>();
+        TryGetComponent(out _item);
         if (_item != null)
             _rb = _item.ItemRigidbody;
         if (_rb == null)
@@ -26,30 +27,26 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
 
     void FixedUpdate()
     {
-        if (!IsSpawned || IsServer || _item == null || _rb == null)
+        if (!IsSpawned || IsServer || _rb == null)
+            return;
+
+        if (_item != null && _item.IsHeld)
             return;
 
         if (ProceduralMazeCoordinator.IsLocalMazeCollidersReady)
         {
             if (_lockedWorldPhysicsUntilMazeReady)
             {
-                if (!_item.IsHeld)
-                {
-                    _rb.isKinematic = false;
-                    _rb.useGravity = true;
-                    _rb.linearVelocity = Vector3.zero;
-                    _rb.angularVelocity = Vector3.zero;
-                    Physics.SyncTransforms();
-                }
-
+                _rb.isKinematic = false;
+                _rb.useGravity = true;
+                _rb.linearVelocity = Vector3.zero;
+                _rb.angularVelocity = Vector3.zero;
+                Physics.SyncTransforms();
                 _lockedWorldPhysicsUntilMazeReady = false;
             }
 
             return;
         }
-
-        if (_item.IsHeld)
-            return;
 
         if (!_rb.isKinematic || _rb.useGravity)
         {

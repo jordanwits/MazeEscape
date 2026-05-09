@@ -51,6 +51,8 @@ public partial class PlayerController : MonoBehaviour
     [Tooltip("Radius for aim-forgiving interaction checks. 0 uses a thin line raycast.")]
     [SerializeField] float interactSphereRadius = 0.25f;
     [SerializeField] float dropForce = 0.65f;
+    /// <summary>Same scalar used for inventory toss impulse (<see cref="dropForce"/>).</summary>
+    public float DropItemImpulse => dropForce;
     [Tooltip("Optional UI root (e.g. a Panel) shown when you look at something you can pick up.")]
     [SerializeField] GameObject pickupPromptRoot;
     [Tooltip("Optional UI Text for the pickup prompt. If empty, tries to find a Text under pickupPromptRoot.")]
@@ -76,6 +78,12 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] float gravity = -20f;
     [SerializeField] float jumpHeight = 1.0f;
     [SerializeField] float groundedStickDown = 2f;
+
+    [Header("Physics props")]
+    [Tooltip("How much of this controller's horizontal speed is imparted to rigidbodies that add PlayerPhysicsPushReceiver.")]
+    [SerializeField, Min(0f)] float rigidbodyHorizontalPushStrength = 0.85f;
+    [Tooltip("Caps the VelocityChange impulse (m/s) so sprinting into props does not spike unrealistically.")]
+    [SerializeField, Min(0.1f)] float rigidbodyHorizontalPushMaxDelta = 3.5f;
 
     [Header("Footsteps")]
     [SerializeField] AudioSource footstepAudioSource;
@@ -205,6 +213,8 @@ public partial class PlayerController : MonoBehaviour
     bool _hasLocalControl = true;
     bool _allowLookWhileMovementLocked;
     float _smoothedStrafeDirection;
+    int _lastRigidbodyPushFrame = -1;
+    int _lastRigidbodyPushBodyId = int.MinValue;
 
     float _nextMeleeTime;
     readonly Collider[] _meleeHits = new Collider[16];
@@ -545,7 +555,7 @@ public partial class PlayerController : MonoBehaviour
         if (flashlightPressed)
             HandleFlashlightToggleInput();
 
-        if (attackPressed && _currentStamina > 0f)
+        if (attackPressed && !TryShootHeldStarBall() && _currentStamina > 0f)
             TryMelee();
 
         bool grounded = characterController.isGrounded;
@@ -627,6 +637,89 @@ public partial class PlayerController : MonoBehaviour
         }
 
         UpdatePickupPrompt();
+    }
+
+    void OnControllerColliderHit(ControllerColliderHit hit)
+    {
+        if (!isActiveAndEnabled || characterController == null || !characterController.enabled)
+            return;
+
+        if (ProceduralMazeCoordinator.ShouldBlockLocalPlayerUntilMazeReady())
+            return;
+
+        PlayerPhysicsPushReceiver receiver =
+            hit.collider.GetComponent<PlayerPhysicsPushReceiver>()
+            ?? hit.collider.GetComponentInParent<PlayerPhysicsPushReceiver>();
+        if (receiver == null)
+            return;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        bool networkedListening = nm != null && nm.IsListening;
+        NetworkedPhysicsPropPush netPush =
+            receiver.GetComponent<NetworkedPhysicsPropPush>() ?? hit.collider.GetComponentInParent<NetworkedPhysicsPropPush>();
+
+        if (networkedListening && netPush != null && netPush.IsSpawned)
+        {
+            int bodyOrNetId = netPush.GetInstanceID();
+
+            if (_lastRigidbodyPushFrame == Time.frameCount && _lastRigidbodyPushBodyId == bodyOrNetId)
+                return;
+            _lastRigidbodyPushFrame = Time.frameCount;
+            _lastRigidbodyPushBodyId = bodyOrNetId;
+
+            Vector3 planar = characterController.velocity;
+            planar.y = 0f;
+            float speed = planar.magnitude;
+            if (speed < 0.04f)
+                return;
+
+            Vector3 md = hit.moveDirection;
+            Vector3 pushDir = new Vector3(md.x, 0f, md.z);
+            if (pushDir.sqrMagnitude < 1e-5f)
+                return;
+
+            pushDir.Normalize();
+
+            if (md.y < -0.35f && hit.normal.y > 0.2f)
+                return;
+
+            netPush.RequestCharacterBumpServerRpc(pushDir, speed);
+            return;
+        }
+
+        Rigidbody body = hit.collider.attachedRigidbody;
+        if (body == null || body.isKinematic || !body.detectCollisions)
+            return;
+
+        int bodyId = body.GetInstanceID();
+        if (_lastRigidbodyPushFrame == Time.frameCount && _lastRigidbodyPushBodyId == bodyId)
+            return;
+        _lastRigidbodyPushFrame = Time.frameCount;
+        _lastRigidbodyPushBodyId = bodyId;
+
+        Vector3 planarVel = characterController.velocity;
+        planarVel.y = 0f;
+        float spd = planarVel.magnitude;
+        if (spd < 0.04f)
+            return;
+
+        Vector3 moveDir = hit.moveDirection;
+        Vector3 dir = new Vector3(moveDir.x, 0f, moveDir.z);
+        if (dir.sqrMagnitude < 1e-5f)
+            return;
+        dir.Normalize();
+
+        // Avoid shoving when mostly stepping down onto the obstacle.
+        if (moveDir.y < -0.35f && hit.normal.y > 0.2f)
+            return;
+
+        float transfer = Mathf.Min(
+            spd * rigidbodyHorizontalPushStrength * receiver.PushGainMultiplier,
+            rigidbodyHorizontalPushMaxDelta);
+
+        body.AddForce(dir * transfer, ForceMode.VelocityChange);
+        if (body.TryGetComponent<RigidbodyImpactSfx>(out var impactBumpSfx))
+            impactBumpSfx.NotifyCharacterControllerBump(spd);
     }
 
     void UpdateStamina(bool sprintHeld, bool isSprinting)
@@ -1138,7 +1231,7 @@ public partial class PlayerController : MonoBehaviour
             turnSpeedDegrees * Time.deltaTime);
     }
 
-    Transform CameraTransformForFacing => cameraTransform != null ? cameraTransform : Camera.main != null ? Camera.main.transform : null;
+    public Transform CameraTransformForFacing => cameraTransform != null ? cameraTransform : Camera.main != null ? Camera.main.transform : null;
     bool UseNetworkedFlashlightFlow => NetworkManager.Singleton != null
         && NetworkManager.Singleton.IsListening
         && _networkPlayerAvatar != null

@@ -15,6 +15,8 @@ public class GrabbableInventoryItem : MonoBehaviour
     public const byte TypeIdGlowstick = 2;
     public const byte TypeIdKey = 3;
     public const byte TypeIdBandage = 4;
+    /// <summary>Carnival StarBall; carried via <see cref="NetworkStarBallHold"/>, not hotbar slots.</summary>
+    public const byte TypeIdStarBall = 5;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -76,6 +78,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdKey;
         if (GetComponent<BandageItem>() != null)
             return TypeIdBandage;
+        if (GetComponent<StarBallItem>() != null)
+            return TypeIdStarBall;
         return TypeIdNone;
     }
 
@@ -87,6 +91,7 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdGlowstick => s_hudPhGlow ??= CreatePlaceholderSprite(0.35f, 1f, 0.35f),
             TypeIdKey => KeyItem.SharedHudSlotIcon ?? (s_hudPhKey ??= CreatePlaceholderSprite(0.92f, 0.75f, 0.2f)),
             TypeIdBandage => BandageItem.SharedHudSlotIcon ?? (s_hudPhBandage ??= CreatePlaceholderSprite(0.95f, 0.35f, 0.35f)),
+            TypeIdStarBall => CreatePlaceholderSprite(0.95f, 0.55f, 0.2f),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
     }

@@ -56,6 +56,7 @@ public partial class PlayerController
             if (thisPlayer == null)
                 return;
             ulong holderId = thisPlayer.NetworkObjectId;
+            bool stashAllForBall = IsStarBallForcingInventoryStash(holderId);
             for (int i = 0; i < 3; i++)
             {
                 ulong id = _networkPlayerInventory.GetSlotItemId(i);
@@ -77,7 +78,7 @@ public partial class PlayerController
                     g.AssignNetworkItemId(id);
 
                 int selected = _networkPlayerInventory.SelectedSlotIndex;
-                bool isStash = i != selected;
+                bool isStash = stashAllForBall || (i != selected);
                 g.StashOverrideParent = isStash ? inventoryStashRoot : null;
                 g.SetStashViewStateForInventory(isStash);
                 g.ApplyNetworkHeldState(holderId);
@@ -101,6 +102,17 @@ public partial class PlayerController
         RefreshLocalInventoryView();
     }
 
+    /// <summary>
+    /// While carrying the StarBall, hotbar items stay in the stash (pocket); the ball uses both hands.
+    /// </summary>
+    bool IsStarBallForcingInventoryStash(ulong playerNetworkObjectId)
+    {
+        if (playerNetworkObjectId == 0UL)
+            return false;
+
+        return NetworkStarBallHold.FindHeldByPlayerObjectId(playerNetworkObjectId) != null;
+    }
+
     void DetachItemsNoLongerInNetworkInventory(ulong holderId)
     {
         if (holderId == 0UL || _networkPlayerInventory == null)
@@ -109,6 +121,11 @@ public partial class PlayerController
         foreach (GrabbableInventoryItem g in GrabbableInventoryItem.GetRegisteredItems())
         {
             if (g == null || g.HolderNetworkObjectId != holderId)
+                continue;
+            // Star ball is held via NetworkStarBallHold + replicated holder id, not hotbar slots.
+            // Without this, any inventory refresh (e.g. scroll changing SelectedSlot) "orphans" it on
+            // clients and desyncs from server holder state — pickup then fails on the server.
+            if (g is StarBallItem)
                 continue;
             if (IsItemStillInNetworkInventory(g.ItemId))
                 continue;
@@ -145,13 +162,14 @@ public partial class PlayerController
             return;
         EnsureInventoryStashRoot();
         Transform follow = flashlightFollowsCameraPitch ? CameraTransformForFacing : flashlightHoldPoint;
+        bool stashAllForBall = NetworkStarBallHold.FindOfflineHeldBy(this) != null;
         for (int i = 0; i < 3; i++)
         {
             GrabbableInventoryItem g = _localInventorySlots[i];
             if (g == null)
                 continue;
 
-            bool inHand = i == _localSelectedSlot;
+            bool inHand = !stashAllForBall && (i == _localSelectedSlot);
             g.StashOverrideParent = inHand ? null : inventoryStashRoot;
             g.SetStashViewStateForInventory(!inHand);
             if (inHand)
@@ -205,6 +223,9 @@ public partial class PlayerController
             }
             return false;
         }
+
+        if (item is StarBallItem)
+            return true;
 
         return !IsLocalInventoryCompletelyFull;
     }
@@ -541,6 +562,12 @@ public partial class PlayerController
             return;
         }
 
+        if (g is StarBallItem && g.TryGetComponent(out NetworkStarBallHold starHold))
+        {
+            starHold.RequestPickupFromInteract(this);
+            return;
+        }
+
         if (!_networkPlayerInventory.CanPickup(g))
             return;
 
@@ -553,11 +580,20 @@ public partial class PlayerController
             return;
         if (!TryFindInteractableGrabbable(out GrabbableInventoryItem g) || g == null)
             return;
+        if (g is StarBallItem && g.TryGetComponent(out NetworkStarBallHold starHold))
+        {
+            starHold.TryPickupOffline(this);
+            return;
+        }
+
         TryPickupItemLocal(g);
     }
 
     void HandleDropInput()
     {
+        if (TryDropHeldStarBall())
+            return;
+
         if (IsUsingNetworkedInventory)
         {
             if (_networkPlayerInventory == null
@@ -574,6 +610,64 @@ public partial class PlayerController
         }
 
         TryDropSelectedLocal();
+    }
+
+    bool TryShootHeldStarBall()
+    {
+        Vector3 f = CameraTransformForFacing != null ? CameraTransformForFacing.forward : transform.forward;
+
+        if (NetworkManager.Singleton != null
+            && NetworkManager.Singleton.IsListening
+            && NetworkManager.Singleton.LocalClient != null
+            && NetworkManager.Singleton.LocalClient.PlayerObject != null)
+        {
+            ulong id = NetworkManager.Singleton.LocalClient.PlayerObject.NetworkObjectId;
+            NetworkStarBallHold ball = NetworkStarBallHold.FindHeldByPlayerObjectId(id);
+            if (ball != null)
+            {
+                ball.RequestShootFromOwningClient(f, this);
+                return true;
+            }
+        }
+        else
+        {
+            NetworkStarBallHold offline = NetworkStarBallHold.FindOfflineHeldBy(this);
+            if (offline != null)
+            {
+                offline.RequestShootFromOwningClient(f, this);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool TryDropHeldStarBall()
+    {
+        if (NetworkManager.Singleton != null
+            && NetworkManager.Singleton.IsListening
+            && NetworkManager.Singleton.LocalClient != null
+            && NetworkManager.Singleton.LocalClient.PlayerObject != null)
+        {
+            ulong id = NetworkManager.Singleton.LocalClient.PlayerObject.NetworkObjectId;
+            NetworkStarBallHold ball = NetworkStarBallHold.FindHeldByPlayerObjectId(id);
+            if (ball != null)
+            {
+                ball.RequestDropFromOwningClient(this);
+                return true;
+            }
+        }
+        else
+        {
+            NetworkStarBallHold offline = NetworkStarBallHold.FindOfflineHeldBy(this);
+            if (offline != null)
+            {
+                offline.RequestDropFromOwningClient(this);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     void HandleFlashlightToggleInput()

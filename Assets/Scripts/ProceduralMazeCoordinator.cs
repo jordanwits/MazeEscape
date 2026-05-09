@@ -2110,6 +2110,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             GameObject forcedPiece = Instantiate(forcedMatch.Prefab, parent.position, forcedMatch.Rotation, parent);
             TrySpawnElevatorFinishSyncIfPresent(forcedPiece);
             TrySpawnUseKeyHingeNetworkObjectsIfPresent(forcedPiece);
+            TrySpawnMazeNetworkRigidbodyPropsIfPresent(forcedPiece);
 
             if (!forcedMatch.UseClosedFaceCaps || _config.EndCapPrefab == null)
                 return;
@@ -2145,6 +2146,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 GameObject jailPiece = Instantiate(jailMatch.Prefab, parent.position, jailMatch.Rotation, parent);
                 TrySpawnElevatorFinishSyncIfPresent(jailPiece);
                 TrySpawnUseKeyHingeNetworkObjectsIfPresent(jailPiece);
+                TrySpawnMazeNetworkRigidbodyPropsIfPresent(jailPiece);
 
                 if (!jailMatch.UseClosedFaceCaps || _config.EndCapPrefab == null)
                     return;
@@ -2181,6 +2183,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         GameObject matchPiece = Instantiate(match.Prefab, parent.position, match.Rotation, parent);
         TrySpawnElevatorFinishSyncIfPresent(matchPiece);
         TrySpawnUseKeyHingeNetworkObjectsIfPresent(matchPiece);
+        TrySpawnMazeNetworkRigidbodyPropsIfPresent(matchPiece);
 
         if (!match.UseClosedFaceCaps || _config.EndCapPrefab == null)
             return;
@@ -2233,6 +2236,30 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             SceneManager.MoveGameObjectToScene(finish.gameObject, pieceRoot.scene);
 
         networkObject.Spawn();
+    }
+
+    void TrySpawnMazeNetworkRigidbodyPropsIfPresent(GameObject pieceRoot)
+    {
+        if (pieceRoot == null || !IsServerListening() || _networkManager == null)
+            return;
+
+        MazePieceNetworkRigidbodySpawn[] markers =
+            pieceRoot.GetComponentsInChildren<MazePieceNetworkRigidbodySpawn>(true);
+        for (int i = 0; i < markers.Length; i++)
+        {
+            MazePieceNetworkRigidbodySpawn marker = markers[i];
+            if (marker == null)
+                continue;
+
+            NetworkObject netObj = marker.GetComponent<NetworkObject>();
+            if (netObj == null || netObj.IsSpawned)
+                continue;
+
+            if (netObj.gameObject.scene != pieceRoot.scene)
+                SceneManager.MoveGameObjectToScene(netObj.gameObject, pieceRoot.scene);
+
+            netObj.Spawn();
+        }
     }
 
     /// <summary>
