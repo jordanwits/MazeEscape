@@ -39,6 +39,7 @@ MonoBehaviour:
   - {fileID: 5792838455480424029, guid: 062e22c488a40d04f86e730b21dcbc00, type: 3}
   - {fileID: 9215304624020539271, guid: 796da7293324fc245b633b2878a35a08, type: 3}
   - {fileID: 5087267770675926440, guid: 4886e0e8e208ac34ab290e714d934014, type: 3}
+  straightPrefabWeights: 010000000100000001000000
   cornerPrefabs:
   - {fileID: 439739833298870958, guid: f2a364fe90b2cdd49b3e290938b7c4e8, type: 3}
   - {fileID: 4908712555214993215, guid: e1524edf7c3bf3d49afa11cece4709fc, type: 3}
@@ -99,4 +100,9 @@ MonoBehaviour:
   mazeTrapExcludeExitCell: 1
   mazeTrapMinSeparation: 1
   mazeChestPrefab: {fileID: 7786454923030501191, guid: e621573098a2cb04a8ec9019443befb6, type: 3}
+  mazePosterSpawnChance: 0.25
+  mazePosterPrefabs:
+  - {fileID: 4330048613799317006, guid: e625a0e06d1871544bbd2152b3d85cca, type: 3}
+  - {fileID: 2713176997912606931, guid: ae8080c088ad27b41aaebb542fa14cd6, type: 3}
+  - {fileID: 512611152255309372, guid: 97133322e72916e488ba2d14623a3c21, type: 3}
   mazeStartFlashlightPrefab: {fileID: 7328506109978203443, guid: 4f1b1ddb8a2d50848aa35c5643acaa6b, type: 3}

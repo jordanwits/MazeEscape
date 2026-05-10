@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -23,16 +24,18 @@ public static class MazePieceResolver
 {
     struct Candidate
     {
-        public Candidate(GameObject prefab, MazePieceDefinition definition, int quarterTurns)
+        public Candidate(GameObject prefab, MazePieceDefinition definition, int quarterTurns, int selectionWeight)
         {
             Prefab = prefab;
             Definition = definition;
             QuarterTurns = quarterTurns;
+            SelectionWeight = selectionWeight;
         }
 
         public GameObject Prefab { get; }
         public MazePieceDefinition Definition { get; }
         public int QuarterTurns { get; }
+        public int SelectionWeight { get; }
     }
 
     public static bool TryResolve(
@@ -62,7 +65,7 @@ public static class MazePieceResolver
 
         MazePieceCategory category = DetermineCategory(requiredOpenFaces);
         candidates.Clear();
-        AddCandidates(config.EnumerateTopologyPrefabs(category), requiredOpenFaces, isStart, isExit, candidates, category);
+        AddTopologyCandidates(config, category, requiredOpenFaces, isStart, isExit, candidates);
 
         if (candidates.Count > 0)
         {
@@ -188,7 +191,96 @@ public static class MazePieceResolver
             if (!definition.TryMatch(requiredOpenFaces, out int quarterTurns))
                 continue;
 
-            candidates.Add(new Candidate(prefab, definition, quarterTurns));
+            candidates.Add(new Candidate(prefab, definition, quarterTurns, definition.Weight));
+        }
+
+        return candidates.Count > initialCount;
+    }
+
+    static GameObject[] TopologyVariantPool(ProceduralMazeConfig config, MazePieceCategory category)
+    {
+        return category switch
+        {
+            MazePieceCategory.DeadEnd => config.DeadEndPrefabs,
+            MazePieceCategory.Straight => config.StraightPrefabs,
+            MazePieceCategory.Corner => config.CornerPrefabs,
+            MazePieceCategory.Tee => config.TeePrefabs,
+            MazePieceCategory.Cross => config.CrossPrefabs,
+            MazePieceCategory.Special => config.SpecialPrefabs,
+            _ => Array.Empty<GameObject>()
+        };
+    }
+
+    static GameObject TopologyLegacyPrefab(ProceduralMazeConfig config, MazePieceCategory category)
+    {
+        return category switch
+        {
+            MazePieceCategory.DeadEnd => config.DeadEndPrefab,
+            MazePieceCategory.Straight => config.StraightPrefab,
+            MazePieceCategory.Corner => config.CornerPrefab,
+            MazePieceCategory.Tee => config.TeePrefab,
+            MazePieceCategory.Cross => config.CrossPrefab,
+            MazePieceCategory.Special => config.EffectiveSpecialRoomPrefab,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Same candidate set as <see cref="ProceduralMazeConfig.EnumerateTopologyPrefabs"/>, but applies per-config straight weights via <see cref="ProceduralMazeConfig.ResolveStraightSelectionWeight"/>.
+    /// </summary>
+    static bool AddTopologyCandidates(
+        ProceduralMazeConfig config,
+        MazePieceCategory category,
+        MazeFaceMask requiredOpenFaces,
+        bool isStart,
+        bool isExit,
+        List<Candidate> candidates)
+    {
+        int initialCount = candidates.Count;
+        GameObject[] pool = TopologyVariantPool(config, category);
+        bool anyNonNullSlot = false;
+        for (int i = 0; i < pool.Length; i++)
+        {
+            if (pool[i] != null)
+                anyNonNullSlot = true;
+        }
+
+        if (anyNonNullSlot)
+        {
+            for (int i = 0; i < pool.Length; i++)
+            {
+                GameObject prefab = pool[i];
+                if (prefab == null)
+                    continue;
+
+                if (!MazePieceDefinition.TryGetDefinitionForResolution(prefab, out MazePieceDefinition definition)
+                    || !definition.AllowsContext(isStart, isExit))
+                    continue;
+
+                if (definition.Category != category)
+                    continue;
+
+                if (!definition.TryMatch(requiredOpenFaces, out int quarterTurns))
+                    continue;
+
+                int selectionWeight = category == MazePieceCategory.Straight
+                    ? config.ResolveStraightSelectionWeight(i, definition)
+                    : definition.Weight;
+
+                candidates.Add(new Candidate(prefab, definition, quarterTurns, selectionWeight));
+            }
+        }
+        else
+        {
+            GameObject legacy = TopologyLegacyPrefab(config, category);
+            if (legacy != null
+                && MazePieceDefinition.TryGetDefinitionForResolution(legacy, out MazePieceDefinition definition)
+                && definition.AllowsContext(isStart, isExit)
+                && definition.Category == category
+                && definition.TryMatch(requiredOpenFaces, out int quarterTurns))
+            {
+                candidates.Add(new Candidate(legacy, definition, quarterTurns, definition.Weight));
+            }
         }
 
         return candidates.Count > initialCount;
@@ -201,7 +293,7 @@ public static class MazePieceResolver
 
         int totalWeight = 0;
         for (int i = 0; i < candidates.Count; i++)
-            totalWeight += candidates[i].Definition.Weight;
+            totalWeight += candidates[i].SelectionWeight;
 
         uint hash = 2166136261u;
         hash = Mix(hash, unchecked((uint)seed));
@@ -213,7 +305,7 @@ public static class MazePieceResolver
         int roll = (int)(hash % (uint)Mathf.Max(1, totalWeight));
         for (int i = 0; i < candidates.Count; i++)
         {
-            roll -= candidates[i].Definition.Weight;
+            roll -= candidates[i].SelectionWeight;
             if (roll < 0)
                 return candidates[i];
         }

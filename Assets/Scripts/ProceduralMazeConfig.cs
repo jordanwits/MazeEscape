@@ -47,6 +47,10 @@ public class ProceduralMazeConfig : ScriptableObject
     [Header("Piece Variants")]
     [SerializeField] GameObject[] deadEndPrefabs = EmptyPrefabs;
     [SerializeField] GameObject[] straightPrefabs = EmptyPrefabs;
+    [Tooltip(
+        "Optional selection weights parallel to Straight Prefabs array indices. "
+        + "Use 0 or omit extra entries to use each prefab's MazePieceDefinition weight for that slot.")]
+    [SerializeField] int[] straightPrefabWeights;
     [SerializeField] GameObject[] cornerPrefabs = EmptyPrefabs;
     [SerializeField] GameObject[] teePrefabs = EmptyPrefabs;
     [SerializeField] GameObject[] crossPrefabs = EmptyPrefabs;
@@ -146,6 +150,12 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Prefab spawned at each child transform named ChestAnchor on generated maze pieces. Use a NetworkObject prefab for multiplayer.")]
     [SerializeField] GameObject mazeChestPrefab;
 
+    [Header("Maze posters (optional, cosmetic)")]
+    [Tooltip("Child transforms named PosterSpawn on maze pieces: each site rolls this chance (maze seed) then picks a random non-null prefab from the list. Use non-networked prefabs so host and clients match.")]
+    [Range(0f, 1f)]
+    [SerializeField] float mazePosterSpawnChance = 0.25f;
+    [SerializeField] GameObject[] mazePosterPrefabs = EmptyPrefabs;
+
     [Header("Maze start flashlights (optional)")]
     [Tooltip("Placed on children named LightSpawn, LightSpawn1, LightSpawn2, … on the start piece. At maze build, spawns one per connected player, in order, up to the number of those transforms. Use a NetworkObject prefab in multiplayer.")]
     [SerializeField] GameObject mazeStartFlashlightPrefab;
@@ -169,6 +179,20 @@ public class ProceduralMazeConfig : ScriptableObject
     public string GeneratedRootName => string.IsNullOrWhiteSpace(generatedRootName) ? "GeneratedMaze" : generatedRootName.Trim();
     public GameObject[] DeadEndPrefabs => deadEndPrefabs ?? EmptyPrefabs;
     public GameObject[] StraightPrefabs => straightPrefabs ?? EmptyPrefabs;
+    /// <summary>
+    /// Effective weight when choosing among straight variants for this config. Uses <see cref="straightPrefabWeights"/> when set for <paramref name="poolIndex"/>; otherwise the prefab definition.
+    /// </summary>
+    public int ResolveStraightSelectionWeight(int poolIndex, MazePieceDefinition definition)
+    {
+        int defW = definition.Weight;
+        int[] weights = straightPrefabWeights;
+        if (weights == null || poolIndex < 0 || poolIndex >= weights.Length)
+            return defW;
+
+        int w = weights[poolIndex];
+        return w <= 0 ? defW : Mathf.Max(1, w);
+    }
+
     public GameObject[] CornerPrefabs => cornerPrefabs ?? EmptyPrefabs;
     public GameObject[] TeePrefabs => teePrefabs ?? EmptyPrefabs;
     public GameObject[] CrossPrefabs => crossPrefabs ?? EmptyPrefabs;
@@ -230,6 +254,9 @@ public class ProceduralMazeConfig : ScriptableObject
     public bool MazeTrapExcludeExitCell => mazeTrapExcludeExitCell;
     public float MazeTrapMinSeparation => mazeTrapMinSeparation;
     public GameObject MazeChestPrefab => mazeChestPrefab;
+    /// <summary>Per <c>PosterSpawn</c> anchor, probability [0,1] of spawning a poster for this maze build.</summary>
+    public float MazePosterSpawnChance => Mathf.Clamp01(mazePosterSpawnChance);
+    public GameObject[] MazePosterPrefabs => mazePosterPrefabs ?? EmptyPrefabs;
     public GameObject MazeStartFlashlightPrefab => mazeStartFlashlightPrefab;
     public GameObject JailDeadEndPrefab => jailDeadEndPrefab;
 

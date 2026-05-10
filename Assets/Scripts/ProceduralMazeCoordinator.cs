@@ -110,6 +110,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     const string TrapMountPointName = "MountPoint";
     const string ChestAnchorName = "ChestAnchor";
     const string ChestMountPointName = "ChestMount";
+    const string PosterSpawnName = "PosterSpawn";
     const string LightSpawnNamePrefix = "LightSpawn";
 
     static readonly DirectionStep[] Steps =
@@ -580,6 +581,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         (HashSet<Vector2Int> mazeTrapCells, List<Transform> mazeTrapRoots) =
             TrySpawnMazeTraps(root.transform, grid, builtCellRoots, start, exit, seed, cellSize);
         TrySpawnMazeChests(root.transform, builtCellRoots, seed);
+        TrySpawnMazePosters(root.transform, builtCellRoots, seed);
         TrySpawnMazeStartFlashlights(root.transform);
         CreateSpawnPoints(root.transform, start, cellSize, multiStartFootprint);
         if (MultiplayerSpawnRegistry.Instance != null)
@@ -3234,6 +3236,109 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         if (int.TryParse(suffix, out int n))
             return n;
         return 5000 + (Mathf.Abs(transformName.GetHashCode()) & 0x3fff);
+    }
+
+    void TrySpawnMazePosters(Transform mazeRoot, IReadOnlyDictionary<Vector2Int, Transform> cellRoots, int mazeSeed)
+    {
+        GameObject[] posterPrefabs = _config.MazePosterPrefabs;
+        if (posterPrefabs == null || posterPrefabs.Length == 0)
+            return;
+
+        int nonNullPosters = 0;
+        for (int i = 0; i < posterPrefabs.Length; i++)
+        {
+            if (posterPrefabs[i] != null)
+                nonNullPosters++;
+        }
+
+        if (nonNullPosters == 0)
+            return;
+
+        float chance = _config.MazePosterSpawnChance;
+        if (chance <= 0f)
+            return;
+
+        Transform postersRoot = CreateChild(mazeRoot, "GeneratedPosters");
+        List<Transform> cellPosterSpawns = new(8);
+
+        foreach (KeyValuePair<Vector2Int, Transform> pair in cellRoots)
+        {
+            Vector2Int cell = pair.Key;
+            Transform cellRoot = pair.Value;
+            if (cellRoot == null)
+                continue;
+
+            cellPosterSpawns.Clear();
+            CollectPosterSpawns(cellRoot, cellPosterSpawns);
+
+            for (int a = 0; a < cellPosterSpawns.Count; a++)
+            {
+                Transform anchor = cellPosterSpawns[a];
+                if (anchor == null)
+                    continue;
+
+                int gateSeed = MixSeed(
+                    mazeSeed,
+                    MixSeed(cell.x, MixSeed(cell.y, MixSeed(a, unchecked((int)0x9057E511)))));
+                if (!RollUnitInterval(gateSeed, chance))
+                    continue;
+
+                int pickSeed = MixSeed(gateSeed, unchecked((int)0xA11CE42));
+                GameObject prefab = PickPosterPrefabFromPool(posterPrefabs, nonNullPosters, pickSeed);
+                if (prefab == null)
+                    continue;
+
+                GameObject instance = Instantiate(prefab, Vector3.zero, Quaternion.identity, postersRoot);
+                instance.transform.SetPositionAndRotation(anchor.position, anchor.rotation);
+            }
+        }
+    }
+
+    static bool RollUnitInterval(int seed, float chance01)
+    {
+        unchecked
+        {
+            uint u = (uint)seed;
+            u ^= u >> 16;
+            u *= 0x7feb352du;
+            u &= 0xffffffu;
+            float u01 = u / 16777216f;
+            return u01 < Mathf.Clamp01(chance01);
+        }
+    }
+
+    static GameObject PickPosterPrefabFromPool(GameObject[] prefabs, int nonNullCount, int pickSeed)
+    {
+        if (prefabs == null || prefabs.Length == 0 || nonNullCount <= 0)
+            return null;
+
+        int ordinal = (int)((uint)MixSeed(pickSeed, unchecked((int)0x50E7E7E7)) % (uint)nonNullCount);
+        for (int i = 0; i < prefabs.Length; i++)
+        {
+            if (prefabs[i] == null)
+                continue;
+
+            if (ordinal == 0)
+                return prefabs[i];
+
+            ordinal--;
+        }
+
+        return null;
+    }
+
+    static void CollectPosterSpawns(Transform root, List<Transform> into)
+    {
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            Transform candidate = transforms[i];
+            if (candidate == null)
+                continue;
+
+            if (string.Equals(candidate.name, PosterSpawnName, StringComparison.Ordinal))
+                into.Add(candidate);
+        }
     }
 
     void TrySpawnMazeChests(Transform mazeRoot, IReadOnlyDictionary<Vector2Int, Transform> cellRoots, int mazeSeed)
