@@ -15,8 +15,11 @@ public class GrabbableInventoryItem : MonoBehaviour
     public const byte TypeIdGlowstick = 2;
     public const byte TypeIdKey = 3;
     public const byte TypeIdBandage = 4;
-    /// <summary>Carnival StarBall; carried via <see cref="NetworkStarBallHold"/>, not hotbar slots.</summary>
+    /// <summary>Carnival StarBall; carried via <see cref="NetworkHeavyThrowableHold"/>, not hotbar slots.</summary>
     public const byte TypeIdStarBall = 5;
+    public const byte TypeIdRingBlue = 6;
+    public const byte TypeIdRingGreen = 7;
+    public const byte TypeIdRingYellow = 8;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -78,6 +81,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdKey;
         if (GetComponent<BandageItem>() != null)
             return TypeIdBandage;
+        if (GetComponent<RingTossItem>() != null)
+            return _itemTypeId != TypeIdNone ? _itemTypeId : TypeIdRingBlue;
         if (GetComponent<StarBallItem>() != null)
             return TypeIdStarBall;
         return TypeIdNone;
@@ -92,6 +97,9 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdKey => KeyItem.SharedHudSlotIcon ?? (s_hudPhKey ??= CreatePlaceholderSprite(0.92f, 0.75f, 0.2f)),
             TypeIdBandage => BandageItem.SharedHudSlotIcon ?? (s_hudPhBandage ??= CreatePlaceholderSprite(0.95f, 0.35f, 0.35f)),
             TypeIdStarBall => CreatePlaceholderSprite(0.95f, 0.55f, 0.2f),
+            TypeIdRingBlue => CreatePlaceholderSprite(0.25f, 0.45f, 0.95f),
+            TypeIdRingGreen => CreatePlaceholderSprite(0.25f, 0.85f, 0.35f),
+            TypeIdRingYellow => CreatePlaceholderSprite(0.95f, 0.85f, 0.25f),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
     }
@@ -175,6 +183,37 @@ public class GrabbableInventoryItem : MonoBehaviour
 
     public ulong HolderNetworkObjectId => _holderNetworkObjectId;
     public Transform StashOverrideParent { get; set; }
+
+    /// <summary>
+    /// For interaction LOS and the in-view grabbable fallback: closest point among all child colliders.
+    /// Compound colliders (rings) must not use only <see cref="Component.GetComponentInChildren{T}"/>.
+    /// </summary>
+    public Vector3 GetInteractAimPointClosestTo(Vector3 worldObserver)
+    {
+        Collider[] cols = GetComponentsInChildren<Collider>(true);
+        if (cols == null || cols.Length == 0)
+            return transform.position;
+
+        Vector3 best = transform.position;
+        float bestSq = float.PositiveInfinity;
+
+        for (int i = 0; i < cols.Length; i++)
+        {
+            Collider c = cols[i];
+            if (c == null || !c.enabled || c.isTrigger)
+                continue;
+
+            Vector3 pt = c.ClosestPoint(worldObserver);
+            float sq = (pt - worldObserver).sqrMagnitude;
+            if (sq < bestSq)
+            {
+                bestSq = sq;
+                best = pt;
+            }
+        }
+
+        return float.IsInfinity(bestSq) ? transform.position : best;
+    }
 
     protected Transform _heldAnchor;
     protected Transform _heldRotationSource;

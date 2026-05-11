@@ -56,7 +56,7 @@ public partial class PlayerController
             if (thisPlayer == null)
                 return;
             ulong holderId = thisPlayer.NetworkObjectId;
-            bool stashAllForBall = IsStarBallForcingInventoryStash(holderId);
+            bool stashAllForBall = IsHeavyThrowableForcingInventoryStash(holderId);
             for (int i = 0; i < 3; i++)
             {
                 ulong id = _networkPlayerInventory.GetSlotItemId(i);
@@ -103,14 +103,14 @@ public partial class PlayerController
     }
 
     /// <summary>
-    /// While carrying the StarBall, hotbar items stay in the stash (pocket); the ball uses both hands.
+    /// While carrying a heavy throwable (StarBall, ring toss), hotbar items stay in the stash (pocket).
     /// </summary>
-    bool IsStarBallForcingInventoryStash(ulong playerNetworkObjectId)
+    bool IsHeavyThrowableForcingInventoryStash(ulong playerNetworkObjectId)
     {
         if (playerNetworkObjectId == 0UL)
             return false;
 
-        return NetworkStarBallHold.FindHeldByPlayerObjectId(playerNetworkObjectId) != null;
+        return NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(playerNetworkObjectId) != null;
     }
 
     void DetachItemsNoLongerInNetworkInventory(ulong holderId)
@@ -122,10 +122,10 @@ public partial class PlayerController
         {
             if (g == null || g.HolderNetworkObjectId != holderId)
                 continue;
-            // Star ball is held via NetworkStarBallHold + replicated holder id, not hotbar slots.
+            // Heavy throwables are held via NetworkHeavyThrowableHold + replicated holder id, not hotbar slots.
             // Without this, any inventory refresh (e.g. scroll changing SelectedSlot) "orphans" it on
             // clients and desyncs from server holder state — pickup then fails on the server.
-            if (g is StarBallItem)
+            if (g is HeavyThrowableHoldItem)
                 continue;
             if (IsItemStillInNetworkInventory(g.ItemId))
                 continue;
@@ -162,7 +162,7 @@ public partial class PlayerController
             return;
         EnsureInventoryStashRoot();
         Transform follow = flashlightFollowsCameraPitch ? CameraTransformForFacing : flashlightHoldPoint;
-        bool stashAllForBall = NetworkStarBallHold.FindOfflineHeldBy(this) != null;
+        bool stashAllForBall = NetworkHeavyThrowableHold.FindOfflineHeldBy(this) != null;
         for (int i = 0; i < 3; i++)
         {
             GrabbableInventoryItem g = _localInventorySlots[i];
@@ -224,7 +224,7 @@ public partial class PlayerController
             return false;
         }
 
-        if (item is StarBallItem)
+        if (item is HeavyThrowableHoldItem)
             return true;
 
         return !IsLocalInventoryCompletelyFull;
@@ -562,9 +562,9 @@ public partial class PlayerController
             return;
         }
 
-        if (g is StarBallItem && g.TryGetComponent(out NetworkStarBallHold starHold))
+        if (g is HeavyThrowableHoldItem && g.TryGetComponent(out NetworkHeavyThrowableHold heavyHold))
         {
-            starHold.RequestPickupFromInteract(this);
+            heavyHold.RequestPickupFromInteract(this);
             return;
         }
 
@@ -580,9 +580,9 @@ public partial class PlayerController
             return;
         if (!TryFindInteractableGrabbable(out GrabbableInventoryItem g) || g == null)
             return;
-        if (g is StarBallItem && g.TryGetComponent(out NetworkStarBallHold starHold))
+        if (g is HeavyThrowableHoldItem && g.TryGetComponent(out NetworkHeavyThrowableHold heavyHold))
         {
-            starHold.TryPickupOffline(this);
+            heavyHold.TryPickupOffline(this);
             return;
         }
 
@@ -591,7 +591,7 @@ public partial class PlayerController
 
     void HandleDropInput()
     {
-        if (TryDropHeldStarBall())
+        if (TryDropHeldHeavyThrowable())
             return;
 
         if (IsUsingNetworkedInventory)
@@ -612,7 +612,7 @@ public partial class PlayerController
         TryDropSelectedLocal();
     }
 
-    bool TryShootHeldStarBall()
+    bool TryShootHeldHeavyThrowable()
     {
         Vector3 f = CameraTransformForFacing != null ? CameraTransformForFacing.forward : transform.forward;
 
@@ -622,16 +622,16 @@ public partial class PlayerController
             && NetworkManager.Singleton.LocalClient.PlayerObject != null)
         {
             ulong id = NetworkManager.Singleton.LocalClient.PlayerObject.NetworkObjectId;
-            NetworkStarBallHold ball = NetworkStarBallHold.FindHeldByPlayerObjectId(id);
-            if (ball != null)
+            NetworkHeavyThrowableHold hold = NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(id);
+            if (hold != null)
             {
-                ball.RequestShootFromOwningClient(f, this);
+                hold.RequestShootFromOwningClient(f, this);
                 return true;
             }
         }
         else
         {
-            NetworkStarBallHold offline = NetworkStarBallHold.FindOfflineHeldBy(this);
+            NetworkHeavyThrowableHold offline = NetworkHeavyThrowableHold.FindOfflineHeldBy(this);
             if (offline != null)
             {
                 offline.RequestShootFromOwningClient(f, this);
@@ -642,7 +642,7 @@ public partial class PlayerController
         return false;
     }
 
-    bool TryDropHeldStarBall()
+    bool TryDropHeldHeavyThrowable()
     {
         if (NetworkManager.Singleton != null
             && NetworkManager.Singleton.IsListening
@@ -650,16 +650,16 @@ public partial class PlayerController
             && NetworkManager.Singleton.LocalClient.PlayerObject != null)
         {
             ulong id = NetworkManager.Singleton.LocalClient.PlayerObject.NetworkObjectId;
-            NetworkStarBallHold ball = NetworkStarBallHold.FindHeldByPlayerObjectId(id);
-            if (ball != null)
+            NetworkHeavyThrowableHold hold = NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(id);
+            if (hold != null)
             {
-                ball.RequestDropFromOwningClient(this);
+                hold.RequestDropFromOwningClient(this);
                 return true;
             }
         }
         else
         {
-            NetworkStarBallHold offline = NetworkStarBallHold.FindOfflineHeldBy(this);
+            NetworkHeavyThrowableHold offline = NetworkHeavyThrowableHold.FindOfflineHeldBy(this);
             if (offline != null)
             {
                 offline.RequestDropFromOwningClient(this);
@@ -844,11 +844,25 @@ public partial class PlayerController
                     continue;
             }
 
+            if (!PassHeavyThrowableInteractPromptHint(g))
+                continue;
+
             grabbable = g;
             return true;
         }
 
         return TryFindInteractableGrabbableInViewFallback(cam, mask, out grabbable);
+    }
+
+    /// <summary>
+    /// Heavy throwables bypass hotbar distance rules in <see cref="NetworkPlayerInventory.CanPickup"/>; match server
+    /// pickup range on the client so the E prompt is not always on.
+    /// </summary>
+    bool PassHeavyThrowableInteractPromptHint(GrabbableInventoryItem g)
+    {
+        if (g != null && g.TryGetComponent(out NetworkHeavyThrowableHold hold))
+            return hold.IsWithinPickupProximity(transform.position);
+        return true;
     }
 
     void TickLocalFlashlightBatteries()

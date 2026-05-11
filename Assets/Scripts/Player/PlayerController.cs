@@ -555,7 +555,7 @@ public partial class PlayerController : MonoBehaviour
         if (flashlightPressed)
             HandleFlashlightToggleInput();
 
-        if (attackPressed && !TryShootHeldStarBall() && _currentStamina > 0f)
+        if (attackPressed && !TryShootHeldHeavyThrowable() && _currentStamina > 0f)
             TryMelee();
 
         bool grounded = characterController.isGrounded;
@@ -1800,8 +1800,10 @@ public partial class PlayerController : MonoBehaviour
             else if (!CanPickupLocal(g))
                 continue;
 
-            Collider col = g.GetComponentInChildren<Collider>(true);
-            Vector3 aim = col != null ? col.ClosestPoint(o) : g.transform.position;
+            if (!PassHeavyThrowableInteractPromptHint(g))
+                continue;
+
+            Vector3 aim = g.GetInteractAimPointClosestTo(o);
 
             float t = Vector3.Dot(aim - o, d);
             if (t < -0.12f || t > maxAlong)

@@ -297,7 +297,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return false;
         }
 
-        if (item is StarBallItem)
+        if (item is HeavyThrowableHoldItem)
             return true;
 
         return !IsInventoryCompletelyFull;
@@ -334,7 +334,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         if (!GrabbableInventoryItem.TryResolveForPickup(itemId, worldHint, out GrabbableInventoryItem item) || item == null || item.IsHeld)
             return;
 
-        if (item is StarBallItem)
+        if (item is HeavyThrowableHoldItem)
             return;
 
         if (item is FlashlightItem f0)

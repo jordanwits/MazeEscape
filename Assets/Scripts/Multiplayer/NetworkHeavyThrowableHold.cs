@@ -5,26 +5,27 @@ using UnityEngine;
 using UnityEngine.Serialization;
 
 /// <summary>
-/// Server-authoritative carry for the StarBall: not stored in <see cref="NetworkPlayerInventory"/>.
-/// Hold state replicates via <see cref="_holderNetworkObjectId"/>; release uses ClientRpc +
-/// <see cref="StarBallItem.ApplyReleasedWorldStateWithVelocityDelta"/> (heavy mass makes Impulse ineffective).
+/// Server-authoritative carry for heavy throwables (StarBall, ring toss rings): not stored in
+/// <see cref="NetworkPlayerInventory"/>. Holder replicates via <see cref="_holderNetworkObjectId"/>;
+/// release uses ClientRpc +
+/// <see cref="HeavyThrowableHoldItem.ApplyReleasedWorldStateWithVelocityDelta"/>.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
-[RequireComponent(typeof(StarBallItem))]
-public sealed class NetworkStarBallHold : NetworkBehaviour
+[RequireComponent(typeof(HeavyThrowableHoldItem))]
+public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 {
-    static readonly List<NetworkStarBallHold> Instances = new(4);
+    static readonly List<NetworkHeavyThrowableHold> Instances = new(24);
 
     [Header("Pickup")]
     [SerializeField] float maxPickupHorizontalDistance = 5.25f;
     [SerializeField] float maxPickupVerticalDelta = 2.6f;
 
     [Header("Drop (G — same idea as hotbar toss)")]
-    [Tooltip("Forward speed in m/s ≈ Player DropItemImpulse × this. Impulse on a ~90 mass ball is negligible; we use velocity instead.")]
+    [Tooltip("Forward speed in m/s ≈ Player DropItemImpulse × this. Impulse on heavy props is weak; use velocity.")]
     [SerializeField] float dropForwardSpeedFromPlayerImpulse = 8.5f;
 
-    [Header("Shoot (left click — basketball arc, XZ forward + up)")]
+    [Header("Shoot (left click — toss arc, XZ forward + up)")]
     [Tooltip("Horizontal forward speed added (m/s).")]
     [SerializeField] float shootForwardSpeed = 10f;
     [Tooltip("Upward speed added (m/s).")]
@@ -37,17 +38,16 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
-    StarBallItem _starBall;
+    HeavyThrowableHoldItem _item;
     NetworkTransform _networkTransform;
 
-    /// <summary>Offline / no NGO: which player is carrying this ball (not replicated).</summary>
     PlayerController _offlineHolder;
 
     public ulong HolderNetworkObjectId => _holderNetworkObjectId.Value;
 
     void Awake()
     {
-        _starBall = GetComponent<StarBallItem>();
+        _item = GetComponent<HeavyThrowableHoldItem>();
         TryGetComponent(out _networkTransform);
     }
 
@@ -78,7 +78,7 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
         SetPhysicsNetworkingEnabled(holder == 0UL);
         if (holder != 0UL)
         {
-            _starBall.ApplyNetworkHeldState(holder);
+            _item.ApplyNetworkHeldState(holder);
             NotifyHolderInventoryRefresh(holder);
         }
     }
@@ -88,7 +88,7 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
         if (current != 0UL)
         {
             SetPhysicsNetworkingEnabled(false);
-            _starBall.ApplyNetworkHeldState(current);
+            _item.ApplyNetworkHeldState(current);
         }
         else if (previous != 0UL)
         {
@@ -127,19 +127,21 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
 
     public void TryPickupOffline(PlayerController player)
     {
-        if (player == null || _starBall == null || _starBall.IsHeld)
+        if (player == null || _item == null || _item.IsHeld)
+            return;
+        if (FindOfflineHeldBy(player) != null)
             return;
         if (!player.TryGetInventoryAttachmentTargets(out Transform hold, out Transform follow, out _))
             return;
 
         _offlineHolder = player;
-        _starBall.Pickup(hold, follow);
+        _item.Pickup(hold, follow);
         player.RefreshInventoryViewFromNetwork();
     }
 
     public void RequestPickupFromInteract(PlayerController interactor)
     {
-        if (interactor == null || _starBall == null || _starBall.IsHeld)
+        if (interactor == null || _item == null || _item.IsHeld)
             return;
 
         if (!NetworkManager.Singleton || !NetworkManager.Singleton.IsListening)
@@ -177,6 +179,9 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
         if (_holderNetworkObjectId.Value != 0UL)
             return;
 
+        if (FindHeldByPlayerObjectId(playerNetworkObjectId) != null)
+            return;
+
         NetworkManager nm = NetworkManager.Singleton;
         if (nm == null || !nm.SpawnManager.SpawnedObjects.TryGetValue(playerNetworkObjectId, out NetworkObject playerObj) || playerObj == null)
             return;
@@ -201,9 +206,12 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
         return true;
     }
 
+    /// <summary>Same thresholds as <see cref="ServerValidateAndPickup"/>; used for HUD / client-side interaction hints.</summary>
+    public bool IsWithinPickupProximity(Vector3 playerFeetWorld) => IsInPickupRange(playerFeetWorld);
+
     public void RequestDropFromOwningClient(PlayerController shooter)
     {
-        if (shooter == null || _starBall == null || !_starBall.IsHeld)
+        if (shooter == null || _item == null || !_item.IsHeld)
             return;
 
         if (!NetworkManager.Singleton || !NetworkManager.Singleton.IsListening)
@@ -255,12 +263,12 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
 
     void DropOffline(PlayerController shooter)
     {
-        if (_offlineHolder != shooter || !_starBall.IsHeld)
+        if (_offlineHolder != shooter || !_item.IsHeld)
             return;
 
         BuildInventoryStyleDropVelocity(shooter, out Vector3 velocityDelta, out Vector3 dropPos, out Quaternion dropRot);
         _offlineHolder = null;
-        _starBall.ApplyReleasedWorldStateWithVelocityDelta(dropPos, dropRot, velocityDelta);
+        _item.ApplyReleasedWorldStateWithVelocityDelta(dropPos, dropRot, velocityDelta);
         shooter.RefreshInventoryViewFromNetwork();
     }
 
@@ -288,11 +296,53 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
         }
 
         dropPosition.y = Mathf.Max(dropPosition.y, shooter.transform.position.y + 0.1f);
+
+        if (TryComputeRingFlatReleaseRotation(velocityDelta, shooter, out Quaternion ringFlat))
+            dropRotation = ringFlat;
+    }
+
+    /// <summary>
+    /// Release uses camera rotation, which puts a torus plane vertical (“standing”). Lay the ring flat instead:
+    /// hole axis → world up, then yaw toward horizontal throw direction.
+    /// </summary>
+    bool TryComputeRingFlatReleaseRotation(Vector3 velocityGuess, PlayerController shooter, out Quaternion worldRotation)
+    {
+        worldRotation = default;
+        if (_item.GetComponent<RingTossItem>() == null)
+            return false;
+
+        Vector3 planar = Vector3.ProjectOnPlane(velocityGuess, Vector3.up);
+        if (planar.sqrMagnitude < 1e-8f)
+        {
+            Transform camPlanar = shooter != null ? shooter.CameraTransformForFacing : null;
+            Vector3 camF =
+                camPlanar != null ? camPlanar.forward : (_item.transform.forward);
+            planar = Vector3.ProjectOnPlane(camF, Vector3.up);
+        }
+
+        planar = planar.sqrMagnitude < 1e-8f ? _item.transform.forward : planar.normalized;
+
+        RingCompoundColliders ringShape = GetComponent<RingCompoundColliders>();
+        Vector3 holeAxisLocal =
+            ringShape != null ? ringShape.NormalizedTorusHoleAxisLocal : Vector3.up;
+
+        // Map local axes: hole axis ↔ world up, ring opening ↔ horizontal toss direction.
+        // (Avoid stacking FromToRotation * LookRotation in different frames — preserves prefab/import twist.)
+        Vector3 fwdGuess = Vector3.forward;
+        if (Mathf.Abs(Vector3.Dot(fwdGuess, holeAxisLocal)) > 0.92f)
+            fwdGuess = Vector3.right;
+        Vector3 fwdL = Vector3.ProjectOnPlane(fwdGuess, holeAxisLocal);
+        fwdL = fwdL.sqrMagnitude < 1e-8f ? Vector3.Cross(holeAxisLocal, Vector3.right).normalized : fwdL.normalized;
+
+        Quaternion localOpeningFrame = Quaternion.LookRotation(fwdL, holeAxisLocal);
+        Quaternion worldFlatFrame = Quaternion.LookRotation(planar, Vector3.up);
+        worldRotation = worldFlatFrame * Quaternion.Inverse(localOpeningFrame);
+        return true;
     }
 
     public void RequestShootFromOwningClient(Vector3 cameraForward, PlayerController shooter)
     {
-        if (shooter == null || _starBall == null || !_starBall.IsHeld)
+        if (shooter == null || _item == null || !_item.IsHeld)
             return;
 
         if (!NetworkManager.Singleton || !NetworkManager.Singleton.IsListening)
@@ -347,18 +397,18 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
         _holderNetworkObjectId.Value = 0UL;
 
         if (IsServer && !IsClient)
-            _starBall.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta);
+            _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta);
 
-        ApplyBallReleaseClientRpc(worldPosition, worldRotation, velocityDelta);
+        ApplyReleaseClientRpc(worldPosition, worldRotation, velocityDelta);
     }
 
     [ClientRpc]
-    void ApplyBallReleaseClientRpc(Vector3 worldPosition, Quaternion worldRotation, Vector3 velocityDelta)
+    void ApplyReleaseClientRpc(Vector3 worldPosition, Quaternion worldRotation, Vector3 velocityDelta)
     {
         if (IsServer && !IsClient)
             return;
 
-        _starBall.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta);
+        _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta);
         SetPhysicsNetworkingEnabled(true);
     }
 
@@ -377,25 +427,35 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
         Vector3 relFwd = cam != null ? cam.forward : shooter.transform.forward;
         dropPosition = origin + relFwd.normalized * releaseForwardOffset;
         dropPosition.y = Mathf.Max(dropPosition.y, shooter.transform.position.y + 0.1f);
-        dropRotation = cam != null ? cam.rotation : Quaternion.LookRotation(shooter.transform.forward, Vector3.up);
+
+        dropRotation =
+            TryComputeRingFlatReleaseRotation(velocityDelta, shooter, out Quaternion ringFlatShoot)
+                ? ringFlatShoot
+                : CameraStyleReleaseRotation(shooter);
+    }
+
+    static Quaternion CameraStyleReleaseRotation(PlayerController shooter)
+    {
+        Transform cam = shooter.CameraTransformForFacing;
+        return cam != null ? cam.rotation : Quaternion.LookRotation(shooter.transform.forward, Vector3.up);
     }
 
     void ShootOffline(Vector3 cameraForward, PlayerController shooter)
     {
-        if (_offlineHolder != shooter || !_starBall.IsHeld)
+        if (_offlineHolder != shooter || !_item.IsHeld)
             return;
 
         BuildShootVelocity(shooter, cameraForward, out Vector3 velocityDelta, out Vector3 dropPos, out Quaternion dropRot);
         _offlineHolder = null;
-        _starBall.ApplyReleasedWorldStateWithVelocityDelta(dropPos, dropRot, velocityDelta);
+        _item.ApplyReleasedWorldStateWithVelocityDelta(dropPos, dropRot, velocityDelta);
         shooter.RefreshInventoryViewFromNetwork();
     }
 
-    public static NetworkStarBallHold FindHeldByPlayerObjectId(ulong playerNetworkObjectId)
+    public static NetworkHeavyThrowableHold FindHeldByPlayerObjectId(ulong playerNetworkObjectId)
     {
         for (int i = 0; i < Instances.Count; i++)
         {
-            NetworkStarBallHold h = Instances[i];
+            NetworkHeavyThrowableHold h = Instances[i];
             if (h != null && h.IsSpawned && h._holderNetworkObjectId.Value == playerNetworkObjectId)
                 return h;
         }
@@ -403,14 +463,14 @@ public sealed class NetworkStarBallHold : NetworkBehaviour
         return null;
     }
 
-    public static NetworkStarBallHold FindOfflineHeldBy(PlayerController player)
+    public static NetworkHeavyThrowableHold FindOfflineHeldBy(PlayerController player)
     {
         if (player == null)
             return null;
         for (int i = 0; i < Instances.Count; i++)
         {
-            NetworkStarBallHold h = Instances[i];
-            if (h != null && h._offlineHolder == player && h._starBall != null && h._starBall.IsHeld)
+            NetworkHeavyThrowableHold h = Instances[i];
+            if (h != null && h._offlineHolder == player && h._item != null && h._item.IsHeld)
                 return h;
         }
 
