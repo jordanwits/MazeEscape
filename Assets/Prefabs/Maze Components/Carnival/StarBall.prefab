@@ -113,7 +113,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 3120655978
+  GlobalObjectIdHash: 3156369928
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 0
@@ -278,6 +278,23 @@ MonoBehaviour:
   interactionMaxHorizontalDistance: 2.95
   planarSpeedScaleVsPlayerController: 0.85
   planarSpeedCapDelta: 3.5
+  balloonHeliumMode: 0
+  balloonTieAnchorRigidbody: {fileID: 0}
+  balloonTetherBodyAttachPoint: {fileID: 0}
+  balloonTetherStringEndPoint: {fileID: 0}
+  balloonSnapTieAnchorToStringEnd: 0
+  balloonTetherTieWorldOffset: {x: 0, y: 0, z: 0}
+  balloonAttachmentLocalPosition: {x: 0, y: 0, z: -0.008}
+  balloonBuoyancyAcceleration: 11
+  balloonBuoyancyForceOffsetLocal: {x: 0, y: 0, z: 0.004}
+  balloonExtraLinearDrag: 0.35
+  balloonUprightTorqueAcceleration: 22
+  balloonVisualUpLocal: {x: 0, y: 1, z: 0}
+  balloonTetherSpring: 260
+  balloonTetherDamper: 32
+  balloonTetherMinDistance: 0.55
+  balloonTetherMaxDistance: 1.05
+  balloonReapplyTetherPoseAfterFirstFixedUpdate: 1
 --- !u!114 &5512098834412200166
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -351,6 +368,6 @@ MonoBehaviour:
   maxPickupHorizontalDistance: 5.25
   maxPickupVerticalDelta: 2.6
   dropForwardSpeedFromPlayerImpulse: 2
-  shootForwardSpeed: 10
+  shootForwardSpeed: 8
   shootUpSpeed: 6
   releaseForwardOffset: 0.42

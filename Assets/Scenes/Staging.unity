@@ -852,63 +852,6 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: dc68dc2a1c7ad0e43845b591a65f1e10, type: 3}
---- !u!1001 &1778250676
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 0}
-    m_Modifications:
-    - target: {fileID: 1563625167530513700, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_Name
-      value: ClownArch (1)
-      objectReference: {fileID: 0}
-    - target: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 3.212
-      objectReference: {fileID: 0}
-    - target: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 3.474
-      objectReference: {fileID: 0}
-    - target: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: -40.861
-      objectReference: {fileID: 0}
-    - target: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 0.5
-      objectReference: {fileID: 0}
-    - target: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: -0.5
-      objectReference: {fileID: 0}
-    - target: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0.5
-      objectReference: {fileID: 0}
-    - target: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0.5
-      objectReference: {fileID: 0}
-    - target: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: -90
-      objectReference: {fileID: 0}
-    - target: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 90
-      objectReference: {fileID: 0}
-    - target: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
 --- !u!1 &1812395469
 GameObject:
   m_ObjectHideFlags: 0
@@ -1410,8 +1353,38 @@ PrefabInstance:
       propertyPath: m_Name
       value: CarnivalMainRoom
       objectReference: {fileID: 0}
+    - target: {fileID: 1655591892857088125, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -2.777
+      objectReference: {fileID: 0}
+    - target: {fileID: 1655591892857088125, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 2.198
+      objectReference: {fileID: 0}
+    - target: {fileID: 1655591892857088125, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -0.712
+      objectReference: {fileID: 0}
+    - target: {fileID: 2696980205459688646, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
+      propertyPath: GlobalObjectIdHash
+      value: 1413100291
+      objectReference: {fileID: 0}
+    - target: {fileID: 6820953050272112192, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0.01714
+      objectReference: {fileID: 0}
+    - target: {fileID: 6820953050272112192, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: -0.0103
+      objectReference: {fileID: 0}
+    - target: {fileID: 9134202468190265062, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
+      propertyPath: GlobalObjectIdHash
+      value: 3659143238
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
-    m_RemovedGameObjects: []
+    m_RemovedGameObjects:
+    - {fileID: 6188847511661593850, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
+    - {fileID: 8282404053254217302, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
@@ -2172,5 +2145,4 @@ SceneRoots:
   - {fileID: 3023140594320632646}
   - {fileID: 1715053252418311397}
   - {fileID: 1661546731714223982}
-  - {fileID: 1778250676}
   - {fileID: 653856182}
