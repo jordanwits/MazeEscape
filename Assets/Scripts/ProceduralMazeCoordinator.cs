@@ -178,8 +178,13 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         // Before any other Update/FixedUpdate: pure clients have no walkable colliders until the
         // seed round-trip finishes and BuildMazeInScene runs (host already has a synchronous build).
+        // A scene transition destroys the old generated maze, so the next seed RPC must rebuild even
+        // when the host reuses the same seed for the next section.
         if (IsPureNetworkClient())
+        {
+            _hasCurrentSeed = false;
             IsLocalMazeCollidersReady = false;
+        }
 
         RestartSceneRoutine(HandleSceneLoadedRoutine(scene));
     }
