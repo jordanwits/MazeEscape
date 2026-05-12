@@ -13,7 +13,7 @@ using UnityEngine.SceneManagement;
 public class MultiplayerSceneFlow : MonoBehaviour
 {
     public const string MenuSceneName = "Menu";
-    public const string GameSceneName = "Level02";
+    public const string GameSceneName = "Level01";
 
     /// <summary>Gameplay scenes that have a matching <c>ProceduralMazeConfig</c> under <c>Resources/MazeConfigs</c> (see <see cref="ProceduralMazeCoordinator"/>).</summary>
     public static readonly string[] MazeSectionSceneNames =
@@ -33,6 +33,25 @@ public class MultiplayerSceneFlow : MonoBehaviour
         {
             if (string.Equals(MazeSectionSceneNames[i], sceneName, StringComparison.OrdinalIgnoreCase))
                 return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Returns the next entry in <see cref="MazeSectionSceneNames"/> after <paramref name="currentSceneName"/>, if any.</summary>
+    public static bool TryGetNextMazeSectionScene(string currentSceneName, out string nextSceneName)
+    {
+        nextSceneName = null;
+        if (string.IsNullOrEmpty(currentSceneName))
+            return false;
+
+        for (int i = 0; i < MazeSectionSceneNames.Length - 1; i++)
+        {
+            if (string.Equals(MazeSectionSceneNames[i], currentSceneName, StringComparison.OrdinalIgnoreCase))
+            {
+                nextSceneName = MazeSectionSceneNames[i + 1];
+                return true;
+            }
         }
 
         return false;

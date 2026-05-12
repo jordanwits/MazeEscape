@@ -1,5 +1,6 @@
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 
 [DisallowMultipleComponent]
@@ -193,6 +194,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        SceneManager.sceneLoaded += HandleGameplaySceneLoadedForPresentationRefresh;
         _slot0ItemId.OnValueChanged += OnSlot0Changed;
         _slot1ItemId.OnValueChanged += OnSlot1Changed;
         _slot2ItemId.OnValueChanged += OnSlot2Changed;
@@ -213,6 +215,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
 
     public override void OnNetworkDespawn()
     {
+        SceneManager.sceneLoaded -= HandleGameplaySceneLoadedForPresentationRefresh;
         _slot0ItemId.OnValueChanged -= OnSlot0Changed;
         _slot1ItemId.OnValueChanged -= OnSlot1Changed;
         _slot2ItemId.OnValueChanged -= OnSlot2Changed;
@@ -224,6 +227,16 @@ public class NetworkPlayerInventory : NetworkBehaviour
         _slot0Stack.OnValueChanged -= OnStackChanged;
         _slot1Stack.OnValueChanged -= OnStackChanged;
         _slot2Stack.OnValueChanged -= OnStackChanged;
+    }
+
+    void HandleGameplaySceneLoadedForPresentationRefresh(Scene scene, LoadSceneMode mode)
+    {
+        if (!IsSpawned)
+            return;
+        if (!MultiplayerSceneFlow.IsMazeGameplayScene(scene.name))
+            return;
+
+        RaiseChangedAndRefresh();
     }
 
     void Update()

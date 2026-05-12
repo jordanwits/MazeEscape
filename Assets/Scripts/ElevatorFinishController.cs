@@ -4,7 +4,8 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 
 /// <summary>
-/// Server-spawned sync object for the maze exit elevator: occupancy counts, close gating, and returning to menu when doors finish closing.
+/// Server-spawned sync object for the maze exit elevator: occupancy counts, close gating, synchronized advance to the next maze scene when doors finish closing,
+/// or return to menu when there is no configured next section (e.g. last level).
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
@@ -208,13 +209,42 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
             return;
 
         _pendingSceneAfterDoorsIdle = false;
+        ServerCompleteElevatorSequenceAfterDoorsIdle();
+    }
+
+    void ServerCompleteElevatorSequenceAfterDoorsIdle()
+    {
+        Scene activeScene = SceneManager.GetActiveScene();
+        string currentName = activeScene.IsValid() ? activeScene.name : string.Empty;
+
+        if (MultiplayerSceneFlow.TryGetNextMazeSectionScene(currentName, out string nextScene))
+        {
+            NetworkManager nm = NetworkManager.Singleton;
+            if (nm != null && nm.SceneManager != null)
+            {
+                SceneEventProgressStatus status = nm.SceneManager.LoadScene(nextScene, LoadSceneMode.Single);
+                if (status == SceneEventProgressStatus.Started)
+                    return;
+
+                Debug.LogError(
+                    $"[ElevatorFinish] Could not start synchronized load of \"{nextScene}\" (status={status}). Falling back to main menu.",
+                    this);
+            }
+            else
+                Debug.LogError("[ElevatorFinish] NetworkManager.SceneManager missing; falling back to main menu.", this);
+        }
+
+        ServerReturnEveryoneToMainMenuAfterElevator();
+    }
+
+    void ServerReturnEveryoneToMainMenuAfterElevator()
+    {
         ReturnAllPlayersToMainMenuClientRpc();
         StartCoroutine(ServerHostReturnToMainMenuAfterRpc());
     }
 
     /// <summary>
-    /// Netcode <see cref="Unity.Netcode.NetworkSceneManager"/> menu load leaves procedurally spawned maze objects in a bad state.
-    /// Match <see cref="MultiplayerSceneFlow.ReturnToMainMenu"/>: shutdown session and use Unity <see cref="SceneManager"/> Single load for a clean transition.
+    /// Netcode gameplay→menu transition: shutdown session and use Unity <see cref="SceneManager"/> Single load so procedural maze objects do not linger in a bad state.
     /// </summary>
     [ClientRpc]
     void ReturnAllPlayersToMainMenuClientRpc()
