@@ -693,6 +693,15 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         DeliverMazeSeedToOwnerClientRpc(seed);
     }
 
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+    void RequestProceduralJailDoorSnapshotsServerRpc()
+    {
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer)
+            return;
+
+        NetworkPlayerInventory.ServerSendProceduralJailDoorSnapshotsToClient(OwnerClientId);
+    }
+
     [ClientRpc]
     void DeliverMazeSeedToOwnerClientRpc(int seed, ClientRpcParams clientRpcParams = default)
     {
@@ -701,5 +710,6 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         if (!IsOwner)
             return;
         ProceduralMazeCoordinator.TryApplyMazeSeedAsClientFromRpc(seed);
+        RequestProceduralJailDoorSnapshotsServerRpc();
     }
 }

@@ -9,10 +9,23 @@ public abstract class HeavyThrowableHoldItem : GrabbableInventoryItem
 {
     public void ApplyReleasedWorldStateWithVelocityDelta(Vector3 worldPosition, Quaternion worldRotation, Vector3 velocityDelta)
     {
+        ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, Vector3.zero);
+    }
+
+    public void ApplyReleasedWorldStateWithVelocityDelta(
+        Vector3 worldPosition,
+        Quaternion worldRotation,
+        Vector3 velocityDelta,
+        Vector3 angularVelocity)
+    {
         ApplyNetworkWorldState(worldPosition, worldRotation, default);
-        if (velocityDelta.sqrMagnitude <= 0.0001f || ItemRigidbody == null || ItemRigidbody.isKinematic)
+        if (ItemRigidbody == null || ItemRigidbody.isKinematic)
             return;
 
-        ItemRigidbody.AddForce(velocityDelta, ForceMode.VelocityChange);
+        if (velocityDelta.sqrMagnitude > 0.0001f)
+            ItemRigidbody.AddForce(velocityDelta, ForceMode.VelocityChange);
+
+        if (angularVelocity.sqrMagnitude > 0.0001f)
+            ItemRigidbody.angularVelocity = angularVelocity;
     }
 }

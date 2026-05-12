@@ -18,6 +18,7 @@ public class JailCellSealedReleaseZone : MonoBehaviour
 
     readonly HashSet<PlayerHealth> _occupants = new();
     readonly HashSet<JailorAI> _jailorsInCell = new();
+    readonly HashSet<JailorAI> _jailorsEligibleForDoorBypass = new();
     readonly HashSet<JailorAI> _jailorsIgnoringDoor = new();
     readonly List<JailorAI> _jailorScratch = new();
     readonly List<Collider> _doorColliderScratch = new();
@@ -44,6 +45,7 @@ public class JailCellSealedReleaseZone : MonoBehaviour
             jailDoor.OnJailUnlockedByPlayerKey -= OnJailUnlockedByPlayerKey;
 
         StopAllJailorDoorIgnores();
+        _jailorsEligibleForDoorBypass.Clear();
     }
 
     void OnJailUnlockedByPlayerKey(HingeInteractDoor door)
@@ -60,6 +62,7 @@ public class JailCellSealedReleaseZone : MonoBehaviour
                 avatar.ServerSetSealedInJailCell(false);
         }
 
+        _jailorsEligibleForDoorBypass.Clear();
         RefreshJailorTrappedInsideDoorBypass();
     }
 
@@ -68,6 +71,14 @@ public class JailCellSealedReleaseZone : MonoBehaviour
     {
         if (!IsAuthority())
             return;
+
+        PruneDestroyedJailorsInCell();
+        _jailorsEligibleForDoorBypass.Clear();
+        foreach (JailorAI jailor in _jailorsInCell)
+        {
+            if (jailor != null)
+                _jailorsEligibleForDoorBypass.Add(jailor);
+        }
 
         foreach (PlayerHealth ph in _occupants)
         {
@@ -105,7 +116,10 @@ public class JailCellSealedReleaseZone : MonoBehaviour
         _jailorScratch.Clear();
         foreach (JailorAI j in _jailorsIgnoringDoor)
         {
-            if (!wantIgnore || j == null || !_jailorsInCell.Contains(j))
+            if (!wantIgnore
+                || j == null
+                || !_jailorsInCell.Contains(j)
+                || !_jailorsEligibleForDoorBypass.Contains(j))
                 _jailorScratch.Add(j);
         }
 
@@ -115,9 +129,9 @@ public class JailCellSealedReleaseZone : MonoBehaviour
         if (!wantIgnore)
             return;
 
-        foreach (JailorAI j in _jailorsInCell)
+        foreach (JailorAI j in _jailorsEligibleForDoorBypass)
         {
-            if (j != null)
+            if (j != null && _jailorsInCell.Contains(j))
                 StartIgnoringDoorCollisions(j);
         }
     }
@@ -170,6 +184,7 @@ public class JailCellSealedReleaseZone : MonoBehaviour
         if (jailor != null)
         {
             _jailorsInCell.Remove(jailor);
+            _jailorsEligibleForDoorBypass.Remove(jailor);
             RefreshJailorTrappedInsideDoorBypass();
         }
 
@@ -189,6 +204,16 @@ public class JailCellSealedReleaseZone : MonoBehaviour
 
         for (int i = 0; i < _jailorScratch.Count; i++)
             _jailorsInCell.Remove(_jailorScratch[i]);
+
+        _jailorScratch.Clear();
+        foreach (JailorAI j in _jailorsEligibleForDoorBypass)
+        {
+            if (j == null)
+                _jailorScratch.Add(j);
+        }
+
+        for (int i = 0; i < _jailorScratch.Count; i++)
+            _jailorsEligibleForDoorBypass.Remove(_jailorScratch[i]);
     }
 
     void StartIgnoringDoorCollisions(JailorAI jailor)

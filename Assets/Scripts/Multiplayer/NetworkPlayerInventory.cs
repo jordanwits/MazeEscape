@@ -1133,6 +1133,50 @@ public class NetworkPlayerInventory : NetworkBehaviour
         relay.ProceduralJailorOpenForEntryMirrorClientRpc(door.DoorId, door.IdentityHintPosition);
     }
 
+    public static void ServerSendProceduralJailDoorSnapshotsToClient(ulong targetClientId)
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return;
+
+        if (!nm.ConnectedClients.ContainsKey(targetClientId))
+            return;
+
+        NetworkPlayerInventory relay = ResolveServerRelayInventory();
+        if (relay == null)
+            return;
+
+        HingeInteractDoor[] doors = Object.FindObjectsByType<HingeInteractDoor>(
+            FindObjectsInactive.Include,
+            FindObjectsSortMode.None);
+        if (doors == null || doors.Length == 0)
+            return;
+
+        ClientRpcParams targetClient = new ClientRpcParams
+        {
+            Send = new ClientRpcSendParams
+            {
+                TargetClientIds = new[] { targetClientId }
+            }
+        };
+
+        for (int i = 0; i < doors.Length; i++)
+        {
+            HingeInteractDoor door = doors[i];
+            if (door == null || !door.UseKeyToUnlock)
+                continue;
+            if (!AnyJailDoorLeafNeedsProceduralMirrorRpc(door))
+                continue;
+
+            relay.ProceduralJailDoorStateSnapshotClientRpc(
+                door.DoorId,
+                door.IdentityHintPosition,
+                door.IsLocked,
+                door.IsOpen,
+                targetClient);
+        }
+    }
+
     /// <summary>
     /// True when any referenced door leaf is missing a spawned <see cref="NetworkObject"/> (procedural / offline replicated path).
     /// When both leaves are spawned, <see cref="HingeInteractDoor"/> NetworkVariables carry state and Rpc mirroring is skipped.
@@ -1192,6 +1236,20 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
 
         door.ApplyProceduralRemoteJailorOpenForEntryIncludingPaired();
+    }
+
+    [ClientRpc]
+    void ProceduralJailDoorStateSnapshotClientRpc(
+        ulong doorId,
+        Vector3 hintPosition,
+        bool locked,
+        bool open,
+        ClientRpcParams clientRpcParams = default)
+    {
+        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
+            return;
+
+        door.ApplyProceduralRemoteJailDoorStateSnapshot(locked, open);
     }
 
     bool TryGetConnectedPlayerPosition(ulong clientId, out Vector3 playerPosition)

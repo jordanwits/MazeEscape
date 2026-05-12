@@ -30,6 +30,7 @@ public class JailorAI : MonoBehaviour
     {
         OpeningDoor,
         DroppingPlayer,
+        ExitingCell,
     }
 
     [Header("References")]
@@ -104,6 +105,12 @@ public class JailorAI : MonoBehaviour
         + "Keep modest: very large values effectively open from far away; jail doors are chosen by preferring Jail Cell Start Unlocked hinge doors in the carry subtree.")]
     [SerializeField]
     float jailDoorPremptiveOpenDistance = 7f;
+    [Tooltip("After dropping a prisoner, the Jailor walks this far past the jail door before returning to patrol.")]
+    [SerializeField] float jailExitDistance = 3.25f;
+    [SerializeField] float jailExitArrivalDistance = 0.85f;
+    [SerializeField] float jailExitMaxSeconds = 6f;
+    [Tooltip("Normal patrol/investigation points this close to the jail drop marker are rejected while the jail door is locked closed.")]
+    [SerializeField] float sealedJailInteriorAvoidRadius = 3.75f;
     [Header("Jailor key drop")]
     [Tooltip("Spawned when a player is grabbed. Add JailorKey to Default Network Prefabs if you use ForceSamePrefabs (no runtime AddNetworkPrefab).")]
     [SerializeField] GameObject jailorKeyWorldPrefab;
@@ -284,6 +291,9 @@ public class JailorAI : MonoBehaviour
     JailDeliveryPhase _jailDeliveryPhase;
     HingeInteractDoor _activeJailDoor;
     bool _jailDropApplied;
+    Vector3 _jailExitDestination;
+    bool _hasJailExitDestination;
+    float _jailExitStartedTime;
 
     void Reset()
     {
@@ -434,7 +444,7 @@ public class JailorAI : MonoBehaviour
     public bool BlocksJailDoorTripwire =>
         _state == JailorState.Carrying
         || _state == JailorState.Grabbing
-        || _state == JailorState.JailDelivery;
+        || (_state == JailorState.JailDelivery && _jailDeliveryPhase != JailDeliveryPhase.ExitingCell);
 
     static bool ShouldJailorIgnorePlayer(PlayerHealth health)
     {
@@ -771,7 +781,9 @@ public class JailorAI : MonoBehaviour
     {
         if (jailorFootstepAudioSource == null || characterController == null || animator == null)
             return;
-        if (_state == JailorState.Idle || _state == JailorState.Grabbing || _state == JailorState.JailDelivery)
+        if (_state == JailorState.Idle
+            || _state == JailorState.Grabbing
+            || (_state == JailorState.JailDelivery && _jailDeliveryPhase != JailDeliveryPhase.ExitingCell))
         {
             _hasFootstepAnimSample = false;
             return;
@@ -915,7 +927,20 @@ public class JailorAI : MonoBehaviour
             return false;
         if (_state == JailorState.Grabbing || _state == JailorState.JailDelivery)
             return false;
+        if (IsNearLockedClosedJailDoor())
+            return false;
         return true;
+    }
+
+    bool IsNearLockedClosedJailDoor()
+    {
+        if (jailCellDoor == null || !jailCellDoor.IsJailCellStyleEntry || !jailCellDoor.IsLocked || jailCellDoor.IsOpen)
+            return false;
+
+        Vector3 door = jailCellDoor.IdentityHintPosition;
+        door.y = transform.position.y;
+        float guardRadius = Mathf.Max(2.25f, propStuckNudgeMaxRadius + 0.75f);
+        return (transform.position - door).sqrMagnitude <= guardRadius * guardRadius;
     }
 
     bool TryRecoverFromPropStuck()
@@ -992,7 +1017,11 @@ public class JailorAI : MonoBehaviour
         if (navMeshAgent == null || !navMeshAgent.enabled || !navMeshAgent.isOnNavMesh)
             return false;
 
-        if (_state != JailorState.Chase && _state != JailorState.Carrying && _state != JailorState.Patrol)
+        bool canUseOffMeshJump = _state == JailorState.Chase
+            || _state == JailorState.Carrying
+            || _state == JailorState.Patrol
+            || (_state == JailorState.JailDelivery && _jailDeliveryPhase == JailDeliveryPhase.ExitingCell);
+        if (!canUseOffMeshJump)
             return false;
 
         if (_isTraversingOffMeshJump)
@@ -1290,6 +1319,9 @@ public class JailorAI : MonoBehaviour
             if (shouldAvoidRecent && IsNearRecentPatrolDestination(hit.position))
                 continue;
 
+            if (IsSealedJailInteriorDestination(hit.position))
+                continue;
+
             if (!TryHasReasonablePatrolPath(hit.position))
                 continue;
 
@@ -1316,6 +1348,8 @@ public class JailorAI : MonoBehaviour
     {
         if (navMeshAgent == null || !navMeshAgent.enabled || !navMeshAgent.isOnNavMesh)
             return false;
+        if (IsSealedJailInteriorDestination(destination))
+            return false;
         EnsurePatrolPathScratch();
 
         if (!NavMesh.CalculatePath(transform.position, destination, NavMesh.AllAreas, _patrolPathScratch))
@@ -1324,6 +1358,26 @@ public class JailorAI : MonoBehaviour
         return _patrolPathScratch.status == NavMeshPathStatus.PathComplete
             && _patrolPathScratch.corners != null
             && _patrolPathScratch.corners.Length >= 2;
+    }
+
+    bool IsSealedJailInteriorDestination(Vector3 destination)
+    {
+        if (carryDestination == null)
+            return false;
+
+        TryResolveJailCellDoorFromDestination();
+        if (jailCellDoor == null
+            || !jailCellDoor.IsJailCellStyleEntry
+            || !jailCellDoor.IsLocked
+            || jailCellDoor.IsOpen)
+            return false;
+
+        Vector3 flatDestination = destination;
+        flatDestination.y = 0f;
+        Vector3 flatJailDrop = carryDestination.position;
+        flatJailDrop.y = 0f;
+        float radius = Mathf.Max(0.5f, sealedJailInteriorAvoidRadius);
+        return (flatDestination - flatJailDrop).sqrMagnitude <= radius * radius;
     }
 
     bool IsNearRecentPatrolDestination(Vector3 candidate)
@@ -1822,6 +1876,8 @@ public class JailorAI : MonoBehaviour
         _activeJailDoor = door;
         _jailDeliveryPhase = JailDeliveryPhase.OpeningDoor;
         _jailDropApplied = false;
+        _hasJailExitDestination = false;
+        _jailExitStartedTime = 0f;
 
         if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
         {
@@ -1852,7 +1908,7 @@ public class JailorAI : MonoBehaviour
         {
             case JailDeliveryPhase.OpeningDoor:
                 _activeJailDoor.ServerJailorOpenForEntry();
-                if (_activeJailDoor.IsOpen)
+                if (_activeJailDoor.JailorDoorIsOpenAndIdle())
                     _jailDeliveryPhase = JailDeliveryPhase.DroppingPlayer;
                 break;
 
@@ -1867,14 +1923,112 @@ public class JailorAI : MonoBehaviour
                         navMeshAgent.ResetPath();
                     }
 
-                    FinishJailDeliveryAndPatrol();
+                    BeginJailExit();
                 }
 
                 break;
+            case JailDeliveryPhase.ExitingCell:
+                return UpdateJailExit();
         }
 
         _intendedMoveSpeed = 0f;
         return Vector3.zero;
+    }
+
+    void BeginJailExit()
+    {
+        _jailDeliveryPhase = JailDeliveryPhase.ExitingCell;
+        _hasJailExitDestination = TryGetJailExitDestination(out _jailExitDestination);
+        _jailExitStartedTime = Time.time;
+
+        if (!_hasJailExitDestination || !TrySnapToNavMesh() || navMeshAgent == null || !navMeshAgent.isOnNavMesh)
+        {
+            FinishJailDeliveryAndPatrol();
+            return;
+        }
+
+        navMeshAgent.isStopped = false;
+        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.stoppingDistance = Mathf.Max(0.2f, jailExitArrivalDistance);
+        navMeshAgent.SetDestination(_jailExitDestination);
+        _nextDestinationRefreshTime = Time.time + Mathf.Max(0.05f, destinationRefreshInterval);
+    }
+
+    Vector3 UpdateJailExit()
+    {
+        _intendedMoveSpeed = patrolSpeed;
+
+        if (!_hasJailExitDestination || !TrySnapToNavMesh() || navMeshAgent == null || !navMeshAgent.isOnNavMesh)
+        {
+            FinishJailDeliveryAndPatrol();
+            return Vector3.zero;
+        }
+
+        navMeshAgent.isStopped = false;
+        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.stoppingDistance = Mathf.Max(0.2f, jailExitArrivalDistance);
+
+        if (Time.time >= _nextDestinationRefreshTime)
+        {
+            navMeshAgent.SetDestination(_jailExitDestination);
+            _nextDestinationRefreshTime = Time.time + Mathf.Max(0.05f, destinationRefreshInterval);
+        }
+
+        Vector3 flatSelf = transform.position;
+        flatSelf.y = 0f;
+        Vector3 flatExit = _jailExitDestination;
+        flatExit.y = 0f;
+
+        bool arrived = Vector3.Distance(flatSelf, flatExit) <= jailExitArrivalDistance
+            || (!navMeshAgent.pathPending
+                && navMeshAgent.hasPath
+                && navMeshAgent.remainingDistance <= jailExitArrivalDistance);
+        bool timedOut = Time.time >= _jailExitStartedTime + Mathf.Max(1f, jailExitMaxSeconds);
+        if (arrived || timedOut)
+        {
+            FinishJailDeliveryAndPatrol();
+            return Vector3.zero;
+        }
+
+        Vector3 desiredVelocity = navMeshAgent.desiredVelocity;
+        if (desiredVelocity.sqrMagnitude < 0.0001f)
+            desiredVelocity = navMeshAgent.velocity;
+        desiredVelocity.y = 0f;
+        if (desiredVelocity.sqrMagnitude > patrolSpeed * patrolSpeed)
+            desiredVelocity = desiredVelocity.normalized * patrolSpeed;
+
+        return desiredVelocity;
+    }
+
+    bool TryGetJailExitDestination(out Vector3 destination)
+    {
+        destination = transform.position;
+        if (_activeJailDoor == null)
+            return false;
+
+        Vector3 door = _activeJailDoor.IdentityHintPosition;
+        Vector3 inside = carryDestination != null ? carryDestination.position : transform.position;
+        Vector3 outward = door - inside;
+        outward.y = 0f;
+        if (outward.sqrMagnitude < 0.01f)
+        {
+            outward = transform.position - inside;
+            outward.y = 0f;
+        }
+        if (outward.sqrMagnitude < 0.01f)
+            outward = transform.forward;
+
+        outward.Normalize();
+        Vector3 raw = door + outward * Mathf.Max(1f, jailExitDistance);
+        float sampleRadius = Mathf.Max(1.25f, jailExitDistance);
+        if (NavMesh.SamplePosition(raw, out NavMeshHit hit, sampleRadius, NavMesh.AllAreas))
+        {
+            destination = hit.position;
+            return true;
+        }
+
+        destination = raw;
+        return true;
     }
 
     void FinishJailDeliveryAndPatrol()
@@ -1882,6 +2036,8 @@ public class JailorAI : MonoBehaviour
         ClearInvestigationState();
         _activeJailDoor = null;
         _jailDropApplied = false;
+        _hasJailExitDestination = false;
+        _jailExitStartedTime = 0f;
         EnterPatrol();
     }
 
@@ -2405,6 +2561,14 @@ public class JailorAI : MonoBehaviour
         Vector3 targetPoint = _investigationPoint;
         if (NavMesh.SamplePosition(targetPoint, out NavMeshHit hit, Mathf.Max(0.5f, targetNavMeshSampleRadius), NavMesh.AllAreas))
             targetPoint = hit.position;
+        if (IsSealedJailInteriorDestination(targetPoint))
+        {
+            _hasInvestigationPoint = false;
+            _isLingerAtInvestigationPoint = false;
+            _hasInvestigationSearchDestination = false;
+            EnterPatrol();
+            return Vector3.zero;
+        }
 
         bool shouldRefreshDestination =
             Time.time >= _nextDestinationRefreshTime
@@ -2459,6 +2623,9 @@ public class JailorAI : MonoBehaviour
             if (flatDelta.magnitude < minDistance)
                 continue;
 
+            if (IsSealedJailInteriorDestination(hit.position))
+                continue;
+
             if (!TryHasReasonablePatrolPath(hit.position))
                 continue;
 
@@ -2468,6 +2635,9 @@ public class JailorAI : MonoBehaviour
 
         if (NavMesh.SamplePosition(_investigationPoint, out NavMeshHit centerHit, Mathf.Max(1f, radius), NavMesh.AllAreas))
         {
+            if (IsSealedJailInteriorDestination(centerHit.position))
+                return false;
+
             destination = centerHit.position;
             return true;
         }
@@ -2573,7 +2743,9 @@ public class JailorAI : MonoBehaviour
         }
 
         float horizontal = new Vector3(_horizontalVelocity.x, 0f, _horizontalVelocity.z).magnitude;
-        if (_state == JailorState.Idle || _state == JailorState.Grabbing || _state == JailorState.JailDelivery)
+        if (_state == JailorState.Idle
+            || _state == JailorState.Grabbing
+            || (_state == JailorState.JailDelivery && _jailDeliveryPhase != JailDeliveryPhase.ExitingCell))
             horizontal = 0f;
 
         float targetNormalized = runSpeed > 0.001f ? Mathf.Clamp01(horizontal / runSpeed) : 0f;

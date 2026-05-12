@@ -643,6 +643,56 @@ public class HingeInteractDoor : NetworkBehaviour
         ApplyProceduralRemoteJailSealLeafIncludingPaired();
     }
 
+    /// <summary>
+    /// Late-join snapshot for unspawned procedural keyed doors. Spawned doors ignore this because NetworkVariables are authoritative.
+    /// </summary>
+    public void ApplyProceduralRemoteJailDoorStateSnapshot(bool locked, bool open)
+    {
+        ApplyProceduralRemoteJailDoorStateSnapshotLeafIncludingPaired(locked, open);
+    }
+
+    void ApplyProceduralRemoteJailDoorStateSnapshotLeafIncludingPaired(bool locked, bool open)
+    {
+        ApplyProceduralRemoteJailDoorStateSnapshotLeaf(locked, open);
+        if (pairedLeaf != null && !_jailorCloseIncomingPairCall)
+            pairedLeaf.SyncMateProceduralJailDoorStateSnapshotLeaf(locked, open);
+    }
+
+    void SyncMateProceduralJailDoorStateSnapshotLeaf(bool locked, bool open)
+    {
+        _jailorCloseIncomingPairCall = true;
+        try
+        {
+            ApplyProceduralRemoteJailDoorStateSnapshotLeaf(locked, open);
+        }
+        finally
+        {
+            _jailorCloseIncomingPairCall = false;
+        }
+    }
+
+    void ApplyProceduralRemoteJailDoorStateSnapshotLeaf(bool locked, bool open)
+    {
+        if (IsSpawned || hinge == null)
+            return;
+
+        if (IsBusy)
+            StopDoorMoveRoutine();
+
+        if (useKeyToUnlock)
+        {
+            _lockedOffline = locked;
+            if (!locked)
+                _mayOpenUnlockedTime = 0f;
+        }
+
+        _isOpenOffline = open;
+        if (open)
+            _openPromptOffline = false;
+
+        StartMoveToState(open, true);
+    }
+
     void ApplyProceduralRemoteJailSealLeafIncludingPaired()
     {
         ApplyProceduralRemoteJailSealLeaf();

@@ -33,6 +33,12 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     [FormerlySerializedAs("releaseForwardOffset")]
     [SerializeField] float releaseForwardOffset = 0.42f;
 
+    [Header("Ring Spin")]
+    [Tooltip("Initial spin around a ring's hole axis when shot. Unity uses radians per second.")]
+    [SerializeField, Min(0f)] float ringShootSpinAngularSpeed = 24f;
+    [Tooltip("Initial spin around a ring's hole axis when dropped/tossed with G.")]
+    [SerializeField, Min(0f)] float ringDropSpinAngularSpeed = 8f;
+
     readonly NetworkVariable<ulong> _holderNetworkObjectId = new NetworkVariable<ulong>(
         0UL,
         NetworkVariableReadPermission.Everyone,
@@ -257,8 +263,13 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
     void ApplyDropAuthority(PlayerController shooter)
     {
-        BuildInventoryStyleDropVelocity(shooter, out Vector3 velocityDelta, out Vector3 dropPos, out Quaternion dropRot);
-        ApplyReleaseAuthority(velocityDelta, dropPos, dropRot);
+        BuildInventoryStyleDropVelocity(
+            shooter,
+            out Vector3 velocityDelta,
+            out Vector3 angularVelocity,
+            out Vector3 dropPos,
+            out Quaternion dropRot);
+        ApplyReleaseAuthority(velocityDelta, angularVelocity, dropPos, dropRot);
     }
 
     void DropOffline(PlayerController shooter)
@@ -266,14 +277,24 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         if (_offlineHolder != shooter || !_item.IsHeld)
             return;
 
-        BuildInventoryStyleDropVelocity(shooter, out Vector3 velocityDelta, out Vector3 dropPos, out Quaternion dropRot);
+        BuildInventoryStyleDropVelocity(
+            shooter,
+            out Vector3 velocityDelta,
+            out Vector3 angularVelocity,
+            out Vector3 dropPos,
+            out Quaternion dropRot);
         _offlineHolder = null;
-        _item.ApplyReleasedWorldStateWithVelocityDelta(dropPos, dropRot, velocityDelta);
+        _item.ApplyReleasedWorldStateWithVelocityDelta(dropPos, dropRot, velocityDelta, angularVelocity);
         shooter.RefreshInventoryViewFromNetwork();
     }
 
     /// <summary>Matches <see cref="PlayerController.Inventory"/> local drop offsets + forward from camera.</summary>
-    void BuildInventoryStyleDropVelocity(PlayerController shooter, out Vector3 velocityDelta, out Vector3 dropPosition, out Quaternion dropRotation)
+    void BuildInventoryStyleDropVelocity(
+        PlayerController shooter,
+        out Vector3 velocityDelta,
+        out Vector3 angularVelocity,
+        out Vector3 dropPosition,
+        out Quaternion dropRotation)
     {
         Transform cam = shooter.CameraTransformForFacing;
         Vector3 f = cam != null ? cam.forward : shooter.transform.forward;
@@ -299,6 +320,8 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
         if (TryComputeRingFlatReleaseRotation(velocityDelta, shooter, out Quaternion ringFlat))
             dropRotation = ringFlat;
+
+        angularVelocity = BuildRingReleaseAngularVelocity(dropRotation, ringDropSpinAngularSpeed);
     }
 
     /// <summary>
@@ -388,31 +411,43 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
     void ApplyShootAuthority(Vector3 cameraForward, PlayerController shooter)
     {
-        BuildShootVelocity(shooter, cameraForward, out Vector3 velocityDelta, out Vector3 dropPos, out Quaternion dropRot);
-        ApplyReleaseAuthority(velocityDelta, dropPos, dropRot);
+        BuildShootVelocity(
+            shooter,
+            cameraForward,
+            out Vector3 velocityDelta,
+            out Vector3 angularVelocity,
+            out Vector3 dropPos,
+            out Quaternion dropRot);
+        ApplyReleaseAuthority(velocityDelta, angularVelocity, dropPos, dropRot);
     }
 
-    void ApplyReleaseAuthority(Vector3 velocityDelta, Vector3 worldPosition, Quaternion worldRotation)
+    void ApplyReleaseAuthority(Vector3 velocityDelta, Vector3 angularVelocity, Vector3 worldPosition, Quaternion worldRotation)
     {
         _holderNetworkObjectId.Value = 0UL;
 
         if (IsServer && !IsClient)
-            _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta);
+            _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
 
-        ApplyReleaseClientRpc(worldPosition, worldRotation, velocityDelta);
+        ApplyReleaseClientRpc(worldPosition, worldRotation, velocityDelta, angularVelocity);
     }
 
     [ClientRpc]
-    void ApplyReleaseClientRpc(Vector3 worldPosition, Quaternion worldRotation, Vector3 velocityDelta)
+    void ApplyReleaseClientRpc(Vector3 worldPosition, Quaternion worldRotation, Vector3 velocityDelta, Vector3 angularVelocity)
     {
         if (IsServer && !IsClient)
             return;
 
-        _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta);
+        _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
         SetPhysicsNetworkingEnabled(true);
     }
 
-    void BuildShootVelocity(PlayerController shooter, Vector3 cameraForward, out Vector3 velocityDelta, out Vector3 dropPosition, out Quaternion dropRotation)
+    void BuildShootVelocity(
+        PlayerController shooter,
+        Vector3 cameraForward,
+        out Vector3 velocityDelta,
+        out Vector3 angularVelocity,
+        out Vector3 dropPosition,
+        out Quaternion dropRotation)
     {
         Vector3 f = cameraForward.sqrMagnitude > 0.0001f ? cameraForward.normalized : shooter.transform.forward;
         Vector3 flat = Vector3.ProjectOnPlane(f, Vector3.up);
@@ -432,6 +467,23 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             TryComputeRingFlatReleaseRotation(velocityDelta, shooter, out Quaternion ringFlatShoot)
                 ? ringFlatShoot
                 : CameraStyleReleaseRotation(shooter);
+
+        angularVelocity = BuildRingReleaseAngularVelocity(dropRotation, ringShootSpinAngularSpeed);
+    }
+
+    Vector3 BuildRingReleaseAngularVelocity(Quaternion worldRotation, float angularSpeed)
+    {
+        if (angularSpeed <= 0f || _item.GetComponent<RingTossItem>() == null)
+            return Vector3.zero;
+
+        RingCompoundColliders ringShape = GetComponent<RingCompoundColliders>();
+        Vector3 holeAxisLocal =
+            ringShape != null ? ringShape.NormalizedTorusHoleAxisLocal : Vector3.up;
+        Vector3 worldSpinAxis = worldRotation * holeAxisLocal;
+        if (worldSpinAxis.sqrMagnitude < 1e-8f)
+            return Vector3.zero;
+
+        return worldSpinAxis.normalized * angularSpeed;
     }
 
     static Quaternion CameraStyleReleaseRotation(PlayerController shooter)
@@ -445,9 +497,15 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         if (_offlineHolder != shooter || !_item.IsHeld)
             return;
 
-        BuildShootVelocity(shooter, cameraForward, out Vector3 velocityDelta, out Vector3 dropPos, out Quaternion dropRot);
+        BuildShootVelocity(
+            shooter,
+            cameraForward,
+            out Vector3 velocityDelta,
+            out Vector3 angularVelocity,
+            out Vector3 dropPos,
+            out Quaternion dropRot);
         _offlineHolder = null;
-        _item.ApplyReleasedWorldStateWithVelocityDelta(dropPos, dropRot, velocityDelta);
+        _item.ApplyReleasedWorldStateWithVelocityDelta(dropPos, dropRot, velocityDelta, angularVelocity);
         shooter.RefreshInventoryViewFromNetwork();
     }
 
