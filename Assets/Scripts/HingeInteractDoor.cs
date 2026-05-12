@@ -540,25 +540,45 @@ public class HingeInteractDoor : NetworkBehaviour
     }
 
     /// <summary>Server-only: clear lock only. Call after the player key was consumed by inventory code.</summary>
-    public void ServerUnlockFromKey()
+    public bool ServerUnlockFromKey()
     {
         if (!IsServer)
-            return;
-        if (!useKeyToUnlock || !_isLocked.Value)
-            return;
+            return false;
+        if (!useKeyToUnlock || !IsLocked)
+            return false;
         if (IsBusy)
-            return;
-        ServerUnlockThisLeafOnlyFromKey();
+            return false;
+
+        bool unlockedAny = ServerUnlockThisLeafOnlyFromKey();
         if (pairedLeaf != null && pairedLeaf.useKeyToUnlock && pairedLeaf.IsLocked && !pairedLeaf.IsBusy)
-            pairedLeaf.ServerUnlockThisLeafOnlyFromKey();
+        {
+            bool unlockedPair = pairedLeaf.ServerUnlockThisLeafOnlyFromKey();
+            unlockedAny |= unlockedPair;
+            if (unlockedPair && !pairedLeaf.IsSpawned)
+                NetworkPlayerInventory.ServerBroadcastProceduralDoorUnlockIfNeeded(pairedLeaf);
+        }
+
+        return unlockedAny;
     }
 
-    void ServerUnlockThisLeafOnlyFromKey()
+    bool ServerUnlockThisLeafOnlyFromKey()
     {
-        if (!IsServer || !useKeyToUnlock || !_isLocked.Value)
-            return;
-        _isLocked.Value = false;
+        if (!IsServer || !useKeyToUnlock || !IsLocked)
+            return false;
+
+        if (IsSpawned)
+        {
+            _isLocked.Value = false;
+        }
+        else
+        {
+            _lockedOffline = false;
+            _mayOpenUnlockedTime = Time.unscaledTime + Mathf.Max(0f, openAfterUnlockDelay);
+            PlayDoorUnlockSfx();
+        }
+
         OnJailUnlockedByPlayerKey?.Invoke(this);
+        return true;
     }
 
     /// <summary>Single-player / non-network: key was removed from inventory by the player; door stays closed until open interact.</summary>
@@ -589,8 +609,13 @@ public class HingeInteractDoor : NetworkBehaviour
             return;
 
         ApplyProceduralRemoteUnlockThisLeafOnly();
-        if (pairedLeaf != null && !pairedLeaf.IsSpawned && pairedLeaf.useKeyToUnlock && pairedLeaf.IsLocked && !pairedLeaf.IsBusy)
-            pairedLeaf.ApplyProceduralRemoteUnlockThisLeafOnly();
+        if (pairedLeaf != null && pairedLeaf.useKeyToUnlock && pairedLeaf.IsLocked && !pairedLeaf.IsBusy)
+        {
+            if (pairedLeaf.IsSpawned)
+                pairedLeaf.ServerUnlockThisLeafOnlyFromKey();
+            else
+                pairedLeaf.ApplyProceduralRemoteUnlockThisLeafOnly();
+        }
     }
 
     void ApplyProceduralRemoteUnlockThisLeafOnly()
@@ -621,16 +646,23 @@ public class HingeInteractDoor : NetworkBehaviour
         PlayDoorOpenSfx(open);
         StartMoveToState(open, false);
 
-        if (!_skipProceduralOpenPair && pairedLeaf != null && !pairedLeaf.IsSpawned && !pairedLeaf.IsBusy)
+        if (!_skipProceduralOpenPair && pairedLeaf != null && !pairedLeaf.IsBusy)
         {
-            pairedLeaf._skipProceduralOpenPair = true;
-            try
+            if (pairedLeaf.IsSpawned)
             {
-                pairedLeaf.ApplyProceduralRemoteOpenState(open);
+                pairedLeaf.ServerApplyOpenFromPairedLeaf(open);
             }
-            finally
+            else
             {
-                pairedLeaf._skipProceduralOpenPair = false;
+                pairedLeaf._skipProceduralOpenPair = true;
+                try
+                {
+                    pairedLeaf.ApplyProceduralRemoteOpenState(open);
+                }
+                finally
+                {
+                    pairedLeaf._skipProceduralOpenPair = false;
+                }
             }
         }
     }
@@ -822,8 +854,17 @@ public class HingeInteractDoor : NetworkBehaviour
             _isOpen.Value = false;
         }
 
-        if (pairedLeaf != null && pairedLeaf.IsSpawned)
-            pairedLeaf.ServerApplyOpenFromPairedLeaf(_isOpen.Value);
+        if (pairedLeaf != null)
+        {
+            if (pairedLeaf.IsSpawned)
+            {
+                pairedLeaf.ServerApplyOpenFromPairedLeaf(_isOpen.Value);
+            }
+            else if (pairedLeaf.ServerApplyProceduralOpenFromPairedLeaf(_isOpen.Value, senderId))
+            {
+                NetworkPlayerInventory.ServerBroadcastProceduralDoorOpenStateIfNeeded(pairedLeaf, _isOpen.Value);
+            }
+        }
     }
 
     /// <summary>Server only: double-door mate already toggled; mirror open state without a second RPC.</summary>
@@ -841,6 +882,30 @@ public class HingeInteractDoor : NetworkBehaviour
         }
 
         _isOpen.Value = open;
+    }
+
+    /// <summary>Server only: mirror a spawned double-door leaf onto an unspawned procedural mate.</summary>
+    bool ServerApplyProceduralOpenFromPairedLeaf(bool open, ulong senderClientId)
+    {
+        if (!IsServer || IsSpawned || hinge == null || IsBusy)
+            return false;
+        if (_isOpenOffline == open)
+            return false;
+        if (open)
+        {
+            if (useKeyToUnlock && (_lockedOffline || Time.unscaledTime < _mayOpenUnlockedTime))
+                return false;
+            _openPromptOffline = false;
+        }
+        else if (!ServerInvokeCloseValidator(closing: true, senderClientId))
+        {
+            return false;
+        }
+
+        _isOpenOffline = open;
+        PlayDoorOpenSfx(open);
+        StartMoveToState(open, false);
+        return true;
     }
 
     void SyncPairedLeafLocalOpen(bool open, bool playSfx)

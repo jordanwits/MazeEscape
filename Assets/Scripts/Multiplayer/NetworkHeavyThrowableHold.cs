@@ -437,8 +437,30 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         if (IsServer && !IsClient)
             return;
 
-        _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
+        if (IsServer)
+            _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
+        else
+            ApplyReleasedMirrorState(worldPosition, worldRotation);
+
         SetPhysicsNetworkingEnabled(true);
+    }
+
+    void ApplyReleasedMirrorState(Vector3 worldPosition, Quaternion worldRotation)
+    {
+        _item.ApplyNetworkWorldState(worldPosition, worldRotation, default);
+
+        Rigidbody rb = _item.ItemRigidbody;
+        if (rb == null)
+            return;
+
+        if (!rb.isKinematic)
+        {
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
+
+        rb.isKinematic = true;
+        rb.useGravity = false;
     }
 
     void BuildShootVelocity(

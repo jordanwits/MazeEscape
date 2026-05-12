@@ -959,7 +959,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
             {
                 if (!TryGetConnectedPlayerPosition(OwnerClientId, out Vector3 playerPosition))
                     return;
-                if (!door.IsLocked || !door.IsInInteractRange(playerPosition))
+                if (!door.IsLocked || door.IsBusy || !door.IsInInteractRange(playerPosition))
                     return;
                 if (!ServerTryConsumeKeyItem())
                     return;
@@ -981,9 +981,12 @@ public class NetworkPlayerInventory : NetworkBehaviour
             }
             if (!door.IsInInteractRange(client.PlayerObject.transform.position))
                 return;
+            if (door.IsBusy)
+                return;
             if (!ServerTryConsumeKeyItem())
                 return;
-            door.ServerUnlockFromKey();
+            if (!door.ServerUnlockFromKey())
+                return;
             return;
         }
 
@@ -1033,7 +1036,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         {
             return;
         }
-        if (!doorObject.TryGetComponent(out HingeInteractDoor door) || !door.IsLocked)
+        if (!doorObject.TryGetComponent(out HingeInteractDoor door) || !door.IsLocked || door.IsBusy)
             return;
         if (!NetworkManager.Singleton.ConnectedClients.TryGetValue(serverRpcParams.Receive.SenderClientId, out NetworkClient client)
             || client.PlayerObject == null)
@@ -1044,7 +1047,8 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
         if (!ServerTryConsumeKeyItem())
             return;
-        door.ServerUnlockFromKey();
+        if (!door.ServerUnlockFromKey())
+            return;
     }
 
     [ServerRpc]
@@ -1052,7 +1056,10 @@ public class NetworkPlayerInventory : NetworkBehaviour
     {
         if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
             return;
-        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null || !door.IsLocked)
+        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door)
+            || door == null
+            || !door.IsLocked
+            || door.IsBusy)
             return;
         if (!TryGetConnectedPlayerPosition(serverRpcParams.Receive.SenderClientId, out Vector3 playerPosition))
             return;
@@ -1144,6 +1151,36 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
 
         relay.ProceduralJailorOpenForEntryMirrorClientRpc(door.DoorId, door.IdentityHintPosition);
+    }
+
+    public static void ServerBroadcastProceduralDoorUnlockIfNeeded(HingeInteractDoor door)
+    {
+        if (door == null || IsHingeDoorLeafNetworkSpawned(door))
+            return;
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return;
+
+        NetworkPlayerInventory relay = ResolveServerRelayInventory();
+        if (relay == null)
+            return;
+
+        relay.ApplyProceduralDoorUnlockClientRpc(door.DoorId, door.IdentityHintPosition);
+    }
+
+    public static void ServerBroadcastProceduralDoorOpenStateIfNeeded(HingeInteractDoor door, bool open)
+    {
+        if (door == null || IsHingeDoorLeafNetworkSpawned(door))
+            return;
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return;
+
+        NetworkPlayerInventory relay = ResolveServerRelayInventory();
+        if (relay == null)
+            return;
+
+        relay.ApplyProceduralDoorOpenStateClientRpc(door.DoorId, door.IdentityHintPosition, open);
     }
 
     public static void ServerSendProceduralJailDoorSnapshotsToClient(ulong targetClientId)

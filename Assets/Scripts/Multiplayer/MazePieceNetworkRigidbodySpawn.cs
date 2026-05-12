@@ -1,3 +1,4 @@
+using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -10,4 +11,27 @@ using UnityEngine;
 [RequireComponent(typeof(NetworkObject))]
 public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
 {
+    NetworkObject _networkObject;
+
+    void Awake()
+    {
+        _networkObject = GetComponent<NetworkObject>();
+    }
+
+    IEnumerator Start()
+    {
+        yield return null;
+
+        NetworkManager networkManager = NetworkManager.Singleton;
+        if (networkManager == null || !networkManager.IsListening || networkManager.IsServer)
+            yield break;
+
+        if (_networkObject == null)
+            _networkObject = GetComponent<NetworkObject>();
+
+        if (_networkObject == null || _networkObject.IsSpawned)
+            yield break;
+
+        Destroy(gameObject);
+    }
 }
