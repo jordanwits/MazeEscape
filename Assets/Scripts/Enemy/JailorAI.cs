@@ -141,6 +141,26 @@ public class JailorAI : MonoBehaviour
     [SerializeField, Min(0.05f)] float propStuckNudgeMaxRadius = 2.1f;
     [SerializeField, Min(0.25f)] float propStuckNavSampleRadius = 3.5f;
 
+    [Header("Pit recovery")]
+    [Tooltip(
+        "Watchdog for the case where the Jailor lands on a tiny NavMesh patch inside a pit. "
+            + "RecoverNavMeshIfOffMesh skips when isOnNavMesh=true, so this fires when his Y sits well below the nearest rim NavMesh.")]
+    [SerializeField, Min(0.05f)] float pitStuckCheckInterval = 0.25f;
+    [Tooltip("How far (meters) below the nearest sampled NavMesh point he must sit to count as 'in a pit'.")]
+    [SerializeField, Min(0.25f)] float pitStuckBelowNavMeshThreshold = 1.5f;
+    [Tooltip("Vertical search lift used when sampling NavMesh above the Jailor — should cover the deepest pit.")]
+    [SerializeField, Min(1f)] float pitStuckVerticalSearchHeight = 12f;
+    [Tooltip("XZ sample radii (meters) tried in order when looking for a rim NavMesh point to warp to.")]
+    [SerializeField] float[] pitStuckSampleRadii = { 4f, 8f, 16f, 28f };
+    [Tooltip("Below this horizontal speed (m/s) the Jailor counts as 'not progressing' for pit-stuck accumulation.")]
+    [SerializeField, Min(0f)] float pitStuckLowSpeedThreshold = 0.25f;
+    [Tooltip("Sustained seconds matching all pit-stuck conditions before a rescue warp fires.")]
+    [SerializeField, Min(0.25f)] float pitStuckAccumulateSeconds = 1.75f;
+    [Tooltip("Minimum seconds between pit-stuck rescue warps so the watchdog can't loop on a deep arrival landing.")]
+    [SerializeField, Min(0.25f)] float pitStuckRescueCooldown = 1.5f;
+    [Tooltip("Vertical lift applied after pit-stuck warp so the agent does not immediately re-sample pit-floor NavMesh.")]
+    [SerializeField, Min(0f)] float pitStuckRescueLift = 0.1f;
+
     [Header("Patrol")]
     [SerializeField] float patrolSpeed = 2.2f;
     [SerializeField] float patrolMinWaypointDistance = 6f;
@@ -287,6 +307,9 @@ public class JailorAI : MonoBehaviour
     Vector3 _positionBeforeCharacterMove;
     float _propStuckAccumulatedTime;
     float _nextPropStuckRecoveryTime;
+    float _pitStuckAccumulatedTime;
+    float _nextPitStuckCheckTime;
+    float _nextPitStuckRescueTime;
 
     JailDeliveryPhase _jailDeliveryPhase;
     HingeInteractDoor _activeJailDoor;
@@ -701,6 +724,7 @@ public class JailorAI : MonoBehaviour
             return;
 
         RecoverNavMeshIfOffMesh();
+        UpdatePitStuckWatchdog();
 
         RefreshTargetFromSightAndHearing();
 
@@ -2783,6 +2807,70 @@ public class JailorAI : MonoBehaviour
             return;
 
         TryWarpToNearestNavMesh(NavMeshSnapRadiiAggressive);
+    }
+
+    /// <summary>
+    /// Defends against the case where the Jailor falls into a pit but lands on a tiny NavMesh island —
+    /// <see cref="RecoverNavMeshIfOffMesh"/> skips while <c>isOnNavMesh</c> is true and the pit's KillZone trigger may not reach him.
+    /// Compares his Y to the nearest rim NavMesh point; if he stays meaningfully below it without moving, warp him out.
+    /// </summary>
+    void UpdatePitStuckWatchdog()
+    {
+        if (_isTraversingOffMeshJump
+            || _state == JailorState.Grabbing
+            || _state == JailorState.JailDelivery
+            || navMeshAgent == null
+            || !navMeshAgent.enabled)
+        {
+            _pitStuckAccumulatedTime = 0f;
+            return;
+        }
+
+        if (Time.time < _nextPitStuckCheckTime)
+            return;
+        _nextPitStuckCheckTime = Time.time + Mathf.Max(0.05f, pitStuckCheckInterval);
+
+        Vector3 origin = transform.position + Vector3.up * Mathf.Max(1f, pitStuckVerticalSearchHeight);
+        NavMeshHit hit = default;
+        bool sampled = false;
+        if (pitStuckSampleRadii != null)
+        {
+            for (int i = 0; i < pitStuckSampleRadii.Length; i++)
+            {
+                float radius = pitStuckSampleRadii[i];
+                if (radius <= 0f)
+                    continue;
+                if (NavMesh.SamplePosition(origin, out hit, radius, NavMesh.AllAreas))
+                {
+                    sampled = true;
+                    break;
+                }
+            }
+        }
+
+        if (!sampled)
+        {
+            _pitStuckAccumulatedTime = 0f;
+            return;
+        }
+
+        float drop = hit.position.y - transform.position.y;
+        Vector3 horizontalVelocity = navMeshAgent.velocity;
+        horizontalVelocity.y = 0f;
+        float horizontalSpeed = horizontalVelocity.magnitude;
+
+        if (drop >= pitStuckBelowNavMeshThreshold && horizontalSpeed <= pitStuckLowSpeedThreshold)
+            _pitStuckAccumulatedTime += Mathf.Max(0.05f, pitStuckCheckInterval);
+        else
+            _pitStuckAccumulatedTime = 0f;
+
+        if (_pitStuckAccumulatedTime < pitStuckAccumulateSeconds || Time.time < _nextPitStuckRescueTime)
+            return;
+
+        Vector3 safePosition = hit.position + Vector3.up * Mathf.Max(0f, pitStuckRescueLift);
+        NotifyRescuedFromPitWarp(safePosition);
+        _pitStuckAccumulatedTime = 0f;
+        _nextPitStuckRescueTime = Time.time + Mathf.Max(0.25f, pitStuckRescueCooldown);
     }
 
     bool TrySnapToNavMesh()
