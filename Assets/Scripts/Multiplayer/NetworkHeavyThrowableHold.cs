@@ -321,7 +321,10 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             out Vector3 angularVelocity,
             out Vector3 dropPos,
             out Quaternion dropRot);
-        ApplyReleaseAuthority(velocityDelta, angularVelocity, dropPos, dropRot);
+        ulong ownerClientId = ulong.MaxValue;
+        if (shooter.TryGetComponent(out NetworkObject shooterNet))
+            ownerClientId = shooterNet.OwnerClientId;
+        ApplyReleaseAuthority(velocityDelta, angularVelocity, dropPos, dropRot, ownerClientId);
     }
 
     void DropOffline(PlayerController shooter)
@@ -474,10 +477,18 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             out Vector3 angularVelocity,
             out Vector3 dropPos,
             out Quaternion dropRot);
-        ApplyReleaseAuthority(velocityDelta, angularVelocity, dropPos, dropRot);
+        ulong ownerClientId = ulong.MaxValue;
+        if (shooter.TryGetComponent(out NetworkObject shooterNet))
+            ownerClientId = shooterNet.OwnerClientId;
+        ApplyReleaseAuthority(velocityDelta, angularVelocity, dropPos, dropRot, ownerClientId);
     }
 
-    void ApplyReleaseAuthority(Vector3 velocityDelta, Vector3 angularVelocity, Vector3 worldPosition, Quaternion worldRotation)
+    void ApplyReleaseAuthority(
+        Vector3 velocityDelta,
+        Vector3 angularVelocity,
+        Vector3 worldPosition,
+        Quaternion worldRotation,
+        ulong releasingOwnerClientId)
     {
         if (IsSpawned)
             _holderNetworkObjectId.Value = 0UL;
@@ -490,21 +501,36 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         if (!IsSpawned)
             NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, false, 0UL, worldPosition, worldRotation);
         if (IsSpawned)
-            ApplyReleaseClientRpc(worldPosition, worldRotation, velocityDelta, angularVelocity);
+            ApplyReleaseClientRpc(worldPosition, worldRotation, velocityDelta, angularVelocity, releasingOwnerClientId);
     }
 
     [ClientRpc]
-    void ApplyReleaseClientRpc(Vector3 worldPosition, Quaternion worldRotation, Vector3 velocityDelta, Vector3 angularVelocity)
+    void ApplyReleaseClientRpc(
+        Vector3 worldPosition,
+        Quaternion worldRotation,
+        Vector3 velocityDelta,
+        Vector3 angularVelocity,
+        ulong releasingOwnerClientId)
     {
         if (IsServer && !IsClient)
             return;
 
         if (IsServer)
             _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
+        else if (IsReleasingLocalClient(releasingOwnerClientId))
+            _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
         else
             ApplyReleasedMirrorState(worldPosition, worldRotation);
 
         SetPhysicsNetworkingEnabled(true);
+    }
+
+    static bool IsReleasingLocalClient(ulong releasingOwnerClientId)
+    {
+        if (releasingOwnerClientId == ulong.MaxValue)
+            return false;
+        NetworkManager nm = NetworkManager.Singleton;
+        return nm != null && nm.LocalClientId == releasingOwnerClientId;
     }
 
     void ApplyReleasedMirrorState(Vector3 worldPosition, Quaternion worldRotation)
