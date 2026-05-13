@@ -15,10 +15,17 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
     const float DuplicateMatchDistance = 1.5f;
 
     NetworkObject _networkObject;
+    Renderer[] _placeholderRenderers;
+    Collider[] _placeholderColliders;
+    Rigidbody[] _placeholderRigidbodies;
+    bool _placeholderSuppressed;
 
     void Awake()
     {
         _networkObject = GetComponent<NetworkObject>();
+        _placeholderRenderers = GetComponentsInChildren<Renderer>(true);
+        _placeholderColliders = GetComponentsInChildren<Collider>(true);
+        _placeholderRigidbodies = GetComponentsInChildren<Rigidbody>(true);
     }
 
     IEnumerator Start()
@@ -33,10 +40,12 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
         if (_networkObject == null || _networkObject.IsSpawned)
             yield break;
 
+        SuppressLocalPlaceholder();
+
         float end = Time.unscaledTime + DuplicateSearchSeconds;
         while (Time.unscaledTime < end)
         {
-            if (HasSpawnedCounterpartNearby())
+            if (HasSpawnedCounterpart())
             {
                 Destroy(gameObject);
                 yield break;
@@ -46,7 +55,7 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
         }
     }
 
-    bool HasSpawnedCounterpartNearby()
+    bool HasSpawnedCounterpart()
     {
         if (_networkObject == null)
             return false;
@@ -60,8 +69,11 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
             NetworkObject spawned = pair.Value;
             if (spawned == null || spawned == _networkObject)
                 continue;
-            if (!LooksLikeSamePrefabInstance(spawned.gameObject))
+            if (!LooksLikeSamePrefabInstance(spawned))
                 continue;
+
+            // Same prefab identity can be verified without NGO's GlobalObjectIdHash (not on all Netcode versions).
+            // Local procedural copy and the server-spawned instance should overlap when they describe the same placement.
             if ((spawned.transform.position - transform.position).sqrMagnitude > DuplicateMatchDistance * DuplicateMatchDistance)
                 continue;
 
@@ -71,18 +83,72 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
         return false;
     }
 
-    bool LooksLikeSamePrefabInstance(GameObject spawned)
+    bool LooksLikeSamePrefabInstance(NetworkObject spawned)
     {
         if (spawned == null)
             return false;
 
+        GameObject spawnedObject = spawned.gameObject;
         if (TryGetComponent(out GrabbableInventoryItem localItem)
-            && spawned.TryGetComponent(out GrabbableInventoryItem spawnedItem))
+            && spawnedObject.TryGetComponent(out GrabbableInventoryItem spawnedItem))
         {
             return localItem.ItemTypeId == spawnedItem.ItemTypeId;
         }
 
-        return StripCloneSuffix(spawned.name) == StripCloneSuffix(gameObject.name);
+        return StripCloneSuffix(spawnedObject.name) == StripCloneSuffix(gameObject.name);
+    }
+
+    void SuppressLocalPlaceholder()
+    {
+        if (_placeholderSuppressed)
+            return;
+
+        SetRenderersEnabled(false);
+        SetCollidersEnabled(false);
+        FreezeRigidbodies();
+        _placeholderSuppressed = true;
+    }
+
+    void SetRenderersEnabled(bool enabled)
+    {
+        if (_placeholderRenderers == null)
+            return;
+
+        for (int i = 0; i < _placeholderRenderers.Length; i++)
+        {
+            if (_placeholderRenderers[i] != null)
+                _placeholderRenderers[i].enabled = enabled;
+        }
+    }
+
+    void SetCollidersEnabled(bool enabled)
+    {
+        if (_placeholderColliders == null)
+            return;
+
+        for (int i = 0; i < _placeholderColliders.Length; i++)
+        {
+            if (_placeholderColliders[i] != null)
+                _placeholderColliders[i].enabled = enabled;
+        }
+    }
+
+    void FreezeRigidbodies()
+    {
+        if (_placeholderRigidbodies == null)
+            return;
+
+        for (int i = 0; i < _placeholderRigidbodies.Length; i++)
+        {
+            Rigidbody body = _placeholderRigidbodies[i];
+            if (body == null)
+                continue;
+
+            body.linearVelocity = Vector3.zero;
+            body.angularVelocity = Vector3.zero;
+            body.isKinematic = true;
+            body.useGravity = false;
+        }
     }
 
     static string StripCloneSuffix(string value)
