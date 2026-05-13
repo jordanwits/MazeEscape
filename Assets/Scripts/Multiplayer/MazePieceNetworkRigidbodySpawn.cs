@@ -6,26 +6,22 @@ using System.Collections;
 /// Marker on a networked rigidbody rooted under a procedural maze chunk. The server discovers this after
 /// <see cref="Instantiate"/> and calls <see cref="NetworkObject.Spawn"/> so physics and transform
 /// replicate (see <see cref="ProceduralMazeCoordinator.TrySpawnMazeNetworkRigidbodyPropsIfPresent"/>).
+/// Non-server clients also instantiate the same chunk locally; that copy is not spawned. When the replicated
+/// spawned instance appears, this duplicate is destroyed. Do not hide the local instance up front — if the
+/// spawn is late (slow join, Editor paused, etc.) hiding would leave nothing visible.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
 public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
 {
-    const float DuplicateSearchSeconds = 5f;
-    const float DuplicateMatchDistance = 1.5f;
+    const float DuplicateSearchSeconds = 60f;
+    const float DuplicateMatchDistance = 8f;
 
     NetworkObject _networkObject;
-    Renderer[] _placeholderRenderers;
-    Collider[] _placeholderColliders;
-    Rigidbody[] _placeholderRigidbodies;
-    bool _placeholderSuppressed;
 
     void Awake()
     {
         _networkObject = GetComponent<NetworkObject>();
-        _placeholderRenderers = GetComponentsInChildren<Renderer>(true);
-        _placeholderColliders = GetComponentsInChildren<Collider>(true);
-        _placeholderRigidbodies = GetComponentsInChildren<Rigidbody>(true);
     }
 
     IEnumerator Start()
@@ -39,8 +35,6 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
 
         if (_networkObject == null || _networkObject.IsSpawned)
             yield break;
-
-        SuppressLocalPlaceholder();
 
         float end = Time.unscaledTime + DuplicateSearchSeconds;
         while (Time.unscaledTime < end)
@@ -72,8 +66,8 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
             if (!LooksLikeSamePrefabInstance(spawned))
                 continue;
 
-            // Same prefab identity can be verified without NGO's GlobalObjectIdHash (not on all Netcode versions).
-            // Local procedural copy and the server-spawned instance should overlap when they describe the same placement.
+            // Local procedural copy and the server-spawned instance should align once Netcode applies state.
+            // Use a generous radius so one slow frame / Editor pause on focus does not miss the match forever.
             if ((spawned.transform.position - transform.position).sqrMagnitude > DuplicateMatchDistance * DuplicateMatchDistance)
                 continue;
 
@@ -92,63 +86,14 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
         if (TryGetComponent(out GrabbableInventoryItem localItem)
             && spawnedObject.TryGetComponent(out GrabbableInventoryItem spawnedItem))
         {
-            return localItem.ItemTypeId == spawnedItem.ItemTypeId;
+            if (localItem.ItemTypeId != spawnedItem.ItemTypeId)
+                return false;
+
+            // Many props share an item type across colors; require the same authored name (RingBlue vs RingGreen).
+            return StripCloneSuffix(spawnedObject.name) == StripCloneSuffix(gameObject.name);
         }
 
         return StripCloneSuffix(spawnedObject.name) == StripCloneSuffix(gameObject.name);
-    }
-
-    void SuppressLocalPlaceholder()
-    {
-        if (_placeholderSuppressed)
-            return;
-
-        SetRenderersEnabled(false);
-        SetCollidersEnabled(false);
-        FreezeRigidbodies();
-        _placeholderSuppressed = true;
-    }
-
-    void SetRenderersEnabled(bool enabled)
-    {
-        if (_placeholderRenderers == null)
-            return;
-
-        for (int i = 0; i < _placeholderRenderers.Length; i++)
-        {
-            if (_placeholderRenderers[i] != null)
-                _placeholderRenderers[i].enabled = enabled;
-        }
-    }
-
-    void SetCollidersEnabled(bool enabled)
-    {
-        if (_placeholderColliders == null)
-            return;
-
-        for (int i = 0; i < _placeholderColliders.Length; i++)
-        {
-            if (_placeholderColliders[i] != null)
-                _placeholderColliders[i].enabled = enabled;
-        }
-    }
-
-    void FreezeRigidbodies()
-    {
-        if (_placeholderRigidbodies == null)
-            return;
-
-        for (int i = 0; i < _placeholderRigidbodies.Length; i++)
-        {
-            Rigidbody body = _placeholderRigidbodies[i];
-            if (body == null)
-                continue;
-
-            body.linearVelocity = Vector3.zero;
-            body.angularVelocity = Vector3.zero;
-            body.isKinematic = true;
-            body.useGravity = false;
-        }
     }
 
     static string StripCloneSuffix(string value)
