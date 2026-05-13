@@ -5,10 +5,14 @@ using UnityEngine;
 using UnityEngine.Serialization;
 
 /// <summary>
-/// Server-authoritative carry for heavy throwables (StarBall, ring toss rings): not stored in
-/// <see cref="NetworkPlayerInventory"/>. Holder replicates via <see cref="_holderNetworkObjectId"/>;
-/// release uses ClientRpc +
-/// <see cref="HeavyThrowableHoldItem.ApplyReleasedWorldStateWithVelocityDelta"/>.
+/// Carry / throw networking for heavy throwables (StarBall, ring toss rings): not stored in
+/// <see cref="NetworkPlayerInventory"/>. Gameplay state (who holds it, pickup validation) stays
+/// server-authoritative via <see cref="_holderNetworkObjectId"/>. The physics body uses
+/// <b>Owner authority</b> NetworkTransform + NetworkRigidbody so the carrying / throwing client
+/// simulates locally — eliminating roundtrip lag on the throw arc. The server reclaims ownership
+/// once the body settles, so an idle ball is server-owned again (consistent state for bumps and
+/// future pickups). Release uses ClientRpc + <see cref="HeavyThrowableHoldItem.ApplyReleasedWorldStateWithVelocityDelta"/>
+/// only on the current owner; non-owners snap to the release pose and follow the owner via NGO.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
@@ -39,6 +43,11 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     [Tooltip("Initial spin around a ring's hole axis when dropped/tossed with G.")]
     [SerializeField, Min(0f)] float ringDropSpinAngularSpeed = 8f;
 
+    [Header("Ownership return")]
+    [Tooltip("After a client throws, ownership stays with them while the body is moving so they simulate locally. When linear+angular speed stays below this threshold for ServerSettleSecondsBeforeReturn, the server reclaims ownership so character bumps and idle state are server-side again.")]
+    [SerializeField, Min(0f)] float serverReclaimSpeedThreshold = 0.35f;
+    [SerializeField, Min(0.1f)] float serverSettleSecondsBeforeReturn = 1.25f;
+
     readonly NetworkVariable<ulong> _holderNetworkObjectId = new NetworkVariable<ulong>(
         0UL,
         NetworkVariableReadPermission.Everyone,
@@ -46,8 +55,13 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
     HeavyThrowableHoldItem _item;
     NetworkTransform _networkTransform;
+    NetworkObject _networkObject;
+    Rigidbody _rb;
 
     PlayerController _offlineHolder;
+
+    float _serverSettleAccumulator;
+    bool _serverWatchingForSettle;
 
     public ulong HolderNetworkObjectId => _holderNetworkObjectId.Value;
 
@@ -55,6 +69,10 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     {
         _item = GetComponent<HeavyThrowableHoldItem>();
         TryGetComponent(out _networkTransform);
+        _networkObject = GetComponent<NetworkObject>();
+        _rb = _item != null ? _item.ItemRigidbody : GetComponent<Rigidbody>();
+        if (_rb == null)
+            _rb = GetComponent<Rigidbody>();
     }
 
     void OnEnable()
@@ -203,8 +221,39 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             return;
 
         _holderNetworkObjectId.Value = playerNetworkObjectId;
+        TransferOwnershipToClientForLocalSimulation(playerObj.OwnerClientId);
         if (!IsSpawned)
             NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, true, playerNetworkObjectId);
+    }
+
+    /// <summary>
+    /// Hand the NetworkObject to the picking-up / throwing client so they own the rigidbody simulation.
+    /// With Owner-authority NetworkTransform + NetworkRigidbody(AutoUpdateKinematicState) this makes the
+    /// owner's body non-kinematic and all other peers kinematic. Late-join state is still server-driven via
+    /// the holder NetworkVariable, so no snapshot path is lost.
+    /// </summary>
+    void TransferOwnershipToClientForLocalSimulation(ulong newOwnerClientId)
+    {
+        if (!IsServer || _networkObject == null || !_networkObject.IsSpawned)
+            return;
+        if (_networkObject.OwnerClientId == newOwnerClientId)
+            return;
+
+        _networkObject.ChangeOwnership(newOwnerClientId);
+        _serverWatchingForSettle = false;
+        _serverSettleAccumulator = 0f;
+    }
+
+    void ReturnOwnershipToServer()
+    {
+        if (!IsServer || _networkObject == null || !_networkObject.IsSpawned)
+            return;
+        if (_networkObject.IsOwnedByServer)
+            return;
+
+        _networkObject.ChangeOwnership(NetworkManager.ServerClientId);
+        _serverWatchingForSettle = false;
+        _serverSettleAccumulator = 0f;
     }
 
     public bool ServerTryPickupFromRelay(ulong playerNetworkObjectId, ulong senderClientId)
@@ -491,17 +540,80 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         ulong releasingOwnerClientId)
     {
         if (IsSpawned)
+        {
             _holderNetworkObjectId.Value = 0UL;
+        }
         else if (_item != null)
+        {
             _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
-
-        if (IsSpawned && IsServer && !IsClient)
-            _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
-
-        if (!IsSpawned)
             NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, false, 0UL, worldPosition, worldRotation);
-        if (IsSpawned)
-            ApplyReleaseClientRpc(worldPosition, worldRotation, velocityDelta, angularVelocity, releasingOwnerClientId);
+            return;
+        }
+
+        // Owner remains the throwing client so they simulate the arc locally — no roundtrip lag.
+        // Start a server-side watcher that reclaims ownership once the body settles. Dedicated-server
+        // case: the server is never the authority for the throw arc, so we never simulate here; the
+        // owning client drives the NetworkTransform.
+        _serverWatchingForSettle = IsServer && _networkObject != null && !_networkObject.IsOwnedByServer;
+        _serverSettleAccumulator = 0f;
+        _hasSpeedSample = false;
+
+        ApplyReleaseClientRpc(worldPosition, worldRotation, velocityDelta, angularVelocity, releasingOwnerClientId);
+    }
+
+    void FixedUpdate()
+    {
+        if (!IsServer || !_serverWatchingForSettle || _networkObject == null || !_networkObject.IsSpawned)
+            return;
+        if (_holderNetworkObjectId.Value != 0UL)
+        {
+            // Picked up again — pickup handler already handed off ownership.
+            _serverWatchingForSettle = false;
+            return;
+        }
+        if (_networkObject.IsOwnedByServer)
+        {
+            _serverWatchingForSettle = false;
+            return;
+        }
+
+        // Server's local rigidbody is kinematic mirror; read replicated transform delta to estimate speed.
+        // Simpler: check the rigidbody (it's kinematic on server, so this won't be accurate).
+        // Use NetworkTransform's last position via Rigidbody.linearVelocity when non-kinematic, otherwise
+        // approximate from transform delta between FixedUpdates.
+        float speed = EstimateBodySpeedForSettle();
+        if (speed <= serverReclaimSpeedThreshold)
+        {
+            _serverSettleAccumulator += Time.fixedDeltaTime;
+            if (_serverSettleAccumulator >= serverSettleSecondsBeforeReturn)
+                ReturnOwnershipToServer();
+        }
+        else
+        {
+            _serverSettleAccumulator = 0f;
+        }
+    }
+
+    Vector3 _lastSpeedSamplePos;
+    bool _hasSpeedSample;
+
+    float EstimateBodySpeedForSettle()
+    {
+        if (_rb != null && !_rb.isKinematic)
+            return _rb.linearVelocity.magnitude + _rb.angularVelocity.magnitude * 0.25f;
+
+        Vector3 p = transform.position;
+        if (!_hasSpeedSample)
+        {
+            _hasSpeedSample = true;
+            _lastSpeedSamplePos = p;
+            return float.PositiveInfinity; // first tick: assume moving
+        }
+
+        float dt = Time.fixedDeltaTime;
+        Vector3 dp = p - _lastSpeedSamplePos;
+        _lastSpeedSamplePos = p;
+        return dt > 0f ? dp.magnitude / dt : 0f;
     }
 
     [ClientRpc]
@@ -512,12 +624,11 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         Vector3 angularVelocity,
         ulong releasingOwnerClientId)
     {
-        if (IsServer && !IsClient)
-            return;
-
-        if (IsServer)
-            _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
-        else if (IsReleasingLocalClient(releasingOwnerClientId))
+        // The current NetworkObject owner runs the rigidbody locally; everyone else mirrors pose
+        // and lets NetworkTransform replicate the rest from the owner. This makes the throw arc
+        // smooth for the thrower regardless of whether they are host or a joined client.
+        bool simulateLocally = IsOwner;
+        if (simulateLocally)
             _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
         else
             ApplyReleasedMirrorState(worldPosition, worldRotation);
@@ -525,17 +636,9 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         SetPhysicsNetworkingEnabled(true);
     }
 
-    static bool IsReleasingLocalClient(ulong releasingOwnerClientId)
-    {
-        if (releasingOwnerClientId == ulong.MaxValue)
-            return false;
-        NetworkManager nm = NetworkManager.Singleton;
-        return nm != null && nm.LocalClientId == releasingOwnerClientId;
-    }
-
     void ApplyReleasedMirrorState(Vector3 worldPosition, Quaternion worldRotation)
     {
-        // Remote player: simulation is on the server only; pose hint from Rpc, then NGO sync keeps up with server ticks.
+        // Non-owner peer: snap to release pose hint; owner-authority NetworkTransform takes over from there.
         _item.ApplyNetworkWorldState(worldPosition, worldRotation, default);
         if (_item != null && _item.ItemRigidbody != null)
         {

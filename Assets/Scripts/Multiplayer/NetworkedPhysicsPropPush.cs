@@ -277,7 +277,7 @@ public sealed class NetworkedPhysicsPropPush : NetworkBehaviour
         float planarCharacterSpeed,
         ServerRpcParams rpcParams = default)
     {
-        if (!IsServer || _rb == null || _rb.isKinematic || !enabled)
+        if (!IsServer || _rb == null || !enabled)
             return;
 
         ulong sender = rpcParams.Receive.SenderClientId;
@@ -304,9 +304,45 @@ public sealed class NetworkedPhysicsPropPush : NetworkBehaviour
             transfer *= Mathf.Max(0.1f, receiver.PushGainMultiplier);
 
         Vector3 delta = worldPushHorizontalUnit * transfer;
+
+        // Owner-authority bodies (heavy throwables after release) are kinematic on the server. Route the
+        // velocity delta to whoever actually owns the rigidbody, otherwise the bump would be lost.
+        if (NetworkObject != null && !NetworkObject.IsOwnedByServer)
+        {
+            ulong ownerClientId = NetworkObject.OwnerClientId;
+            ApplyBumpVelocityDeltaToOwnerClientRpc(delta, planarCharacterSpeed, new ClientRpcParams
+            {
+                Send = new ClientRpcSendParams { TargetClientIds = new[] { ownerClientId } }
+            });
+            return;
+        }
+
+        if (_rb.isKinematic)
+            return;
+
         Vector3 vel = _rb.linearVelocity;
         vel.x += delta.x;
         vel.z += delta.z;
+        _rb.linearVelocity = vel;
+
+        if (TryGetComponent(out RigidbodyImpactSfx impactSfx))
+            impactSfx.NotifyCharacterControllerBump(planarCharacterSpeed);
+    }
+
+    [ClientRpc]
+    void ApplyBumpVelocityDeltaToOwnerClientRpc(
+        Vector3 worldVelocityDelta,
+        float planarCharacterSpeed,
+        ClientRpcParams rpcParams = default)
+    {
+        // Only the owner (already targeted by ClientRpcParams) simulates this body; ignore if our rigidbody
+        // is kinematic — that means we are not the active physics authority.
+        if (_rb == null || _rb.isKinematic)
+            return;
+
+        Vector3 vel = _rb.linearVelocity;
+        vel.x += worldVelocityDelta.x;
+        vel.z += worldVelocityDelta.z;
         _rb.linearVelocity = vel;
 
         if (TryGetComponent(out RigidbodyImpactSfx impactSfx))

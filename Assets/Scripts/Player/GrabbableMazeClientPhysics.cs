@@ -9,8 +9,11 @@ using UnityEngine;
 /// When <see cref="GrabbableInventoryItem"/> is present, the body stays kinematic while the item is held.
 /// </summary>
 /// <remarks>
-/// Objects with <see cref="NetworkRigidbody"/> replicate server physics; clients must not enable local simulation
-/// after the maze is ready or motion fights replication and looks choppy.
+/// Objects with <see cref="NetworkRigidbody"/> replicate authority-driven physics; non-authority peers
+/// (server or owner depending on AuthorityMode) must not enable local simulation after the maze is ready
+/// or motion fights replication and looks choppy. Heavy throwables run Owner authority so the owning
+/// client is the active simulator and is also skipped here — NGO's AutoUpdateKinematicState manages
+/// kinematic state for that case.
 /// </remarks>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
@@ -40,7 +43,11 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
         if (_item != null && _item.IsHeld)
             return;
 
-        // Let the NGO NetworkRigidbody + NetworkTransform show server simulation; never unlock local physics here.
+        // Owner-authority bodies simulate locally on the owning client — don't fight NGO's kinematic state.
+        if (IsOwner)
+            return;
+
+        // Let the NGO NetworkRigidbody + NetworkTransform show authority simulation; never unlock local physics here.
         if (_networkRigidbody != null)
         {
             if (!ProceduralMazeCoordinator.IsLocalMazeCollidersReady)
