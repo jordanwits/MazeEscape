@@ -509,6 +509,7 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
     void ApplyReleasedMirrorState(Vector3 worldPosition, Quaternion worldRotation)
     {
+        // Remote player: simulation is on the server only; pose hint from Rpc, then NGO sync keeps up with server ticks.
         _item.ApplyNetworkWorldState(worldPosition, worldRotation, default);
         if (_item != null && _item.ItemRigidbody != null)
         {

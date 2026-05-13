@@ -1,4 +1,5 @@
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
 
 /// <summary>
@@ -7,6 +8,10 @@ using UnityEngine;
 /// <see cref="ProceduralMazeCoordinator.IsLocalMazeCollidersReady"/> becomes true.
 /// When <see cref="GrabbableInventoryItem"/> is present, the body stays kinematic while the item is held.
 /// </summary>
+/// <remarks>
+/// Objects with <see cref="NetworkRigidbody"/> replicate server physics; clients must not enable local simulation
+/// after the maze is ready or motion fights replication and looks choppy.
+/// </remarks>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
 [RequireComponent(typeof(Rigidbody))]
@@ -14,10 +19,12 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
 {
     GrabbableInventoryItem _item;
     Rigidbody _rb;
+    NetworkRigidbody _networkRigidbody;
     bool _lockedWorldPhysicsUntilMazeReady;
 
     public override void OnNetworkSpawn()
     {
+        TryGetComponent(out _networkRigidbody);
         TryGetComponent(out _item);
         if (_item != null)
             _rb = _item.ItemRigidbody;
@@ -32,6 +39,15 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
 
         if (_item != null && _item.IsHeld)
             return;
+
+        // Let the NGO NetworkRigidbody + NetworkTransform show server simulation; never unlock local physics here.
+        if (_networkRigidbody != null)
+        {
+            if (!ProceduralMazeCoordinator.IsLocalMazeCollidersReady)
+                FreezeLocalBody();
+
+            return;
+        }
 
         if (ProceduralMazeCoordinator.IsLocalMazeCollidersReady)
         {
@@ -48,6 +64,12 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
             return;
         }
 
+        FreezeLocalBody();
+        _lockedWorldPhysicsUntilMazeReady = true;
+    }
+
+    void FreezeLocalBody()
+    {
         if (!_rb.isKinematic || _rb.useGravity)
         {
             _rb.isKinematic = true;
@@ -55,7 +77,5 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
             _rb.linearVelocity = Vector3.zero;
             _rb.angularVelocity = Vector3.zero;
         }
-
-        _lockedWorldPhysicsUntilMazeReady = true;
     }
 }
