@@ -77,7 +77,7 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
     void FixedUpdate()
     {
-        if (_item == null || _item.IsHeld)
+        if (_item == null || _item.IsHeld || IsSpawned)
             return;
         NetworkManager nm = NetworkManager.Singleton;
         if (nm == null || !nm.IsListening || !nm.IsServer)
@@ -286,7 +286,8 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             return;
 
         _holderNetworkObjectId.Value = playerNetworkObjectId;
-        NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, true, playerNetworkObjectId);
+        if (!IsSpawned)
+            NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, true, playerNetworkObjectId);
     }
 
     public bool ServerTryPickupFromRelay(ulong playerNetworkObjectId, ulong senderClientId)
@@ -569,7 +570,8 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         if (IsSpawned && IsServer && !IsClient)
             _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
 
-        NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, false, 0UL, worldPosition, worldRotation);
+        if (!IsSpawned)
+            NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, false, 0UL, worldPosition, worldRotation);
         if (IsSpawned)
             ApplyReleaseClientRpc(worldPosition, worldRotation, velocityDelta, angularVelocity);
     }
