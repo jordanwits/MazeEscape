@@ -190,6 +190,7 @@ public partial class PlayerController : MonoBehaviour
     bool _audiblySprintingForAi;
     RectTransform _staminaFillRect;
     GameObject _staminaBarRoot;
+    GameObject _crosshairRoot;
     GameObject _inventorySlotsRoot;
     Image[] _inventorySlotBorderImages;
     Image[] _inventorySlotIconImages;
@@ -332,6 +333,8 @@ public partial class PlayerController : MonoBehaviour
 
         if (staminaBarImage == null && autoCreateStaminaBar)
             staminaBarImage = CreateStaminaBarUI();
+
+        CreateCrosshairUI();
 
         RefreshStaminaUI();
         RefreshInventorySlotHud();
@@ -875,6 +878,9 @@ public partial class PlayerController : MonoBehaviour
         if (_inventorySlotsRoot != null)
             _inventorySlotsRoot.SetActive(visible);
 
+        if (_crosshairRoot != null)
+            _crosshairRoot.SetActive(visible);
+
         if (!visible)
             SetPickupPromptVisible(false);
     }
@@ -1038,6 +1044,49 @@ public partial class PlayerController : MonoBehaviour
             zombieHitClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieHit.wav");
     }
 #endif
+
+    void CreateCrosshairUI()
+    {
+        Canvas canvas = FindAnyObjectByType<Canvas>();
+        if (canvas == null)
+        {
+            GameObject canvasGo = new GameObject("CrosshairCanvas");
+            canvas = canvasGo.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 10;
+            canvasGo.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            canvasGo.GetComponent<CanvasScaler>().referenceResolution = new Vector2(1920, 1080);
+            canvasGo.AddComponent<GraphicRaycaster>();
+        }
+
+        GameObject dot = new GameObject("Crosshair");
+        dot.transform.SetParent(canvas.transform, false);
+        RectTransform rt = dot.AddComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0.5f, 0.5f);
+        rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = Vector2.zero;
+        rt.sizeDelta = new Vector2(8f, 8f);
+        Image img = dot.AddComponent<Image>();
+        img.sprite = CreateCircleSprite(64);
+        img.color = new Color(0.78f, 0.78f, 0.78f, 0.5f);
+        img.raycastTarget = false;
+        _crosshairRoot = dot;
+    }
+
+    Sprite CreateCircleSprite(int resolution)
+    {
+        Texture2D tex = new Texture2D(resolution, resolution, TextureFormat.RGBA32, false);
+        Color[] pixels = new Color[resolution * resolution];
+        Vector2 center = new Vector2(resolution * 0.5f - 0.5f, resolution * 0.5f - 0.5f);
+        float radius = resolution * 0.5f - 1f;
+        for (int y = 0; y < resolution; y++)
+            for (int x = 0; x < resolution; x++)
+                pixels[y * resolution + x] = Vector2.Distance(new Vector2(x, y), center) <= radius ? Color.white : Color.clear;
+        tex.SetPixels(pixels);
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0, 0, resolution, resolution), new Vector2(0.5f, 0.5f));
+    }
 
     Image CreateStaminaBarUI()
     {

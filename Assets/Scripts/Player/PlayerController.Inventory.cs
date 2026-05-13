@@ -799,7 +799,22 @@ public partial class PlayerController
         if (flashlightHoldPoint == null)
             return false;
 
+        if (IsHoldingHeavyThrowable())
+            return false;
+
         return TryFindInteractableGrabbable(out _);
+    }
+
+    bool IsHoldingHeavyThrowable()
+    {
+        if (NetworkManager.Singleton != null
+            && NetworkManager.Singleton.IsListening
+            && NetworkManager.Singleton.LocalClient?.PlayerObject != null)
+        {
+            ulong id = NetworkManager.Singleton.LocalClient.PlayerObject.NetworkObjectId;
+            return NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(id) != null;
+        }
+        return NetworkHeavyThrowableHold.FindOfflineHeldBy(this) != null;
     }
 
     bool TryFindInteractableGrabbable(out GrabbableInventoryItem grabbable)
