@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -794,7 +795,8 @@ public class NetworkPlayerInventory : NetworkBehaviour
             }
             else
             {
-                g.ApplyNetworkWorldState(worldPosition, worldRotation, worldDropImpulse);
+                if (!TryApplyHeavyThrowableClientMirror(g, worldPosition, worldRotation))
+                    g.ApplyNetworkWorldState(worldPosition, worldRotation, worldDropImpulse);
             }
 
             if (g is GlowstickItem gStick)
@@ -804,6 +806,16 @@ public class NetworkPlayerInventory : NetworkBehaviour
         }
 
         playerController?.RefreshInventoryViewFromNetwork();
+    }
+
+    static bool TryApplyHeavyThrowableClientMirror(GrabbableInventoryItem item, Vector3 worldPosition, Quaternion worldRotation)
+    {
+        if (item is not HeavyThrowableHoldItem)
+            return false;
+        if (!item.TryGetComponent(out NetworkHeavyThrowableHold hold) || hold == null || hold.IsSpawned)
+            return false;
+
+        return hold.ApplyClientWorldMirrorSnapshot(worldPosition, worldRotation);
     }
 
     public void RequestUseSelectedBandage()
@@ -919,6 +931,30 @@ public class NetworkPlayerInventory : NetworkBehaviour
         return false;
     }
 
+    bool ServerHasKeyItem()
+    {
+        if (!IsServer || !IsSpawned)
+            return false;
+
+        for (int i = 0; i < 3; i++)
+        {
+            ulong id = GetSlotItemId(i);
+            bool slotSaysKey = GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdKey;
+            if (id == 0UL && !slotSaysKey)
+                continue;
+
+            if (slotSaysKey)
+                return true;
+
+            if (id != 0UL
+                && GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g)
+                && g is KeyItem)
+                return true;
+        }
+
+        return false;
+    }
+
     [ClientRpc]
     void ConsumeItemClientRpc(ulong itemId)
     {
@@ -944,6 +980,222 @@ public class NetworkPlayerInventory : NetworkBehaviour
         Object.Destroy(item.gameObject);
     }
 
+    public void RequestPickupHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint)
+    {
+        if (!IsSpawned)
+            return;
+        if (IsServer)
+        {
+            ServerTryPickupHeavyThrowable(itemId, itemTypeId, worldHint, OwnerClientId);
+            return;
+        }
+
+        RequestPickupHeavyThrowableServerRpc(itemId, itemTypeId, worldHint);
+    }
+
+    public void RequestDropHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint)
+    {
+        if (!IsSpawned)
+            return;
+        if (IsServer)
+        {
+            ServerTryDropHeavyThrowable(itemId, itemTypeId, worldHint, OwnerClientId);
+            return;
+        }
+
+        RequestDropHeavyThrowableServerRpc(itemId, itemTypeId, worldHint);
+    }
+
+    public void RequestShootHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, Vector3 cameraForward)
+    {
+        if (!IsSpawned)
+            return;
+        if (IsServer)
+        {
+            ServerTryShootHeavyThrowable(itemId, itemTypeId, worldHint, cameraForward, OwnerClientId);
+            return;
+        }
+
+        RequestShootHeavyThrowableServerRpc(itemId, itemTypeId, worldHint, cameraForward);
+    }
+
+    [ServerRpc]
+    void RequestPickupHeavyThrowableServerRpc(ulong itemId, byte itemTypeId, Vector3 worldHint, ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+        ServerTryPickupHeavyThrowable(itemId, itemTypeId, worldHint, serverRpcParams.Receive.SenderClientId);
+    }
+
+    [ServerRpc]
+    void RequestDropHeavyThrowableServerRpc(ulong itemId, byte itemTypeId, Vector3 worldHint, ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+        ServerTryDropHeavyThrowable(itemId, itemTypeId, worldHint, serverRpcParams.Receive.SenderClientId);
+    }
+
+    [ServerRpc]
+    void RequestShootHeavyThrowableServerRpc(ulong itemId, byte itemTypeId, Vector3 worldHint, Vector3 cameraForward, ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+        ServerTryShootHeavyThrowable(itemId, itemTypeId, worldHint, cameraForward, serverRpcParams.Receive.SenderClientId);
+    }
+
+    void ServerTryPickupHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, ulong senderClientId)
+    {
+        if (!TryResolveHeavyThrowable(itemId, itemTypeId, worldHint, out NetworkHeavyThrowableHold hold))
+            return;
+        hold.ServerTryPickupFromRelay(NetworkObjectId, senderClientId);
+    }
+
+    void ServerTryDropHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, ulong senderClientId)
+    {
+        if (!TryResolveHeavyThrowable(itemId, itemTypeId, worldHint, out NetworkHeavyThrowableHold hold))
+            return;
+        hold.ServerTryDropFromRelay(NetworkObjectId, senderClientId);
+    }
+
+    void ServerTryShootHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, Vector3 cameraForward, ulong senderClientId)
+    {
+        if (!TryResolveHeavyThrowable(itemId, itemTypeId, worldHint, out NetworkHeavyThrowableHold hold))
+            return;
+        hold.ServerTryShootFromRelay(NetworkObjectId, senderClientId, cameraForward);
+    }
+
+    static bool TryResolveHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, out NetworkHeavyThrowableHold hold)
+    {
+        hold = null;
+        if (!GrabbableInventoryItem.TryResolveForStateByType(itemId, worldHint, itemTypeId, out GrabbableInventoryItem item)
+            || item == null
+            || item is not HeavyThrowableHoldItem
+            || !item.TryGetComponent(out hold))
+        {
+            return false;
+        }
+
+        return hold != null;
+    }
+
+    public static void ServerBroadcastHeavyThrowableStateIfNeeded(
+        GrabbableInventoryItem item,
+        bool isHeld,
+        ulong holderNetworkObjectId,
+        Vector3 worldPosition = default,
+        Quaternion worldRotation = default)
+    {
+        if (item == null)
+            return;
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return;
+
+        NetworkPlayerInventory relay = ResolveServerRelayInventory();
+        if (relay == null)
+            return;
+
+        if (worldPosition == default)
+            worldPosition = isHeld ? item.IdentityHintPosition : item.transform.position;
+        if (worldRotation == default)
+            worldRotation = item.transform.rotation;
+
+        // Heavy throwable state on the host is already applied directly via NetworkHeavyThrowableHold
+        // server paths; if the host also receives this ClientRpc it would re-run ApplyNetworkWorldState,
+        // which calls EndHeldState and zeroes the rigidbody velocity (breaking throws). Target only
+        // non-server clients so the host keeps its own server-side physics state.
+        if (!TryBuildNonServerClientRpcTarget(nm, out ClientRpcParams clientsExcludingHost))
+            return;
+
+        relay.ApplyItemStateWithTypeClientRpc(
+            item.ItemId,
+            item.ItemTypeId,
+            isHeld,
+            holderNetworkObjectId,
+            worldPosition,
+            worldRotation,
+            default,
+            clientsExcludingHost);
+    }
+
+    static bool TryBuildNonServerClientRpcTarget(NetworkManager nm, out ClientRpcParams clientRpcParams)
+    {
+        clientRpcParams = default;
+        if (nm == null || !nm.IsServer)
+            return false;
+
+        IReadOnlyList<ulong> connected = nm.ConnectedClientsIds;
+        if (connected == null || connected.Count == 0)
+            return false;
+
+        ulong serverClientId = nm.LocalClientId;
+        List<ulong> targets = new List<ulong>(connected.Count);
+        for (int i = 0; i < connected.Count; i++)
+        {
+            ulong id = connected[i];
+            if (id != serverClientId)
+                targets.Add(id);
+        }
+
+        if (targets.Count == 0)
+            return false;
+
+        clientRpcParams = new ClientRpcParams
+        {
+            Send = new ClientRpcSendParams
+            {
+                TargetClientIds = targets.ToArray()
+            }
+        };
+        return true;
+    }
+
+    public static void ServerBroadcastRigidbodyImpactSfx(RigidbodyImpactSfx impactSfx, float volume01)
+    {
+        if (impactSfx == null)
+            return;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return;
+
+        if (!impactSfx.TryGetComponent(out GrabbableInventoryItem item) || item == null)
+            return;
+
+        NetworkPlayerInventory relay = ResolveServerRelayInventory();
+        if (relay == null)
+            return;
+
+        if (!TryBuildNonServerClientRpcTarget(nm, out ClientRpcParams clientsExcludingHost))
+            return;
+
+        relay.PlayRigidbodyImpactSfxClientRpc(
+            item.ItemId,
+            item.ItemTypeId,
+            item.transform.position,
+            Mathf.Clamp01(volume01),
+            clientsExcludingHost);
+    }
+
+    [ClientRpc]
+    void PlayRigidbodyImpactSfxClientRpc(
+        ulong itemId,
+        byte itemTypeId,
+        Vector3 worldHint,
+        float volume01,
+        ClientRpcParams clientRpcParams = default)
+    {
+        bool found = itemTypeId != GrabbableInventoryItem.TypeIdNone
+            ? GrabbableInventoryItem.TryResolveForStateByType(itemId, worldHint, itemTypeId, out GrabbableInventoryItem item)
+            : GrabbableInventoryItem.TryResolveForState(itemId, worldHint, out item);
+
+        if (!found || item == null)
+            return;
+
+        if (item.TryGetComponent(out RigidbodyImpactSfx impactSfx) && impactSfx != null)
+            impactSfx.PlayReplicatedImpact(volume01);
+    }
+
     public void RequestUnlockHingeDoor(HingeInteractDoor door)
     {
         if (door == null)
@@ -961,9 +1213,13 @@ public class NetworkPlayerInventory : NetworkBehaviour
                     return;
                 if (!door.IsLocked || door.IsBusy || !door.IsInInteractRange(playerPosition))
                     return;
-                if (!ServerTryConsumeKeyItem())
+                if (!ServerHasKeyItem())
                     return;
                 door.ApplyProceduralRemoteUnlock();
+                if (door.IsLocked)
+                    return;
+                if (!ServerTryConsumeKeyItem())
+                    return;
                 ApplyProceduralDoorUnlockClientRpc(doorId, hintPosition);
                 return;
             }
@@ -983,9 +1239,12 @@ public class NetworkPlayerInventory : NetworkBehaviour
                 return;
             if (door.IsBusy)
                 return;
-            if (!ServerTryConsumeKeyItem())
+            if (!ServerHasKeyItem())
                 return;
             if (!door.ServerUnlockFromKey())
+                return;
+            ServerBroadcastProceduralDoorUnlockIfNeeded(door);
+            if (!ServerTryConsumeKeyItem())
                 return;
             return;
         }
@@ -1045,9 +1304,12 @@ public class NetworkPlayerInventory : NetworkBehaviour
         }
         if (!door.IsInInteractRange(client.PlayerObject.transform.position))
             return;
-        if (!ServerTryConsumeKeyItem())
+        if (!ServerHasKeyItem())
             return;
         if (!door.ServerUnlockFromKey())
+            return;
+        ServerBroadcastProceduralDoorUnlockIfNeeded(door);
+        if (!ServerTryConsumeKeyItem())
             return;
     }
 
@@ -1065,10 +1327,24 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
         if (!door.IsInInteractRange(playerPosition))
             return;
-        if (!ServerTryConsumeKeyItem())
+        if (!ServerHasKeyItem())
             return;
 
+        if (door.IsSpawned)
+        {
+            if (!door.ServerUnlockFromKey())
+                return;
+            ServerBroadcastProceduralDoorUnlockIfNeeded(door);
+            if (!ServerTryConsumeKeyItem())
+                return;
+            return;
+        }
+
         door.ApplyProceduralRemoteUnlock();
+        if (door.IsLocked)
+            return;
+        if (!ServerTryConsumeKeyItem())
+            return;
         ApplyProceduralDoorUnlockClientRpc(door.DoorId, door.IdentityHintPosition);
     }
 
@@ -1083,6 +1359,13 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
         if (door.IsLocked || door.IsBusy || door.IsPostUnlockOpenDelayActive || !door.IsInInteractRange(playerPosition))
             return;
+
+        if (door.IsSpawned)
+        {
+            if (door.ServerToggleFromRelay(serverRpcParams.Receive.SenderClientId))
+                ServerBroadcastProceduralDoorOpenStateIfNeeded(door, door.IsOpen);
+            return;
+        }
 
         bool open = !door.IsOpen;
         if (!open && !door.ServerValidateProceduralClose(serverRpcParams.Receive.SenderClientId))
@@ -1155,7 +1438,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
 
     public static void ServerBroadcastProceduralDoorUnlockIfNeeded(HingeInteractDoor door)
     {
-        if (door == null || IsHingeDoorLeafNetworkSpawned(door))
+        if (door == null)
             return;
         NetworkManager nm = NetworkManager.Singleton;
         if (nm == null || !nm.IsListening || !nm.IsServer)
@@ -1170,7 +1453,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
 
     public static void ServerBroadcastProceduralDoorOpenStateIfNeeded(HingeInteractDoor door, bool open)
     {
-        if (door == null || IsHingeDoorLeafNetworkSpawned(door))
+        if (door == null)
             return;
         NetworkManager nm = NetworkManager.Singleton;
         if (nm == null || !nm.IsListening || !nm.IsServer)

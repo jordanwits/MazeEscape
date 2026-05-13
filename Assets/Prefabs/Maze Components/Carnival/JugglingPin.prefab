@@ -12,14 +12,12 @@ GameObject:
   - component: {fileID: 4648590404242694380}
   - component: {fileID: 7451182622811362342}
   - component: {fileID: 7722098834412200101}
-  - component: {fileID: 7722098834412200102}
-  - component: {fileID: 7722098834412200103}
   - component: {fileID: 7722098834412200104}
   - component: {fileID: 7722098834412200105}
-  - component: {fileID: 7722098834412200106}
   - component: {fileID: 7722098834412200107}
   - component: {fileID: 7722098834412200108}
   - component: {fileID: 7722098834412200109}
+  - component: {fileID: 7722098834412200110}
   m_Layer: 0
   m_Name: JugglingPin
   m_TagString: Untagged
@@ -124,7 +122,7 @@ MonoBehaviour:
   AutoObjectParentSync: 0
   SyncOwnerTransformWhenParented: 0
   AllowOwnerToParent: 0
---- !u!114 &7722098834412200102
+--- !u!114 &7722098834412200110
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -133,60 +131,10 @@ MonoBehaviour:
   m_GameObject: {fileID: 8964159345517639155}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e96cb6065543e43c4a752faaa1468eb1, type: 3}
+  m_Script: {fileID: 11500000, guid: c4d8a2e1f9054b6c9d0e1f2a3b4c5d6e, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: 
+  m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics
   ShowTopMostFoldoutHeaderGroup: 1
-  NetworkTransformExpanded: 0
-  AutoOwnerAuthorityTickOffset: 1
-  PositionInterpolationType: 0
-  RotationInterpolationType: 0
-  ScaleInterpolationType: 0
-  PositionLerpSmoothing: 1
-  PositionMaxInterpolationTime: 0.1
-  RotationLerpSmoothing: 1
-  RotationMaxInterpolationTime: 0.1
-  ScaleLerpSmoothing: 1
-  ScaleMaxInterpolationTime: 0.1
-  AuthorityMode: 0
-  TickSyncChildren: 0
-  UseUnreliableDeltas: 0
-  SyncPositionX: 1
-  SyncPositionY: 1
-  SyncPositionZ: 1
-  SyncRotAngleX: 1
-  SyncRotAngleY: 1
-  SyncRotAngleZ: 1
-  SyncScaleX: 1
-  SyncScaleY: 1
-  SyncScaleZ: 1
-  PositionThreshold: 0.002
-  RotAngleThreshold: 0.05
-  ScaleThreshold: 0.01
-  UseQuaternionSynchronization: 0
-  UseQuaternionCompression: 0
-  UseHalfFloatPrecision: 0
-  InLocalSpace: 0
-  SwitchTransformSpaceWhenParented: 0
-  Interpolate: 1
-  SlerpPosition: 0
---- !u!114 &7722098834412200103
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8964159345517639155}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f6c0be61502bb534f922ebb746851216, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  ShowTopMostFoldoutHeaderGroup: 1
-  NetworkRigidbodyBaseExpanded: 0
-  UseRigidBodyForMotion: 1
-  AutoUpdateKinematicState: 1
-  AutoSetKinematicOnDespawn: 1
 --- !u!54 &7722098834412200104
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -235,18 +183,6 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 0.005024422, y: 0.005104263, z: 0.019021524}
   m_Center: {x: -0.000036065372, y: 0.00003607855, z: 0.00009884096}
---- !u!114 &7722098834412200106
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8964159345517639155}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ae3f9012c4d54b4b8e6f71d2bc8aa101, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::MazePieceNetworkRigidbodySpawn
 --- !u!114 &7722098834412200107
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -207,9 +207,9 @@ public sealed class RigidbodyImpactSfx : NetworkBehaviour
 
         NetworkManager nm = NetworkManager.Singleton;
         bool networked = nm != null && nm.IsListening;
-        bool serverEvaluates = networked && IsSpawned && IsServer;
+        bool serverEvaluates = networked && IsAuthoritativeImpactServer(nm);
 
-        if (networked && IsSpawned && !IsServer)
+        if (networked && !serverEvaluates)
             return;
 
         float now = Time.time;
@@ -225,17 +225,14 @@ public sealed class RigidbodyImpactSfx : NetworkBehaviour
 
         ApplyImpactCooldown(true);
 
-        if (serverEvaluates)
-            PlayImpactObserversClientRpc(volume01);
-        else
-            PlayLocalOneShot(volume01);
+        PlayImpactNetworkAware(volume01, serverEvaluates);
     }
 
     void OnCollisionEnter(Collision collision)
     {
         NetworkManager nm = NetworkManager.Singleton;
         bool networked = nm != null && nm.IsListening;
-        bool serverEvaluates = networked && IsSpawned && IsServer;
+        bool serverEvaluates = networked && IsAuthoritativeImpactServer(nm);
 
         if (networked && !serverEvaluates)
             return;
@@ -245,12 +242,43 @@ public sealed class RigidbodyImpactSfx : NetworkBehaviour
 
         float volume01 = Mathf.Clamp01(computedVolume);
 
-        if (serverEvaluates)
-            PlayImpactObserversClientRpc(volume01);
-        else
-            PlayLocalOneShot(volume01);
+        PlayImpactNetworkAware(volume01, serverEvaluates);
 
         ApplyImpactCooldown(CollisionHasEnabledCharacterParent(collision));
+    }
+
+    bool IsAuthoritativeImpactServer(NetworkManager nm)
+    {
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return false;
+
+        return !IsSpawned || IsServer;
+    }
+
+    void PlayImpactNetworkAware(float volume01, bool serverEvaluates)
+    {
+        if (!serverEvaluates)
+        {
+            PlayLocalOneShot(volume01);
+            return;
+        }
+
+        if (IsSpawned)
+        {
+            PlayImpactObserversClientRpc(volume01);
+            return;
+        }
+
+        PlayLocalOneShot(volume01);
+        NetworkPlayerInventory.ServerBroadcastRigidbodyImpactSfx(this, volume01);
+    }
+
+    public void PlayReplicatedImpact(float volume01)
+    {
+        if (!isActiveAndEnabled || impactClip == null)
+            return;
+
+        PlayLocalOneShot(volume01);
     }
 
     bool EvaluateImpactTiming(Collision collision, out float normalizedVolumeOut)

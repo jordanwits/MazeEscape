@@ -48,6 +48,14 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     NetworkTransform _networkTransform;
 
     PlayerController _offlineHolder;
+    float _nextServerWorldMirrorTime;
+    bool _clientWorldMirrorActive;
+    Vector3 _clientWorldMirrorTargetPosition;
+    Quaternion _clientWorldMirrorTargetRotation;
+
+    const float ServerWorldMirrorIntervalSeconds = 0.04f;
+    const float ClientWorldMirrorSmoothing = 18f;
+    const float ClientWorldMirrorSnapDistance = 4f;
 
     public ulong HolderNetworkObjectId => _holderNetworkObjectId.Value;
 
@@ -65,6 +73,42 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     void OnDisable()
     {
         Instances.Remove(this);
+    }
+
+    void FixedUpdate()
+    {
+        if (_item == null || _item.IsHeld)
+            return;
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return;
+        if (Time.unscaledTime < _nextServerWorldMirrorTime)
+            return;
+
+        _nextServerWorldMirrorTime = Time.unscaledTime + ServerWorldMirrorIntervalSeconds;
+        NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(
+            _item,
+            false,
+            0UL,
+            _item.transform.position,
+            _item.transform.rotation);
+    }
+
+    void Update()
+    {
+        if (!_clientWorldMirrorActive || _item == null || _item.IsHeld)
+            return;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || nm.IsServer)
+        {
+            _clientWorldMirrorActive = false;
+            return;
+        }
+
+        float t = 1f - Mathf.Exp(-ClientWorldMirrorSmoothing * Time.deltaTime);
+        transform.position = Vector3.Lerp(transform.position, _clientWorldMirrorTargetPosition, t);
+        transform.rotation = Quaternion.Slerp(transform.rotation, _clientWorldMirrorTargetRotation, t);
     }
 
     public override void OnNetworkSpawn()
@@ -93,6 +137,7 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     {
         if (current != 0UL)
         {
+            _clientWorldMirrorActive = false;
             SetPhysicsNetworkingEnabled(false);
             _item.ApplyNetworkHeldState(current);
         }
@@ -131,6 +176,44 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             _networkTransform.enabled = worldPhysics;
     }
 
+    public bool ApplyClientWorldMirrorSnapshot(Vector3 worldPosition, Quaternion worldRotation)
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || nm.IsServer || IsSpawned || _item == null)
+            return false;
+
+        if (_item.IsHeld || !_clientWorldMirrorActive)
+        {
+            ApplyReleasedMirrorState(worldPosition, worldRotation);
+        }
+        else if ((transform.position - worldPosition).sqrMagnitude > ClientWorldMirrorSnapDistance * ClientWorldMirrorSnapDistance)
+        {
+            transform.SetPositionAndRotation(worldPosition, worldRotation);
+        }
+
+        _clientWorldMirrorTargetPosition = worldPosition;
+        _clientWorldMirrorTargetRotation = worldRotation;
+        _clientWorldMirrorActive = true;
+        EnsureClientMirrorPhysicsFrozen();
+        return true;
+    }
+
+    void EnsureClientMirrorPhysicsFrozen()
+    {
+        if (_item == null || _item.ItemRigidbody == null)
+            return;
+
+        Rigidbody rb = _item.ItemRigidbody;
+        if (!rb.isKinematic)
+        {
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
+
+        rb.isKinematic = true;
+        rb.useGravity = false;
+    }
+
     public void TryPickupOffline(PlayerController player)
     {
         if (player == null || _item == null || _item.IsHeld)
@@ -157,7 +240,11 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         }
 
         if (!IsSpawned)
+        {
+            if (interactor.TryGetComponent(out NetworkPlayerInventory inventory))
+                inventory.RequestPickupHeavyThrowable(_item.ItemId, _item.ItemTypeId, _item.transform.position);
             return;
+        }
 
         NetworkObject interactorNet = interactor.GetComponent<NetworkObject>();
         if (interactorNet == null)
@@ -199,11 +286,43 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             return;
 
         _holderNetworkObjectId.Value = playerNetworkObjectId;
+        NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, true, playerNetworkObjectId);
+    }
+
+    public bool ServerTryPickupFromRelay(ulong playerNetworkObjectId, ulong senderClientId)
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return false;
+        if (IsSpawned)
+        {
+            ServerValidateAndPickup(playerNetworkObjectId, senderClientId);
+            return _holderNetworkObjectId.Value == playerNetworkObjectId;
+        }
+
+        if (_item == null || _item.IsHeld)
+            return false;
+        if (FindHeldByPlayerObjectId(playerNetworkObjectId) != null)
+            return false;
+
+        if (!nm.SpawnManager.SpawnedObjects.TryGetValue(playerNetworkObjectId, out NetworkObject playerObj) || playerObj == null)
+            return false;
+        if (playerObj.OwnerClientId != senderClientId)
+            return false;
+        if (!IsInPickupRange(playerObj.transform.position))
+            return false;
+
+        _item.ApplyNetworkHeldState(playerNetworkObjectId);
+        NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, true, playerNetworkObjectId);
+        NotifyHolderInventoryRefresh(playerNetworkObjectId);
+        return true;
     }
 
     bool IsInPickupRange(Vector3 playerFeet)
     {
-        Vector3 p = transform.position;
+        Vector3 p = _item != null
+            ? _item.GetInteractAimPointClosestTo(playerFeet)
+            : transform.position;
         float dxz = Vector2.Distance(new Vector2(p.x, p.z), new Vector2(playerFeet.x, playerFeet.z));
         if (dxz > maxPickupHorizontalDistance)
             return false;
@@ -213,7 +332,18 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     }
 
     /// <summary>Same thresholds as <see cref="ServerValidateAndPickup"/>; used for HUD / client-side interaction hints.</summary>
-    public bool IsWithinPickupProximity(Vector3 playerFeetWorld) => IsInPickupRange(playerFeetWorld);
+    public bool IsWithinPickupProximity(Vector3 playerFeetWorld)
+    {
+        Vector3 p = _item != null
+            ? _item.GetInteractAimPointClosestTo(playerFeetWorld)
+            : transform.position;
+        float dxz = Vector2.Distance(new Vector2(p.x, p.z), new Vector2(playerFeetWorld.x, playerFeetWorld.z));
+        if (dxz > maxPickupHorizontalDistance)
+            return false;
+        if (Mathf.Abs(p.y - playerFeetWorld.y) > maxPickupVerticalDelta)
+            return false;
+        return true;
+    }
 
     public void RequestDropFromOwningClient(PlayerController shooter)
     {
@@ -227,7 +357,11 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         }
 
         if (!IsSpawned)
+        {
+            if (shooter.TryGetComponent(out NetworkPlayerInventory inventory))
+                inventory.RequestDropHeavyThrowable(_item.ItemId, _item.ItemTypeId, _item.transform.position);
             return;
+        }
 
         if (IsServer)
         {
@@ -375,7 +509,11 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         }
 
         if (!IsSpawned)
+        {
+            if (shooter.TryGetComponent(out NetworkPlayerInventory inventory))
+                inventory.RequestShootHeavyThrowable(_item.ItemId, _item.ItemTypeId, _item.transform.position, cameraForward);
             return;
+        }
 
         if (IsServer)
         {
@@ -423,12 +561,17 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
     void ApplyReleaseAuthority(Vector3 velocityDelta, Vector3 angularVelocity, Vector3 worldPosition, Quaternion worldRotation)
     {
-        _holderNetworkObjectId.Value = 0UL;
-
-        if (IsServer && !IsClient)
+        if (IsSpawned)
+            _holderNetworkObjectId.Value = 0UL;
+        else if (_item != null)
             _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
 
-        ApplyReleaseClientRpc(worldPosition, worldRotation, velocityDelta, angularVelocity);
+        if (IsSpawned && IsServer && !IsClient)
+            _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
+
+        NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, false, 0UL, worldPosition, worldRotation);
+        if (IsSpawned)
+            ApplyReleaseClientRpc(worldPosition, worldRotation, velocityDelta, angularVelocity);
     }
 
     [ClientRpc]
@@ -448,19 +591,7 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     void ApplyReleasedMirrorState(Vector3 worldPosition, Quaternion worldRotation)
     {
         _item.ApplyNetworkWorldState(worldPosition, worldRotation, default);
-
-        Rigidbody rb = _item.ItemRigidbody;
-        if (rb == null)
-            return;
-
-        if (!rb.isKinematic)
-        {
-            rb.linearVelocity = Vector3.zero;
-            rb.angularVelocity = Vector3.zero;
-        }
-
-        rb.isKinematic = true;
-        rb.useGravity = false;
+        EnsureClientMirrorPhysicsFrozen();
     }
 
     void BuildShootVelocity(
@@ -536,11 +667,50 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         for (int i = 0; i < Instances.Count; i++)
         {
             NetworkHeavyThrowableHold h = Instances[i];
-            if (h != null && h.IsSpawned && h._holderNetworkObjectId.Value == playerNetworkObjectId)
+            if (h == null)
+                continue;
+            if (h.IsSpawned && h._holderNetworkObjectId.Value == playerNetworkObjectId)
+                return h;
+            if (h._item != null && h._item.HolderNetworkObjectId == playerNetworkObjectId)
                 return h;
         }
 
         return null;
+    }
+
+    public bool ServerTryDropFromRelay(ulong playerNetworkObjectId, ulong senderClientId)
+    {
+        if (!TryResolveRelayHolder(playerNetworkObjectId, senderClientId, out PlayerController pc))
+            return false;
+        ApplyDropAuthority(pc);
+        return true;
+    }
+
+    public bool ServerTryShootFromRelay(ulong playerNetworkObjectId, ulong senderClientId, Vector3 cameraForward)
+    {
+        if (!TryResolveRelayHolder(playerNetworkObjectId, senderClientId, out PlayerController pc))
+            return false;
+        ApplyShootAuthority(cameraForward, pc);
+        return true;
+    }
+
+    bool TryResolveRelayHolder(ulong playerNetworkObjectId, ulong senderClientId, out PlayerController playerController)
+    {
+        playerController = null;
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return false;
+
+        ulong heldBy = IsSpawned ? _holderNetworkObjectId.Value : (_item != null ? _item.HolderNetworkObjectId : 0UL);
+        if (heldBy != playerNetworkObjectId)
+            return false;
+
+        if (!nm.SpawnManager.SpawnedObjects.TryGetValue(playerNetworkObjectId, out NetworkObject playerObj) || playerObj == null)
+            return false;
+        if (playerObj.OwnerClientId != senderClientId)
+            return false;
+
+        return playerObj.TryGetComponent(out playerController) && playerController != null;
     }
 
     public static NetworkHeavyThrowableHold FindOfflineHeldBy(PlayerController player)

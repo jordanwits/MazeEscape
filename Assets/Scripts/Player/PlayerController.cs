@@ -1803,14 +1803,21 @@ public partial class PlayerController : MonoBehaviour
             if (!PassHeavyThrowableInteractPromptHint(g))
                 continue;
 
-            Vector3 aim = g.GetInteractAimPointClosestTo(o);
+            Vector3 aim = GetFallbackAimPointForGrabbable(g, o);
 
             float t = Vector3.Dot(aim - o, d);
             if (t < -0.12f || t > maxAlong)
                 continue;
 
             Vector3 closestOnRay = o + d * t;
-            if ((aim - closestOnRay).sqrMagnitude > lateralSq)
+            float candidateLateralSq = lateralSq;
+            if (g is HeavyThrowableHoldItem && TryGetRendererBounds(g, out Bounds heavyBounds))
+            {
+                float heavyLateral = Mathf.Max(lateral, heavyBounds.extents.magnitude + 0.35f);
+                candidateLateralSq = heavyLateral * heavyLateral;
+            }
+
+            if ((aim - closestOnRay).sqrMagnitude > candidateLateralSq)
                 continue;
 
             Vector3 toAim = aim - o;
@@ -1853,6 +1860,42 @@ public partial class PlayerController : MonoBehaviour
 
         grabbable = best;
         return true;
+    }
+
+    Vector3 GetFallbackAimPointForGrabbable(GrabbableInventoryItem item, Vector3 observer)
+    {
+        if (item is HeavyThrowableHoldItem && TryGetRendererBounds(item, out Bounds bounds))
+            return bounds.ClosestPoint(observer);
+
+        return item.GetInteractAimPointClosestTo(observer);
+    }
+
+    static bool TryGetRendererBounds(GrabbableInventoryItem item, out Bounds bounds)
+    {
+        bounds = default;
+        if (item == null)
+            return false;
+
+        Renderer[] renderers = item.GetComponentsInChildren<Renderer>(true);
+        bool found = false;
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer r = renderers[i];
+            if (r == null || !r.enabled || r.forceRenderingOff)
+                continue;
+
+            if (!found)
+            {
+                bounds = r.bounds;
+                found = true;
+            }
+            else
+            {
+                bounds.Encapsulate(r.bounds);
+            }
+        }
+
+        return found;
     }
 
     void SetPickupPromptVisible(bool visible, string messageForText = null)

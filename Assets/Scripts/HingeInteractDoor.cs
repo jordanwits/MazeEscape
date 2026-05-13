@@ -839,10 +839,26 @@ public class HingeInteractDoor : NetworkBehaviour
         if (!IsInInteractRange(client.PlayerObject.transform.position))
             return;
 
+        if (ServerToggleOpenStateFromPlayer(senderId))
+            NetworkPlayerInventory.ServerBroadcastProceduralDoorOpenStateIfNeeded(this, IsOpen);
+    }
+
+    public bool ServerToggleFromRelay(ulong senderClientId)
+    {
+        if (!IsServer)
+            return false;
+        return ServerToggleOpenStateFromPlayer(senderClientId);
+    }
+
+    bool ServerToggleOpenStateFromPlayer(ulong senderId)
+    {
+        if (!IsServer || IsBusy || IsLocked)
+            return false;
+
         if (!_isOpen.Value)
         {
             if (useKeyToUnlock && Time.unscaledTime < _mayOpenUnlockedTime)
-                return;
+                return false;
             _isOpen.Value = true;
             _showOpenInteractionPrompt.Value = false;
         }
@@ -850,7 +866,7 @@ public class HingeInteractDoor : NetworkBehaviour
         {
             // Player closing an open door: never lock (only JailCellDoorTripwire → ServerJailorCloseAndLock locks).
             if (!ServerInvokeCloseValidator(closing: true, senderId))
-                return;
+                return false;
             _isOpen.Value = false;
         }
 
@@ -865,6 +881,8 @@ public class HingeInteractDoor : NetworkBehaviour
                 NetworkPlayerInventory.ServerBroadcastProceduralDoorOpenStateIfNeeded(pairedLeaf, _isOpen.Value);
             }
         }
+
+        return true;
     }
 
     /// <summary>Server only: double-door mate already toggled; mirror open state without a second RPC.</summary>
