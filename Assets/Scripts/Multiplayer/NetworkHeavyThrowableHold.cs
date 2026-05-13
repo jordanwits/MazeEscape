@@ -48,14 +48,6 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     NetworkTransform _networkTransform;
 
     PlayerController _offlineHolder;
-    float _nextServerWorldMirrorTime;
-    bool _clientWorldMirrorActive;
-    Vector3 _clientWorldMirrorTargetPosition;
-    Quaternion _clientWorldMirrorTargetRotation;
-
-    const float ServerWorldMirrorIntervalSeconds = 0.04f;
-    const float ClientWorldMirrorSmoothing = 18f;
-    const float ClientWorldMirrorSnapDistance = 4f;
 
     public ulong HolderNetworkObjectId => _holderNetworkObjectId.Value;
 
@@ -73,42 +65,6 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     void OnDisable()
     {
         Instances.Remove(this);
-    }
-
-    void FixedUpdate()
-    {
-        if (_item == null || _item.IsHeld || IsSpawned)
-            return;
-        NetworkManager nm = NetworkManager.Singleton;
-        if (nm == null || !nm.IsListening || !nm.IsServer)
-            return;
-        if (Time.unscaledTime < _nextServerWorldMirrorTime)
-            return;
-
-        _nextServerWorldMirrorTime = Time.unscaledTime + ServerWorldMirrorIntervalSeconds;
-        NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(
-            _item,
-            false,
-            0UL,
-            _item.transform.position,
-            _item.transform.rotation);
-    }
-
-    void Update()
-    {
-        if (!_clientWorldMirrorActive || _item == null || _item.IsHeld)
-            return;
-
-        NetworkManager nm = NetworkManager.Singleton;
-        if (nm == null || !nm.IsListening || nm.IsServer)
-        {
-            _clientWorldMirrorActive = false;
-            return;
-        }
-
-        float t = 1f - Mathf.Exp(-ClientWorldMirrorSmoothing * Time.deltaTime);
-        transform.position = Vector3.Lerp(transform.position, _clientWorldMirrorTargetPosition, t);
-        transform.rotation = Quaternion.Slerp(transform.rotation, _clientWorldMirrorTargetRotation, t);
     }
 
     public override void OnNetworkSpawn()
@@ -137,7 +93,6 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     {
         if (current != 0UL)
         {
-            _clientWorldMirrorActive = false;
             SetPhysicsNetworkingEnabled(false);
             _item.ApplyNetworkHeldState(current);
         }
@@ -174,44 +129,6 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     {
         if (_networkTransform != null)
             _networkTransform.enabled = worldPhysics;
-    }
-
-    public bool ApplyClientWorldMirrorSnapshot(Vector3 worldPosition, Quaternion worldRotation)
-    {
-        NetworkManager nm = NetworkManager.Singleton;
-        if (nm == null || !nm.IsListening || nm.IsServer || IsSpawned || _item == null)
-            return false;
-
-        if (_item.IsHeld || !_clientWorldMirrorActive)
-        {
-            ApplyReleasedMirrorState(worldPosition, worldRotation);
-        }
-        else if ((transform.position - worldPosition).sqrMagnitude > ClientWorldMirrorSnapDistance * ClientWorldMirrorSnapDistance)
-        {
-            transform.SetPositionAndRotation(worldPosition, worldRotation);
-        }
-
-        _clientWorldMirrorTargetPosition = worldPosition;
-        _clientWorldMirrorTargetRotation = worldRotation;
-        _clientWorldMirrorActive = true;
-        EnsureClientMirrorPhysicsFrozen();
-        return true;
-    }
-
-    void EnsureClientMirrorPhysicsFrozen()
-    {
-        if (_item == null || _item.ItemRigidbody == null)
-            return;
-
-        Rigidbody rb = _item.ItemRigidbody;
-        if (!rb.isKinematic)
-        {
-            rb.linearVelocity = Vector3.zero;
-            rb.angularVelocity = Vector3.zero;
-        }
-
-        rb.isKinematic = true;
-        rb.useGravity = false;
     }
 
     public void TryPickupOffline(PlayerController player)
@@ -593,7 +510,14 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     void ApplyReleasedMirrorState(Vector3 worldPosition, Quaternion worldRotation)
     {
         _item.ApplyNetworkWorldState(worldPosition, worldRotation, default);
-        EnsureClientMirrorPhysicsFrozen();
+        if (_item != null && _item.ItemRigidbody != null)
+        {
+            Rigidbody rb = _item.ItemRigidbody;
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+            rb.isKinematic = true;
+            rb.useGravity = false;
+        }
     }
 
     void BuildShootVelocity(

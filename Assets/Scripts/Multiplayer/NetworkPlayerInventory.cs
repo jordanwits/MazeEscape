@@ -795,8 +795,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
             }
             else
             {
-                if (!TryApplyHeavyThrowableClientMirror(g, worldPosition, worldRotation))
-                    g.ApplyNetworkWorldState(worldPosition, worldRotation, worldDropImpulse);
+                g.ApplyNetworkWorldState(worldPosition, worldRotation, worldDropImpulse);
             }
 
             if (g is GlowstickItem gStick)
@@ -806,16 +805,6 @@ public class NetworkPlayerInventory : NetworkBehaviour
         }
 
         playerController?.RefreshInventoryViewFromNetwork();
-    }
-
-    static bool TryApplyHeavyThrowableClientMirror(GrabbableInventoryItem item, Vector3 worldPosition, Quaternion worldRotation)
-    {
-        if (item is not HeavyThrowableHoldItem)
-            return false;
-        if (!item.TryGetComponent(out NetworkHeavyThrowableHold hold) || hold == null || hold.IsSpawned)
-            return false;
-
-        return hold.ApplyClientWorldMirrorSnapshot(worldPosition, worldRotation);
     }
 
     public void RequestUseSelectedBandage()
