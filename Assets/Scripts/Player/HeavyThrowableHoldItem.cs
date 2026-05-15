@@ -19,13 +19,21 @@ public abstract class HeavyThrowableHoldItem : GrabbableInventoryItem
         Vector3 angularVelocity)
     {
         ApplyNetworkWorldState(worldPosition, worldRotation, default);
-        if (ItemRigidbody == null || ItemRigidbody.isKinematic)
+        Rigidbody rb = ItemRigidbody;
+        if (rb == null || rb.isKinematic)
             return;
 
+        // Teleport via Rigidbody.position/rotation: the kinematic→dynamic flip in EndHeldState
+        // leaves the prior held pose in the Interpolate buffer, so the rendered throw arc
+        // appears to start from the carry pose (hand) instead of worldPosition for a frame.
+        // Assigning rb.position resets that history.
+        rb.position = worldPosition;
+        rb.rotation = worldRotation;
+
         if (velocityDelta.sqrMagnitude > 0.0001f)
-            ItemRigidbody.AddForce(velocityDelta, ForceMode.VelocityChange);
+            rb.AddForce(velocityDelta, ForceMode.VelocityChange);
 
         if (angularVelocity.sqrMagnitude > 0.0001f)
-            ItemRigidbody.angularVelocity = angularVelocity;
+            rb.angularVelocity = angularVelocity;
     }
 }

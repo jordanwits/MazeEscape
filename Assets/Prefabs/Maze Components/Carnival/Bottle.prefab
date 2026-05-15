@@ -132,7 +132,7 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2572891515873058471}
   serializedVersion: 5
-  m_Mass: 12
+  m_Mass: 25
   m_LinearDamping: 0.12
   m_AngularDamping: 0.18
   m_CenterOfMass: {x: 0, y: 0, z: 0}
@@ -276,7 +276,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: ae3f9012c4d54b4b8e6f71d2bc8aa101, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MazePieceNetworkRigidbodySpawn
 --- !u!114 &7822098834412200112
 MonoBehaviour:
@@ -288,6 +288,6 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: cb01b07710e640f8ab1c2d34d56789ab, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CarnivalBottleKnockdown
   impactImpulseScale: 0.15

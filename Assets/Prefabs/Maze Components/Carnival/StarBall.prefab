@@ -40,7 +40,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0.7071068, y: 0, z: -0, w: 0.7071068}
   m_LocalPosition: {x: 49.075, y: 1.64, z: -14.666}
-  m_LocalScale: {x: 34.593002, y: 34.593002, z: 34.593002}
+  m_LocalScale: {x: 20.692188, y: 20.692188, z: 20.692188}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -127,19 +127,6 @@ MonoBehaviour:
   AutoObjectParentSync: 0
   SyncOwnerTransformWhenParented: 0
   AllowOwnerToParent: 0
---- !u!114 &9200000000000000005
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3822100035863138692}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c4d8a2e1f9054b6c9d0e1f2a3b4c5d6e, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics
-  ShowTopMostFoldoutHeaderGroup: 1
 --- !u!114 &9200000000000000003
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -363,7 +350,7 @@ MonoBehaviour:
   - {fileID: 5190908140759165947}
   itemRenderers:
   - {fileID: 3084985487440427515}
-  heldLocalPosition: {x: 0.3, y: 0.42, z: 0.95}
+  heldLocalPosition: {x: 0, y: 0, z: 0}
   heldLocalEulerAngles: {x: 0, y: 0, z: 0}
   alignRotationWithFollow: 1
 --- !u!114 &6612098834412200202
@@ -382,6 +369,23 @@ MonoBehaviour:
   maxPickupHorizontalDistance: 5.25
   maxPickupVerticalDelta: 2.6
   dropForwardSpeedFromPlayerImpulse: 2
-  shootForwardSpeed: 8
+  shootForwardSpeed: 7
   shootUpSpeed: 6
   releaseForwardOffset: 0.42
+  ringShootSpinAngularSpeed: 24
+  ringDropSpinAngularSpeed: 8
+  serverReclaimSpeedThreshold: 0.35
+  serverSettleSecondsBeforeReturn: 1.25
+--- !u!114 &9200000000000000005
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3822100035863138692}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c4d8a2e1f9054b6c9d0e1f2a3b4c5d6e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics
+  ShowTopMostFoldoutHeaderGroup: 1
