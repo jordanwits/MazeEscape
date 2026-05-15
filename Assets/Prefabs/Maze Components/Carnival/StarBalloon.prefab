@@ -123,7 +123,7 @@ Transform:
   - {fileID: 9100000000000000301}
   - {fileID: 9100000000000000051}
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: -90, y: 0, z: 0}
 --- !u!1 &9100000000000000050
 GameObject:
   m_ObjectHideFlags: 0
@@ -136,12 +136,16 @@ GameObject:
   - component: {fileID: 4886669807758689071}
   - component: {fileID: 628863757819144564}
   - component: {fileID: 9200000000000000202}
+  - component: {fileID: 9200000000000000220}
+  - component: {fileID: 9200000000000000221}
   - component: {fileID: 9200000000000000201}
+  - component: {fileID: 7077647510269272617}
   - component: {fileID: 9200000000000000207}
   - component: {fileID: 9200000000000000208}
+  - component: {fileID: 9200000000000000222}
   - component: {fileID: 9200000000000000209}
-  - component: {fileID: 7077647510269272617}
   - component: {fileID: 9200000000000000210}
+  - component: {fileID: 9200000000000000223}
   m_Layer: 0
   m_Name: StarBalloon_Body
   m_TagString: Untagged
@@ -163,7 +167,6 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 2159037066921057478}
-  - {fileID: 9100000000000000401}
   m_Father: {fileID: 2267473745369256889}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &4886669807758689071
@@ -248,7 +251,7 @@ MonoBehaviour:
   AutoObjectParentSync: 0
   SyncOwnerTransformWhenParented: 0
   AllowOwnerToParent: 0
---- !u!114 &9200000000000000210
+--- !u!114 &9200000000000000220
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -257,10 +260,60 @@ MonoBehaviour:
   m_GameObject: {fileID: 9100000000000000050}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c4d8a2e1f9054b6c9d0e1f2a3b4c5d6e, type: 3}
+  m_Script: {fileID: 11500000, guid: e96cb6065543e43c4a752faaa1468eb1, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics
+  m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
+  NetworkTransformExpanded: 0
+  AutoOwnerAuthorityTickOffset: 1
+  PositionInterpolationType: 0
+  RotationInterpolationType: 0
+  ScaleInterpolationType: 0
+  PositionLerpSmoothing: 1
+  PositionMaxInterpolationTime: 0.1
+  RotationLerpSmoothing: 1
+  RotationMaxInterpolationTime: 0.1
+  ScaleLerpSmoothing: 1
+  ScaleMaxInterpolationTime: 0.1
+  AuthorityMode: 0
+  TickSyncChildren: 0
+  UseUnreliableDeltas: 0
+  SyncPositionX: 1
+  SyncPositionY: 1
+  SyncPositionZ: 1
+  SyncRotAngleX: 1
+  SyncRotAngleY: 1
+  SyncRotAngleZ: 1
+  SyncScaleX: 0
+  SyncScaleY: 0
+  SyncScaleZ: 0
+  PositionThreshold: 0.0005
+  RotAngleThreshold: 0.02
+  ScaleThreshold: 0.01
+  UseQuaternionSynchronization: 0
+  UseQuaternionCompression: 0
+  UseHalfFloatPrecision: 0
+  InLocalSpace: 0
+  SwitchTransformSpaceWhenParented: 0
+  Interpolate: 1
+  SlerpPosition: 0
+--- !u!114 &9200000000000000221
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9100000000000000050}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f6c0be61502bb534f922ebb746851216, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  ShowTopMostFoldoutHeaderGroup: 1
+  NetworkRigidbodyBaseExpanded: 0
+  UseRigidBodyForMotion: 1
+  AutoUpdateKinematicState: 1
+  AutoSetKinematicOnDespawn: 1
 --- !u!54 &9200000000000000201
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -270,9 +323,9 @@ Rigidbody:
   m_GameObject: {fileID: 9100000000000000050}
   serializedVersion: 5
   m_Mass: 5
-  m_LinearDamping: 0.28
-  m_AngularDamping: 0.22
-  m_CenterOfMass: {x: 0, y: 0, z: -0.014}
+  m_LinearDamping: 0.6
+  m_AngularDamping: 1
+  m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
   m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
   m_IncludeLayers:
@@ -281,13 +334,34 @@ Rigidbody:
   m_ExcludeLayers:
     serializedVersion: 2
     m_Bits: 0
-  m_ImplicitCom: 0
+  m_ImplicitCom: 1
   m_ImplicitTensor: 1
   m_UseGravity: 1
   m_IsKinematic: 0
   m_Interpolate: 1
-  m_Constraints: 64
+  m_Constraints: 0
   m_CollisionDetection: 1
+--- !u!135 &7077647510269272617
+SphereCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9100000000000000050}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Radius: 0.018
+  m_Center: {x: 0, y: 0, z: 0}
 --- !u!114 &9200000000000000207
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -300,7 +374,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a74e8cbb2d9649d5b5d6e9014f2238d1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerPhysicsPushReceiver
-  pushGainMultiplier: 0.01
+  pushGainMultiplier: 1
 --- !u!114 &9200000000000000208
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -315,25 +389,43 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::NetworkedPhysicsPropPush
   ShowTopMostFoldoutHeaderGroup: 1
   interactionMaxHorizontalDistance: 2.95
-  planarSpeedScaleVsPlayerController: 1.05
-  planarSpeedCapDelta: 4.25
-  balloonHeliumMode: 1
-  balloonTieAnchorRigidbody: {fileID: 9100000000000000303}
-  balloonTetherBodyAttachPoint: {fileID: 9100000000000000401}
-  balloonTetherStringEndPoint: {fileID: 9100000000000000403}
+  planarSpeedScaleVsPlayerController: 0.9
+  planarSpeedCapDelta: 3.5
+  balloonHeliumMode: 0
+  balloonTieAnchorRigidbody: {fileID: 0}
+  balloonTetherBodyAttachPoint: {fileID: 0}
+  balloonTetherStringEndPoint: {fileID: 0}
   balloonSnapTieAnchorToStringEnd: 0
-  balloonTetherTieWorldOffset: {x: 0, y: 0, z: 1}
-  balloonAttachmentLocalPosition: {x: 0, y: 0, z: -0.008}
-  balloonBuoyancyAcceleration: 20
-  balloonBuoyancyForceOffsetLocal: {x: 0, y: 0, z: 0.004}
-  balloonExtraLinearDrag: 0.35
-  balloonUprightTorqueAcceleration: 22
+  balloonTetherTieWorldOffset: {x: 0, y: 0, z: 0}
+  balloonAttachmentLocalPosition: {x: 0, y: 0, z: 0}
+  balloonBuoyancyAcceleration: 0
+  balloonBuoyancyForceOffsetLocal: {x: 0, y: 0, z: 0}
+  balloonExtraLinearDrag: 0
+  balloonUprightTorqueAcceleration: 0
   balloonVisualUpLocal: {x: 0, y: 1, z: 0}
-  balloonTetherSpring: 420
-  balloonTetherDamper: 38
-  balloonTetherMinDistance: 0.28
-  balloonTetherMaxDistance: 1.35
-  balloonReapplyTetherPoseAfterFirstFixedUpdate: 1
+  balloonTetherSpring: 1
+  balloonTetherDamper: 0
+  balloonTetherMinDistance: 0.01
+  balloonTetherMaxDistance: 0.01
+  balloonReapplyTetherPoseAfterFirstFixedUpdate: 0
+--- !u!114 &9200000000000000222
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9100000000000000050}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b4110ae71357464db8f0c8e4a91c2f3d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BalloonTether
+  ShowTopMostFoldoutHeaderGroup: 1
+  anchorRigidbody: {fileID: 9100000000000000303}
+  bodyAttachPoint: {fileID: 9100000000000000403}
+  buoyancyAcceleration: 20
+  uprightTorqueAcceleration: 22
+  visualUpLocal: {x: 0, y: 0, z: 1}
 --- !u!114 &9200000000000000209
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -369,27 +461,31 @@ MonoBehaviour:
   sfxPriority: 88
   spatialMinDistance: 0.65
   spatialMaxDistance: 38
---- !u!135 &7077647510269272617
-SphereCollider:
+--- !u!114 &9200000000000000210
+MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 9100000000000000050}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
   m_Enabled: 1
-  serializedVersion: 3
-  m_Radius: 0.011501772
-  m_Center: {x: 0.000011019807, y: 0.000008710086, z: -0.0019565802}
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c4d8a2e1f9054b6c9d0e1f2a3b4c5d6e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics
+  ShowTopMostFoldoutHeaderGroup: 1
+--- !u!114 &9200000000000000223
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9100000000000000050}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ae3f9012c4d54b4b8e6f71d2bc8aa101, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MazePieceNetworkRigidbodySpawn
 --- !u!1 &9100000000000000300
 GameObject:
   m_ObjectHideFlags: 0
@@ -416,7 +512,7 @@ Transform:
   m_GameObject: {fileID: 9100000000000000300}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -0.0004410115, y: 0.0005, z: -0.0447}
+  m_LocalPosition: {x: -0.00045924814, y: 0.00027, z: -0.04602}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -449,37 +545,6 @@ Rigidbody:
   m_Interpolate: 0
   m_Constraints: 126
   m_CollisionDetection: 0
---- !u!1 &9100000000000000400
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 9100000000000000401}
-  m_Layer: 0
-  m_Name: Tether_JointOnBody
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &9100000000000000401
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 9100000000000000400}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: -0, z: -0.0103}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 9100000000000000051}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &9100000000000000402
 GameObject:
   m_ObjectHideFlags: 0
