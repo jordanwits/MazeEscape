@@ -11,9 +11,9 @@ GameObject:
   - component: {fileID: 3112144581848307510}
   - component: {fileID: 2062460163565459603}
   - component: {fileID: 4286199646644497497}
+  - component: {fileID: 5511223344880011010}
   - component: {fileID: 7110979280222863276}
   - component: {fileID: 5511223344880011009}
-  - component: {fileID: 5511223344880011010}
   - component: {fileID: 5511223344880011011}
   - component: {fileID: 4658132132648674494}
   m_Layer: 0
@@ -95,6 +95,31 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!114 &5511223344880011010
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2340569635365703052}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
+  GlobalObjectIdHash: 2755614005
+  InScenePlacedSourceGlobalObjectIdHash: 0
+  DeferredDespawnTick: 0
+  Ownership: 0
+  AlwaysReplicateAsRoot: 0
+  SynchronizeTransform: 1
+  ActiveSceneSynchronization: 0
+  SceneMigrationSynchronization: 1
+  SpawnWithObservers: 1
+  DontDestroyWithOwner: 0
+  AutoObjectParentSync: 0
+  SyncOwnerTransformWhenParented: 0
+  AllowOwnerToParent: 0
 --- !u!114 &7110979280222863276
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -104,17 +129,10 @@ MonoBehaviour:
   m_GameObject: {fileID: 2340569635365703052}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7, type: 3}
+  m_Script: {fileID: 11500000, guid: c0a1c0a1c0a1c0a1c0a1c0a1c0a1c005, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::KeyItem
-  _itemTypeId: 3
-  _slotIcon: {fileID: 21300000, guid: 803f13083c5f3f64987de356205696dc, type: 3}
-  itemRigidbody: {fileID: 5511223344880011009}
-  itemColliders: []
-  itemRenderers: []
-  heldLocalPosition: {x: 0, y: 0, z: 0}
-  heldLocalEulerAngles: {x: 180, y: 90, z: 25}
-  alignRotationWithFollow: 1
+  m_EditorClassIdentifier: Assembly-CSharp::CarnivalTicketBundle
+  ShowTopMostFoldoutHeaderGroup: 1
 --- !u!54 &5511223344880011009
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -142,31 +160,6 @@ Rigidbody:
   m_Interpolate: 0
   m_Constraints: 0
   m_CollisionDetection: 0
---- !u!114 &5511223344880011010
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2340569635365703052}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 2755614005
-  InScenePlacedSourceGlobalObjectIdHash: 0
-  DeferredDespawnTick: 0
-  Ownership: 0
-  AlwaysReplicateAsRoot: 0
-  SynchronizeTransform: 1
-  ActiveSceneSynchronization: 0
-  SceneMigrationSynchronization: 1
-  SpawnWithObservers: 1
-  DontDestroyWithOwner: 0
-  AutoObjectParentSync: 0
-  SyncOwnerTransformWhenParented: 0
-  AllowOwnerToParent: 0
 --- !u!114 &5511223344880011011
 MonoBehaviour:
   m_ObjectHideFlags: 0

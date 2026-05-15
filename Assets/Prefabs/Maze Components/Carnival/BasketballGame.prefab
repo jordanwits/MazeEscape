@@ -1,5 +1,237 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!1 &9200000000000010
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 9200000000000011}
+  m_Layer: 0
+  m_Name: BallSpawnAnchor
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &9200000000000011
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9200000000000010}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: -0.00428, z: -0.00345}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4653273074494169111}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &9200000000000020
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 9200000000000021}
+  m_Layer: 0
+  m_Name: PrizeChuteAnchor
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &9200000000000021
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9200000000000020}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4653273074494169111}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &9200000000000040
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 9200000000000041}
+  - component: {fileID: 9200000000000042}
+  - component: {fileID: 9200000000000044}
+  m_Layer: 0
+  m_Name: HoopTrigger
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &9200000000000041
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9200000000000040}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0.00718, z: 0.00218}
+  m_LocalScale: {x: 0.00391, y: 0.00391, z: 0.00391}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4653273074494169111}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!65 &9200000000000042
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9200000000000040}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 1
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 0.5, y: 0.1, z: 0.5}
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!114 &9200000000000044
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9200000000000040}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c0a1c0a1c0a1c0a1c0a1c0a1c0a1c002, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BasketballHoopTrigger
+  controller: {fileID: 9100000000000002}
+  maxAcceptedUpwardVelocity: 0
+--- !u!1 &9200000000000050
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 9200000000000051}
+  - component: {fileID: 9200000000000052}
+  m_Layer: 0
+  m_Name: TimerProp
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &9200000000000051
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9200000000000050}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 0.00391, y: 0.00391, z: 0.00391}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4653273074494169111}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &9200000000000052
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9200000000000050}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c0a1c0a1c0a1c0a1c0a1c0a1c0a1c004, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CarnivalWorldNumberDisplay
+  controller: {fileID: 9100000000000002}
+  mode: 0
+  worldTextMesh: {fileID: 0}
+  uiText: {fileID: 0}
+  idlePlaceholder: --
+  timerFormat: 00
+  scoreFormat: 0
+--- !u!1 &9200000000000060
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 9200000000000061}
+  - component: {fileID: 9200000000000062}
+  m_Layer: 0
+  m_Name: ScoreProp
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &9200000000000061
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9200000000000060}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 0.00391, y: 0.00391, z: 0.00391}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4653273074494169111}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &9200000000000062
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9200000000000060}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c0a1c0a1c0a1c0a1c0a1c0a1c0a1c004, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CarnivalWorldNumberDisplay
+  controller: {fileID: 9100000000000002}
+  mode: 1
+  worldTextMesh: {fileID: 0}
+  uiText: {fileID: 0}
+  idlePlaceholder: --
+  timerFormat: 00
+  scoreFormat: 0
 --- !u!1 &1482639120519128338
 GameObject:
   m_ObjectHideFlags: 0
@@ -126,6 +358,9 @@ GameObject:
   - component: {fileID: 5825568749692033912}
   - component: {fileID: 5386022255534875027}
   - component: {fileID: 5185207891452523574}
+  - component: {fileID: 9100000000000001}
+  - component: {fileID: 9100000000000002}
+  - component: {fileID: 9100000000000003}
   m_Layer: 0
   m_Name: BasketballGame
   m_TagString: Untagged
@@ -148,6 +383,12 @@ Transform:
   m_Children:
   - {fileID: 2172235869879568555}
   - {fileID: 3856899835491975926}
+  - {fileID: 9200000000000011}
+  - {fileID: 9200000000000021}
+  - {fileID: 9200000000000041}
+  - {fileID: 9200000000000051}
+  - {fileID: 9200000000000061}
+  - {fileID: 1601043053386179400}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &8591852828783439794
@@ -261,6 +502,65 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 5461320835613783329, guid: 20e9359e75a010345a9ea85f90b76b89, type: 3}
+--- !u!114 &9100000000000001
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5465240853195602605}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
+  GlobalObjectIdHash: 4132048640
+  InScenePlacedSourceGlobalObjectIdHash: 0
+  DeferredDespawnTick: 0
+  Ownership: 0
+  AlwaysReplicateAsRoot: 0
+  SynchronizeTransform: 1
+  ActiveSceneSynchronization: 0
+  SceneMigrationSynchronization: 1
+  SpawnWithObservers: 1
+  DontDestroyWithOwner: 0
+  AutoObjectParentSync: 0
+  SyncOwnerTransformWhenParented: 0
+  AllowOwnerToParent: 0
+--- !u!114 &9100000000000002
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5465240853195602605}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c0a1c0a1c0a1c0a1c0a1c0a1c0a1c001, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BasketballGameController
+  ShowTopMostFoldoutHeaderGroup: 1
+  roundDurationSeconds: 45
+  ticketsPerBasket: 2
+  scoreCooldownSeconds: 0.4
+  ballSpawnAnchor: {fileID: 9200000000000011}
+  prizeChuteAnchor: {fileID: 9200000000000021}
+  basketballPrefab: {fileID: 3822100035863138692, guid: 26c23d9131249c84088b3f000267975f, type: 3}
+  ticketBundlePrefab: {fileID: 2340569635365703052, guid: 4eef3ddb96ee0c14888493fd16bbd3ed, type: 3}
+  ballOutOfBoundsYThreshold: -50
+  ticketBundleSpawnImpulse: {x: 0, y: 1.5, z: 0.5}
+--- !u!114 &9100000000000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5465240853195602605}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ae3f9012c4d54b4b8e6f71d2bc8aa101, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MazePieceNetworkRigidbodySpawn
 --- !u!1001 &3991916677742145392
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -335,3 +635,100 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 207261129926520198, guid: 644b5d20658badb488c8298ea427ca8e, type: 3}
   m_PrefabInstance: {fileID: 3991916677742145392}
   m_PrefabAsset: {fileID: 0}
+--- !u!1001 &5836946634961252411
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 4653273074494169111}
+    m_Modifications:
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalScale.x
+      value: 0.06789258
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalScale.y
+      value: 0.06789258
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalScale.z
+      value: 0.06789258
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -0.00288
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: -0.00954
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -0.00658
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5508707778489092553, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      propertyPath: m_Name
+      value: StartButton
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 5508707778489092553, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 5823857292414959013}
+  m_SourcePrefab: {fileID: 100100000, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+--- !u!4 &1601043053386179400 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 5132146605011915635, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+  m_PrefabInstance: {fileID: 5836946634961252411}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &2122282292700314098 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 5508707778489092553, guid: ccb1c73c37ee1f640962899b7e12edf7, type: 3}
+  m_PrefabInstance: {fileID: 5836946634961252411}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &5823857292414959013
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2122282292700314098}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c0a1c0a1c0a1c0a1c0a1c0a1c0a1c003, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BasketballStartButton
+  controllerHost: {fileID: 9100000000000002}
+  startPromptMessage: Press E to start
+  inProgressPromptMessage: Game in progress

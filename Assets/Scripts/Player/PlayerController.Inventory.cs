@@ -507,6 +507,9 @@ public partial class PlayerController
 
     void HandlePickupInput()
     {
+        if (TryHandleCarnivalInteract())
+            return;
+
         Transform cam = CameraTransformForFacing;
         if (cam != null && TryFindInteractableMazeChest(cam, out MazeChest mazeChest))
         {

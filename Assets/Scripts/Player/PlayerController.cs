@@ -335,6 +335,7 @@ public partial class PlayerController : MonoBehaviour
             staminaBarImage = CreateStaminaBarUI();
 
         CreateCrosshairUI();
+        CreateTicketCounterUI();
 
         RefreshStaminaUI();
         RefreshInventorySlotHud();
@@ -351,6 +352,7 @@ public partial class PlayerController : MonoBehaviour
         _ragdollController = GetComponent<PlayerRagdollController>();
         _ragdollCameraCollision = GetComponent<RagdollCameraCollision>();
         _playerHealth = GetComponent<PlayerHealth>();
+        HookupCarnivalTickets();
         EnsureInventoryStashRoot();
 
         if (firstPersonLook && _ragdollController != null && _ragdollCameraCollision == null)
@@ -436,6 +438,7 @@ public partial class PlayerController : MonoBehaviour
     {
         if (_runtimeInputActions != null)
             Destroy(_runtimeInputActions);
+        UnhookCarnivalTickets();
     }
 
     void Update()
@@ -1669,6 +1672,12 @@ public partial class PlayerController : MonoBehaviour
                 true,
                 elevatorFinish.LivingInsideDisplay,
                 elevatorFinish.LivingRequiredDisplay);
+            return;
+        }
+
+        if (cam != null && TryGetCarnivalPromptForCurrentAim(cam, out string carnivalMessage))
+        {
+            SetPickupPromptVisible(true, carnivalMessage);
             return;
         }
 
