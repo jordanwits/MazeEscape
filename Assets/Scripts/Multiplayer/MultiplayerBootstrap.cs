@@ -98,5 +98,66 @@ public class MultiplayerBootstrap : MonoBehaviour
         var lists = networkManager.NetworkConfig.Prefabs.NetworkPrefabsLists;
         if (!lists.Contains(defaults))
             lists.Add(defaults);
+
+        EnsureNestedPrefabHashOverrides(defaults);
+    }
+
+    /// <summary>
+    /// Unity auto-generates a unique <c>GlobalObjectIdHash</c> for every <see cref="NetworkObject"/>
+    /// nested inside another prefab (e.g. each <c>BasketballGame</c> placed inside
+    /// <c>CarnivalMainRoom</c>). The server uses that override hash in spawn messages; without an
+    /// explicit Hash override entry the receiving client has no prefab mapping and silently drops the
+    /// spawn — visible as "no collider on the BasketballGame" + a non-functional Start button on
+    /// joined clients. We add the override → base-prefab mapping to the loaded
+    /// <see cref="NetworkPrefabsList"/> in memory (the asset on disk is not modified) so NGO picks it
+    /// up when <c>NetworkManager.Initialize</c> reprocesses the list on <c>StartHost</c> /
+    /// <c>StartClient</c>.
+    /// Hash values are read directly from <c>CarnivalMainRoom.prefab</c> prefab-modification
+    /// entries; rerun the diff if the parent prefab is re-saved and the auto-generated hashes change.
+    /// </summary>
+    static void EnsureNestedPrefabHashOverrides(NetworkPrefabsList defaults)
+    {
+        GameObject basketballGame = FindPrefabByBaseHash(defaults, baseHash: 4132048640u);
+        if (basketballGame == null)
+            return;
+
+        EnsureHashOverrideEntry(defaults, sourceHash: 2806273795u, targetPrefab: basketballGame);
+        EnsureHashOverrideEntry(defaults, sourceHash: 1843502869u, targetPrefab: basketballGame);
+    }
+
+    static GameObject FindPrefabByBaseHash(NetworkPrefabsList list, uint baseHash)
+    {
+        if (list == null)
+            return null;
+        foreach (var entry in list.PrefabList)
+        {
+            if (entry == null || entry.Prefab == null)
+                continue;
+            if (!entry.Prefab.TryGetComponent(out NetworkObject networkObject))
+                continue;
+            if (networkObject.PrefabIdHash == baseHash)
+                return entry.Prefab;
+        }
+        return null;
+    }
+
+    static void EnsureHashOverrideEntry(NetworkPrefabsList list, uint sourceHash, GameObject targetPrefab)
+    {
+        foreach (var entry in list.PrefabList)
+        {
+            if (entry != null
+                && entry.Override == NetworkPrefabOverride.Hash
+                && entry.SourceHashToOverride == sourceHash)
+            {
+                return;
+            }
+        }
+
+        list.Add(new NetworkPrefab
+        {
+            Override = NetworkPrefabOverride.Hash,
+            SourceHashToOverride = sourceHash,
+            OverridingTargetPrefab = targetPrefab,
+        });
     }
 }
