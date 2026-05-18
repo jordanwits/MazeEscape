@@ -3,7 +3,9 @@
     "allow": [
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(powershell -Command \"Get-ChildItem -Recurse Assets/Scripts -Filter *Ticket* -ErrorAction SilentlyContinue\")"
+      "Bash(powershell -Command \"Get-ChildItem -Recurse Assets/Scripts -Filter *Ticket* -ErrorAction SilentlyContinue\")",
+      "Bash(xargs grep -l \"NetworkPrefab\\\\|DefaultNetworkPrefabs\\\\|NetworkManager\")",
+      "Bash(awk '{print $NF}')"
     ]
   }
 }

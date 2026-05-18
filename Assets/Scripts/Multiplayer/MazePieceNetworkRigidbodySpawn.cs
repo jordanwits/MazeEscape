@@ -18,6 +18,13 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
     void Awake()
     {
         _networkObject = GetComponent<NetworkObject>();
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm != null && nm.IsListening && !nm.IsServer
+            && _networkObject != null && !_networkObject.IsSpawned)
+        {
+            DisableLocalClientInteractColliders();
+        }
     }
 
     IEnumerator Start()
@@ -81,20 +88,45 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
             && spawnedObject.TryGetComponent(out GrabbableInventoryItem other))
         {
             return localItem.ItemTypeId == other.ItemTypeId
-                && StripCloneSuffix(spawnedObject.name) == StripCloneSuffix(gameObject.name);
+                && NormalizeInstanceName(spawnedObject.name) == NormalizeInstanceName(gameObject.name);
         }
 
-        return StripCloneSuffix(spawnedObject.name) == StripCloneSuffix(gameObject.name);
+        if (TryGetComponent(out BasketballGameController _)
+            && spawnedObject.TryGetComponent(out BasketballGameController _))
+            return true;
+
+        return NormalizeInstanceName(spawnedObject.name) == NormalizeInstanceName(gameObject.name);
     }
 
-    static string StripCloneSuffix(string value)
+    void DisableLocalClientInteractColliders()
     {
-        const string cloneSuffix = "(Clone)";
+        Collider[] colliders = GetComponentsInChildren<Collider>(true);
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            if (colliders[i] != null)
+                colliders[i].enabled = false;
+        }
+    }
+
+    static string NormalizeInstanceName(string value)
+    {
         if (string.IsNullOrEmpty(value))
             return string.Empty;
 
-        return value.EndsWith(cloneSuffix, System.StringComparison.Ordinal)
-            ? value.Substring(0, value.Length - cloneSuffix.Length).TrimEnd()
-            : value;
+        value = value.TrimEnd();
+        const string cloneSuffix = "(Clone)";
+        if (value.EndsWith(cloneSuffix, System.StringComparison.Ordinal))
+            value = value.Substring(0, value.Length - cloneSuffix.Length).TrimEnd();
+
+        // Nested prefab instances often use Unity's " (1)" duplicate suffix instead of "(Clone)".
+        int spaceParen = value.LastIndexOf(" (", System.StringComparison.Ordinal);
+        if (spaceParen > 0 && value.EndsWith(")", System.StringComparison.Ordinal))
+        {
+            string digits = value.Substring(spaceParen + 2, value.Length - spaceParen - 3);
+            if (int.TryParse(digits, out _))
+                value = value.Substring(0, spaceParen);
+        }
+
+        return value;
     }
 }

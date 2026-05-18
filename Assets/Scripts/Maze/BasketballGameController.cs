@@ -16,6 +16,8 @@ using UnityEngine;
 [RequireComponent(typeof(NetworkObject))]
 public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameStart
 {
+    const float SpawnedCounterpartSearchDistance = 3f;
+
     [Header("Round")]
     [SerializeField, Min(1f)] float roundDurationSeconds = 45f;
     [SerializeField, Min(1)] int ticketsPerBasket = 2;
@@ -91,9 +93,54 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
         }
 
         if (nm.IsServer)
+        {
             ServerStartRound(playerNet.NetworkObjectId);
-        else
-            RequestStartRoundServerRpc(playerNet.NetworkObjectId);
+            return;
+        }
+
+        if (!IsSpawned)
+        {
+            if (TryResolveSpawnedCounterpart(out BasketballGameController spawned))
+            {
+                spawned.ProcessStartRequest(interactor);
+                return;
+            }
+
+            Debug.LogWarning(
+                $"[BasketballGameController] {name} is not network-spawned on this client; wait for the server maze copy or ensure the station was spawned by the server.",
+                this);
+            return;
+        }
+
+        RequestStartRoundServerRpc(playerNet.NetworkObjectId);
+    }
+
+    bool TryResolveSpawnedCounterpart(out BasketballGameController spawned)
+    {
+        spawned = null;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || nm.SpawnManager == null)
+            return false;
+
+        float maxDistanceSq = SpawnedCounterpartSearchDistance * SpawnedCounterpartSearchDistance;
+        foreach (System.Collections.Generic.KeyValuePair<ulong, NetworkObject> pair in nm.SpawnManager.SpawnedObjects)
+        {
+            NetworkObject netObj = pair.Value;
+            if (netObj == null || netObj == NetworkObject || !netObj.IsSpawned)
+                continue;
+
+            BasketballGameController candidate = netObj.GetComponent<BasketballGameController>();
+            if (candidate == null)
+                continue;
+            if ((netObj.transform.position - transform.position).sqrMagnitude > maxDistanceSq)
+                continue;
+
+            spawned = candidate;
+            return true;
+        }
+
+        return false;
     }
 
     [ServerRpc(RequireOwnership = false)]
