@@ -1,19 +1,25 @@
+using System.Collections;
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
-using System.Collections;
 
 /// <summary>
 /// Server spawns this <see cref="NetworkObject"/> after the maze chunk is built. Pure clients also build the
 /// same chunk locally and get an unspawned duplicate; that copy is removed when the replicated instance is found.
+/// Until the duplicate is resolved, its interact colliders are disabled so the player can only interact with the
+/// server-spawned counterpart. <see cref="OnNetworkSpawn"/> restores those colliders on the network-spawned
+/// instance (NGO marks <see cref="NetworkObject.IsSpawned"/> after Awake, so the spawned counterpart goes through
+/// the same Awake-time disable as the duplicate and must re-enable itself once it knows it is the real one).
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
-public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
+public sealed class MazePieceNetworkRigidbodySpawn : NetworkBehaviour
 {
     const float DuplicateSearchSeconds = 15f;
     const float DuplicateMatchDistance = 3f;
 
     NetworkObject _networkObject;
+    List<Collider> _collidersDisabledAtAwake;
 
     void Awake()
     {
@@ -25,6 +31,16 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
         {
             DisableLocalClientInteractColliders();
         }
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        // NGO instantiates the spawned counterpart on the client by calling Unity Instantiate, which runs
+        // our Awake before NGO flips IsSpawned to true. That makes Awake mistake the real spawned object for
+        // a duplicate and disable its colliders. Once OnNetworkSpawn fires (IsSpawned is true here), undo
+        // the disable so the player can interact with this instance. The local procedurally-built duplicate
+        // never reaches OnNetworkSpawn, so its colliders stay disabled until it is destroyed.
+        RestoreCollidersDisabledAtAwake();
     }
 
     IEnumerator Start()
@@ -103,9 +119,27 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
         Collider[] colliders = GetComponentsInChildren<Collider>(true);
         for (int i = 0; i < colliders.Length; i++)
         {
-            if (colliders[i] != null)
-                colliders[i].enabled = false;
+            Collider c = colliders[i];
+            if (c == null || !c.enabled)
+                continue;
+            c.enabled = false;
+            (_collidersDisabledAtAwake ??= new List<Collider>(colliders.Length)).Add(c);
         }
+    }
+
+    void RestoreCollidersDisabledAtAwake()
+    {
+        if (_collidersDisabledAtAwake == null)
+            return;
+
+        for (int i = 0; i < _collidersDisabledAtAwake.Count; i++)
+        {
+            Collider c = _collidersDisabledAtAwake[i];
+            if (c != null)
+                c.enabled = true;
+        }
+
+        _collidersDisabledAtAwake = null;
     }
 
     static string NormalizeInstanceName(string value)

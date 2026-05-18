@@ -24,6 +24,7 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
     Rigidbody _rb;
     NetworkRigidbody _networkRigidbody;
     bool _lockedWorldPhysicsUntilMazeReady;
+    bool _kinematicByDesign;
 
     public override void OnNetworkSpawn()
     {
@@ -33,6 +34,12 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
             _rb = _item.ItemRigidbody;
         if (_rb == null)
             _rb = GetComponent<Rigidbody>();
+
+        // Props without NetworkRigidbody but with kinematic state set by their own Awake (e.g. carnival
+        // bottles via CarnivalBottleKnockdown) must stay kinematic on the client — they have no network
+        // physics sync, so a non-authoritative local simulation would just drift them off (and through
+        // floors when their interact collider is also disabled during the pre-spawn window).
+        _kinematicByDesign = _networkRigidbody == null && _rb != null && _rb.isKinematic;
     }
 
     void FixedUpdate()
@@ -53,6 +60,15 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
             if (!ProceduralMazeCoordinator.IsLocalMazeCollidersReady)
                 FreezeLocalBody();
 
+            return;
+        }
+
+        // Prop is kinematic by design (no NetworkRigidbody, no client-side simulation). Just keep it
+        // anchored where the server placed it — any local "unfreeze" would only drift it off.
+        if (_kinematicByDesign)
+        {
+            if (!_rb.isKinematic || _rb.useGravity)
+                FreezeLocalBody();
             return;
         }
 
