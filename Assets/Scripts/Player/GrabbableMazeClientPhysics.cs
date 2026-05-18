@@ -23,6 +23,7 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
     GrabbableInventoryItem _item;
     Rigidbody _rb;
     NetworkRigidbody _networkRigidbody;
+    CarnivalBottleKnockdown _bottleKnockdown;
     bool _lockedWorldPhysicsUntilMazeReady;
     bool _kinematicByDesign;
 
@@ -30,6 +31,7 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
     {
         TryGetComponent(out _networkRigidbody);
         TryGetComponent(out _item);
+        TryGetComponent(out _bottleKnockdown);
         if (_item != null)
             _rb = _item.ItemRigidbody;
         if (_rb == null)
@@ -65,8 +67,12 @@ public class GrabbableMazeClientPhysics : NetworkBehaviour
 
         // Prop is kinematic by design (no NetworkRigidbody, no client-side simulation). Just keep it
         // anchored where the server placed it — any local "unfreeze" would only drift it off.
+        // Exception: once a knockdown handler explicitly flips the body to dynamic (e.g. a bottle
+        // taking a thrown ball), let physics simulate locally so the fall is visible to this client.
         if (_kinematicByDesign)
         {
+            if (_bottleKnockdown != null && _bottleKnockdown.IsKnockedDown)
+                return;
             if (!_rb.isKinematic || _rb.useGravity)
                 FreezeLocalBody();
             return;
