@@ -19,7 +19,7 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
     const float SpawnedCounterpartSearchDistance = 3f;
 
     [Header("Round")]
-    [SerializeField, Min(1f)] float roundDurationSeconds = 45f;
+    [SerializeField, Min(1f)] float roundDurationSeconds = 15f;
     [SerializeField, Min(1)] int ticketsPerBasket = 2;
     [Tooltip("Minimum gap between two scores so a single rebounding shot can't count multiple times.")]
     [SerializeField, Min(0f)] float scoreCooldownSeconds = 0.4f;
@@ -193,7 +193,10 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
         _isActive.Value = true;
     }
 
-    /// <summary>Server-only. Called by <see cref="BasketballHoopTrigger"/> on a valid downward ball-through-hoop event.</summary>
+    /// <summary>
+    /// Server-only. Called by <see cref="BasketballHoopTrigger"/> once it has confirmed the active
+    /// ball fell all the way down through the hoop volume (not just clipped the rim and bounced out).
+    /// </summary>
     public void ServerOnBasketScored(NetworkObject scoringBall)
     {
         if (!IsServer || !_isActive.Value)

@@ -11,11 +11,12 @@ GameObject:
   - component: {fileID: 3112144581848307510}
   - component: {fileID: 2062460163565459603}
   - component: {fileID: 4286199646644497497}
+  - component: {fileID: 8948106371218704307}
   - component: {fileID: 5511223344880011010}
-  - component: {fileID: 7110979280222863276}
   - component: {fileID: 5511223344880011009}
   - component: {fileID: 5511223344880011011}
   - component: {fileID: 4658132132648674494}
+  - component: {fileID: 6611223344110011022}
   m_Layer: 0
   m_Name: Ticket
   m_TagString: Untagged
@@ -95,6 +96,26 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!114 &8948106371218704307
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2340569635365703052}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::KeyItem
+  _itemTypeId: 3
+  _slotIcon: {fileID: 21300000, guid: 803f13083c5f3f64987de356205696dc, type: 3}
+  itemRigidbody: {fileID: 0}
+  itemColliders: []
+  itemRenderers: []
+  heldLocalPosition: {x: 0, y: 0, z: 0}
+  heldLocalEulerAngles: {x: 180, y: 0, z: 0}
+  alignRotationWithFollow: 1
 --- !u!114 &5511223344880011010
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -120,19 +141,6 @@ MonoBehaviour:
   AutoObjectParentSync: 0
   SyncOwnerTransformWhenParented: 0
   AllowOwnerToParent: 0
---- !u!114 &7110979280222863276
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2340569635365703052}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c0a1c0a1c0a1c0a1c0a1c0a1c0a1c005, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CarnivalTicketBundle
-  ShowTopMostFoldoutHeaderGroup: 1
 --- !u!54 &5511223344880011009
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -194,3 +202,16 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 0.01908255, y: 0.0008, z: 0.01112225}
   m_Center: {x: 0.000071137074, y: -1.1248048e-19, z: -0.000046600733}
+--- !u!114 &6611223344110011022
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2340569635365703052}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ae3f9012c4d54b4b8e6f71d2bc8aa101, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MazePieceNetworkRigidbodySpawn
+  ShowTopMostFoldoutHeaderGroup: 1

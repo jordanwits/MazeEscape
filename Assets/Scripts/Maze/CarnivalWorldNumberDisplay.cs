@@ -1,11 +1,14 @@
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
 /// Drives a world-space label from a <see cref="BasketballGameController"/>'s replicated state.
-/// Supports either a 3D <see cref="TextMesh"/> (no canvas needed) or a <see cref="Text"/> placed
-/// on a world-space Canvas — whichever is wired up. The display runs purely on read-side
-/// NetworkVariable values, so it works the same on every client without any RPC.
+/// Supports a TextMeshPro label (<see cref="TMP_Text"/> — covers both the 3D
+/// <c>TextMeshPro</c> and the canvas <c>TextMeshProUGUI</c> components), a legacy 3D
+/// <see cref="TextMesh"/> (no canvas needed), or a UGUI <see cref="Text"/> on a world-space
+/// Canvas — whichever is wired up. The display runs purely on read-side NetworkVariable values,
+/// so it works the same on every client without any RPC.
 /// </summary>
 [DisallowMultipleComponent]
 [ExecuteAlways]
@@ -16,7 +19,8 @@ public sealed class CarnivalWorldNumberDisplay : MonoBehaviour
     [SerializeField] BasketballGameController controller;
     [SerializeField] DisplayMode mode = DisplayMode.Timer;
 
-    [Header("Targets (wire either one)")]
+    [Header("Targets (wire whichever applies)")]
+    [SerializeField] TMP_Text tmpText;
     [SerializeField] TextMesh worldTextMesh;
     [SerializeField] Text uiText;
 
@@ -32,6 +36,7 @@ public sealed class CarnivalWorldNumberDisplay : MonoBehaviour
     void Reset()
     {
         controller = GetComponentInParent<BasketballGameController>();
+        tmpText = GetComponentInChildren<TMP_Text>();
         worldTextMesh = GetComponentInChildren<TextMesh>();
         uiText = GetComponentInChildren<Text>();
     }
@@ -52,6 +57,8 @@ public sealed class CarnivalWorldNumberDisplay : MonoBehaviour
     {
         if (controller == null)
             controller = GetComponentInParent<BasketballGameController>(true);
+        if (tmpText == null)
+            tmpText = GetComponentInChildren<TMP_Text>(true);
         if (worldTextMesh == null)
             worldTextMesh = GetComponentInChildren<TextMesh>(true);
         if (uiText == null)
@@ -90,6 +97,8 @@ public sealed class CarnivalWorldNumberDisplay : MonoBehaviour
             return;
 
         _lastText = next;
+        if (tmpText != null)
+            tmpText.text = next;
         if (worldTextMesh != null)
             worldTextMesh.text = next;
         if (uiText != null)
