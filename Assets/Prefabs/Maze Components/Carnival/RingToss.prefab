@@ -94,59 +94,6 @@ MonoBehaviour:
   points: 10
   captureRadius: 0.13
   pegHeight: 0.15
---- !u!1 &1472307241716211146
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 5567586481234993776}
-  - component: {fileID: 7437077567989422852}
-  m_Layer: 9
-  m_Name: PlayerBarrier
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &5567586481234993776
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1472307241716211146}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 8863891128776590400}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!65 &7437077567989422852
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1472307241716211146}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 3.79, y: 6, z: 2.81}
-  m_Center: {x: 0, y: -0.45, z: 0.62}
 --- !u!1 &2577122353882466128
 GameObject:
   m_ObjectHideFlags: 0
@@ -213,6 +160,7 @@ Transform:
   m_LocalScale: {x: 198.99, y: 198.99, z: 198.99}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 8293620612985132226}
   - {fileID: 5953221297626814098}
   - {fileID: 4287890729865157630}
   - {fileID: 2367742944262321812}
@@ -227,7 +175,6 @@ Transform:
   - {fileID: 3618197581853792402}
   - {fileID: 5088626425455511639}
   - {fileID: 3922952249099529371}
-  - {fileID: 5567586481234993776}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &1213214741166692747
@@ -667,6 +614,73 @@ MonoBehaviour:
   points: 20
   captureRadius: 0.13
   pegHeight: 0.15
+--- !u!1 &6284228686332289987
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8293620612985132226}
+  - component: {fileID: 7854892038820262185}
+  - component: {fileID: 1090392970721210243}
+  m_Layer: 9
+  m_Name: PlayerBarrier
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8293620612985132226
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6284228686332289987}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -0.0021, y: -0.0037, z: 0.008}
+  m_LocalScale: {x: 1.2843187, y: 1.2843189, z: 1.2843189}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 8863891128776590400}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!65 &7854892038820262185
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6284228686332289987}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 0.0143043315, y: 0.014442184, z: 0.014200888}
+  m_Center: {x: 0.0016526508, y: 0.0027365636, z: -0.0018988271}
+--- !u!114 &1090392970721210243
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6284228686332289987}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 463576a993bbaec4d96bcc3fbcc70193, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MinigameBarrierGizmo
+  gizmoColor: {r: 1, g: 0.2, b: 0.2, a: 0.25}
 --- !u!1 &6396499537522866665
 GameObject:
   m_ObjectHideFlags: 0

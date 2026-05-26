@@ -223,6 +223,7 @@ GameObject:
   m_Component:
   - component: {fileID: 8999911971157075875}
   - component: {fileID: 166953392133674841}
+  - component: {fileID: 7900433153016594324}
   m_Layer: 9
   m_Name: PlayerBarrier
   m_TagString: Untagged
@@ -264,8 +265,21 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 2.74, y: 6, z: 5.69}
-  m_Center: {x: 0.01, y: 0, z: 0.4}
+  m_Size: {x: 0.008812545, y: 0.018214997, z: 0.017147884}
+  m_Center: {x: -0.00004063395, y: 0.00020061916, z: 0.00055077416}
+--- !u!114 &7900433153016594324
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4446668926715302833}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 463576a993bbaec4d96bcc3fbcc70193, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MinigameBarrierGizmo
+  gizmoColor: {r: 1, g: 0.2, b: 0.2, a: 0.25}
 --- !u!1 &5465240853195602605
 GameObject:
   m_ObjectHideFlags: 0
