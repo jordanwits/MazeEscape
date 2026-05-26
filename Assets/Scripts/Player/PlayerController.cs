@@ -115,6 +115,12 @@ public partial class PlayerController : MonoBehaviour
     [Tooltip("Auto-create a HUD stamina bar if none is assigned.")]
     [SerializeField] bool autoCreateStaminaBar = true;
 
+    [Header("Heavy Throwable Charge")]
+    [Tooltip("Seconds of holding Attack (left click) to reach a full-power, max-distance throw. The charge bar fills over this duration.")]
+    [SerializeField, Min(0.05f)] float chargeSecondsToFull = 1.25f;
+    [Tooltip("Auto-create the HUD throw-charge bar (shown only while charging a throw).")]
+    [SerializeField] bool autoCreateThrowChargeBar = true;
+
     [Header("Melee")]
     [Tooltip("Range of the melee attack.")]
     [SerializeField] float meleeRange = 2f;
@@ -190,6 +196,10 @@ public partial class PlayerController : MonoBehaviour
     bool _audiblySprintingForAi;
     RectTransform _staminaFillRect;
     GameObject _staminaBarRoot;
+    bool _isChargingThrow;
+    float _throwChargeTimer;
+    GameObject _throwChargeBarRoot;
+    RectTransform _throwChargeFillRect;
     GameObject _crosshairRoot;
     GameObject _inventorySlotsRoot;
     Image[] _inventorySlotBorderImages;
@@ -237,6 +247,7 @@ public partial class PlayerController : MonoBehaviour
     Quaternion _savedCameraPitchLocalRotation;
 
     public float StaminaNormalized => maxStamina > 0f ? _currentStamina / maxStamina : 0f;
+    public float ThrowChargeNormalized => _isChargingThrow ? Mathf.Clamp01(_throwChargeTimer / Mathf.Max(0.0001f, chargeSecondsToFull)) : 0f;
     public bool HasLocalControl => _hasLocalControl;
     public bool IsAudiblySprintingForAi => _audiblySprintingForAi;
     bool IsPostJailMovementLocked => Time.time < _postJailMovementLockEndTime;
@@ -333,6 +344,11 @@ public partial class PlayerController : MonoBehaviour
 
         if (staminaBarImage == null && autoCreateStaminaBar)
             staminaBarImage = CreateStaminaBarUI();
+
+        if (_throwChargeBarRoot == null && autoCreateThrowChargeBar)
+            CreateThrowChargeBarUI();
+        if (_throwChargeBarRoot != null)
+            _throwChargeBarRoot.SetActive(false);
 
         CreateCrosshairUI();
         CreateTicketCounterUI();
@@ -457,6 +473,7 @@ public partial class PlayerController : MonoBehaviour
 
         if (_ragdollController != null && _ragdollController.IsRagdolled)
         {
+            CancelThrowCharge();
             if (MultiplayerMenuOverlay.BlocksGameplayInput)
             {
                 _moveInput = Vector2.zero;
@@ -489,6 +506,7 @@ public partial class PlayerController : MonoBehaviour
 
         if (MultiplayerMenuOverlay.BlocksGameplayInput)
         {
+            CancelThrowCharge();
             _moveInput = Vector2.zero;
             _horizontalVelocity = Vector3.zero;
             SetPickupPromptVisible(false);
@@ -511,6 +529,12 @@ public partial class PlayerController : MonoBehaviour
         bool attackPressed = _attackAction != null
             ? _attackAction.WasPressedThisFrame()
             : WasAttackPressedFallback();
+        bool attackReleased = _attackAction != null
+            ? _attackAction.WasReleasedThisFrame()
+            : WasAttackReleasedFallback();
+        bool attackHeld = _attackAction != null
+            ? _attackAction.IsPressed()
+            : IsAttackHeldFallback();
 
         if (IsPostJailMovementLocked)
         {
@@ -534,6 +558,7 @@ public partial class PlayerController : MonoBehaviour
 
         if (ProceduralMazeCoordinator.ShouldBlockLocalPlayerUntilMazeReady())
         {
+            CancelThrowCharge();
             _moveInput = Vector2.zero;
             _horizontalVelocity = Vector3.zero;
             _verticalVelocity = Vector3.zero;
@@ -561,8 +586,8 @@ public partial class PlayerController : MonoBehaviour
         if (flashlightPressed)
             HandleFlashlightToggleInput();
 
-        if (attackPressed && !TryShootHeldHeavyThrowable() && _currentStamina > 0f)
-            TryMelee();
+        HandleAttackInput(attackPressed, attackReleased, attackHeld);
+        RefreshThrowChargeUI();
 
         bool grounded = characterController.isGrounded;
         if (grounded && _verticalVelocity.y < 0f)
@@ -783,6 +808,19 @@ public partial class PlayerController : MonoBehaviour
             staminaBarImage.fillAmount = StaminaNormalized;
     }
 
+    void RefreshThrowChargeUI()
+    {
+        if (_throwChargeBarRoot == null)
+            return;
+
+        bool show = _isChargingThrow;
+        if (_throwChargeBarRoot.activeSelf != show)
+            _throwChargeBarRoot.SetActive(show);
+
+        if (show && _throwChargeFillRect != null)
+            _throwChargeFillRect.anchorMax = new Vector2(ThrowChargeNormalized, 1f);
+    }
+
     void UpdateFootsteps(bool grounded)
     {
         if (footstepAudioSource == null)
@@ -873,6 +911,9 @@ public partial class PlayerController : MonoBehaviour
 
     public void SetHudVisible(bool visible)
     {
+        if (!visible)
+            CancelThrowCharge();
+
         if (_staminaBarRoot != null)
             _staminaBarRoot.SetActive(visible);
         else if (staminaBarImage != null)
@@ -1252,6 +1293,58 @@ public partial class PlayerController : MonoBehaviour
         _staminaFillRect = fillRect;
 
         return fillImage;
+    }
+
+    void CreateThrowChargeBarUI()
+    {
+        // Sit directly above the stamina bar (which sits above the inventory row), matching its
+        // width and styling. Mirrors the constants used by CreateStaminaBarUI for placement.
+        const float invSlotRowHeight = 96f;
+        const float invSlotBottomPad = 4f;
+        const float invSlotStaminaGap = 6f;
+        const float staminaBarHeight = 24f;
+        const float chargeBarHeight = 18f;
+        const float chargeBarGap = 6f;
+        float staminaBarBottomY = invSlotBottomPad + invSlotRowHeight + invSlotStaminaGap;
+        float chargeBarBottomY = staminaBarBottomY + staminaBarHeight + chargeBarGap;
+
+        Canvas canvas = FindAnyObjectByType<Canvas>();
+        if (canvas == null)
+        {
+            GameObject canvasGo = new GameObject("StaminaCanvas");
+            canvas = canvasGo.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 10;
+            canvasGo.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            canvasGo.GetComponent<CanvasScaler>().referenceResolution = new Vector2(1920, 1080);
+            canvasGo.AddComponent<GraphicRaycaster>();
+        }
+
+        GameObject bg = new GameObject("ThrowChargeBarBG");
+        bg.transform.SetParent(canvas.transform, false);
+        Image bgImage = bg.AddComponent<Image>();
+        bgImage.color = new Color(0f, 0f, 0f, 0.6f);
+        bgImage.raycastTarget = false;
+        RectTransform bgRect = bg.GetComponent<RectTransform>();
+        bgRect.anchorMin = new Vector2(0.5f, 0f);
+        bgRect.anchorMax = new Vector2(0.5f, 0f);
+        bgRect.pivot = new Vector2(0.5f, 0f);
+        bgRect.anchoredPosition = new Vector2(0f, chargeBarBottomY);
+        bgRect.sizeDelta = new Vector2(304f, chargeBarHeight);
+        _throwChargeBarRoot = bg;
+
+        GameObject fill = new GameObject("ThrowChargeBarFill");
+        fill.transform.SetParent(bg.transform, false);
+        Image fillImage = fill.AddComponent<Image>();
+        fillImage.color = new Color(1f, 0.6f, 0.15f, 0.95f);
+        fillImage.raycastTarget = false;
+        RectTransform fillRect = fill.GetComponent<RectTransform>();
+        fillRect.anchorMin = Vector2.zero;
+        fillRect.anchorMax = Vector2.one;
+        fillRect.pivot = new Vector2(0f, 0.5f);
+        fillRect.offsetMin = new Vector2(2f, 2f);
+        fillRect.offsetMax = new Vector2(-2f, -2f);
+        _throwChargeFillRect = fillRect;
     }
 
     void LateUpdate()
@@ -2119,6 +2212,86 @@ public partial class PlayerController : MonoBehaviour
 
         Gamepad pad = Gamepad.current;
         return pad != null && pad.buttonWest.wasPressedThisFrame;
+    }
+
+    static bool WasAttackReleasedFallback()
+    {
+        Mouse mouse = Mouse.current;
+        if (mouse != null && mouse.leftButton.wasReleasedThisFrame)
+            return true;
+
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null && keyboard.vKey.wasReleasedThisFrame)
+            return true;
+
+        Gamepad pad = Gamepad.current;
+        return pad != null && pad.buttonWest.wasReleasedThisFrame;
+    }
+
+    static bool IsAttackHeldFallback()
+    {
+        Mouse mouse = Mouse.current;
+        if (mouse != null && mouse.leftButton.isPressed)
+            return true;
+
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null && keyboard.vKey.isPressed)
+            return true;
+
+        Gamepad pad = Gamepad.current;
+        return pad != null && pad.buttonWest.isPressed;
+    }
+
+    // Attack (left click) behaves two ways:
+    //  - Holding a heavy throwable: press starts charging, holding fills the charge, release throws
+    //    with distance scaled by how long it was held. A charged release never falls through to melee.
+    //  - Otherwise: a press performs a melee, exactly as before.
+    void HandleAttackInput(bool pressed, bool released, bool held)
+    {
+        bool holdingThrowable = IsHoldingHeavyThrowable();
+
+        if (pressed && holdingThrowable)
+        {
+            _isChargingThrow = true;
+            _throwChargeTimer = 0f;
+        }
+        else if (pressed && !_isChargingThrow)
+        {
+            if (_currentStamina > 0f)
+                TryMelee();
+            return;
+        }
+
+        if (!_isChargingThrow)
+            return;
+
+        // Throwable was dropped, stolen, or otherwise lost mid-charge: abort cleanly, no throw.
+        if (!holdingThrowable)
+        {
+            CancelThrowCharge();
+            return;
+        }
+
+        if (held)
+            _throwChargeTimer += Time.deltaTime;
+
+        if (released)
+        {
+            float charge01 = ThrowChargeNormalized;
+            _isChargingThrow = false;
+            _throwChargeTimer = 0f;
+            TryShootHeldHeavyThrowable(charge01);
+        }
+    }
+
+    void CancelThrowCharge()
+    {
+        if (!_isChargingThrow && _throwChargeTimer == 0f)
+            return;
+        _isChargingThrow = false;
+        _throwChargeTimer = 0f;
+        if (_throwChargeBarRoot != null && _throwChargeBarRoot.activeSelf)
+            _throwChargeBarRoot.SetActive(false);
     }
 
     void TryMelee()

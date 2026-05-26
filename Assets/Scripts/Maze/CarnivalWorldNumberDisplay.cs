@@ -1,9 +1,12 @@
 using TMPro;
 using UnityEngine;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
 
 /// <summary>
-/// Drives a world-space label from a <see cref="BasketballGameController"/>'s replicated state.
+/// Drives a world-space label from a carnival controller's replicated state
+/// (any <see cref="ICarnivalScoreSource"/>, e.g. <see cref="BasketballGameController"/> or
+/// <see cref="RingTossGameController"/>).
 /// Supports a TextMeshPro label (<see cref="TMP_Text"/> — covers both the 3D
 /// <c>TextMeshPro</c> and the canvas <c>TextMeshProUGUI</c> components), a legacy 3D
 /// <see cref="TextMesh"/> (no canvas needed), or a UGUI <see cref="Text"/> on a world-space
@@ -16,8 +19,12 @@ public sealed class CarnivalWorldNumberDisplay : MonoBehaviour
 {
     public enum DisplayMode { Timer, Score }
 
-    [SerializeField] BasketballGameController controller;
+    [FormerlySerializedAs("controller")]
+    [SerializeField, Tooltip("Any carnival controller implementing ICarnivalScoreSource (BasketballGameController, RingTossGameController). Auto-resolved from a parent if left empty.")]
+    MonoBehaviour controllerHost;
     [SerializeField] DisplayMode mode = DisplayMode.Timer;
+
+    ICarnivalScoreSource _source;
 
     [Header("Targets (wire whichever applies)")]
     [SerializeField] TMP_Text tmpText;
@@ -35,7 +42,7 @@ public sealed class CarnivalWorldNumberDisplay : MonoBehaviour
 
     void Reset()
     {
-        controller = GetComponentInParent<BasketballGameController>();
+        controllerHost = GetComponentInParent<ICarnivalScoreSource>(true) as MonoBehaviour;
         tmpText = GetComponentInChildren<TMP_Text>();
         worldTextMesh = GetComponentInChildren<TextMesh>();
         uiText = GetComponentInChildren<Text>();
@@ -55,8 +62,12 @@ public sealed class CarnivalWorldNumberDisplay : MonoBehaviour
 
     void SyncRefs()
     {
-        if (controller == null)
-            controller = GetComponentInParent<BasketballGameController>(true);
+        _source = controllerHost as ICarnivalScoreSource;
+        if (_source == null)
+        {
+            _source = GetComponentInParent<ICarnivalScoreSource>(true);
+            controllerHost = _source as MonoBehaviour;
+        }
         if (tmpText == null)
             tmpText = GetComponentInChildren<TMP_Text>(true);
         if (worldTextMesh == null)
@@ -107,21 +118,22 @@ public sealed class CarnivalWorldNumberDisplay : MonoBehaviour
 
     string BuildText()
     {
-        if (controller == null)
+        ICarnivalScoreSource source = _source ?? (controllerHost as ICarnivalScoreSource);
+        if (source == null)
             return idlePlaceholder;
 
         if (mode == DisplayMode.Timer)
         {
-            if (!controller.IsActive)
+            if (!source.IsActive)
                 return idlePlaceholder;
-            int seconds = Mathf.CeilToInt(Mathf.Max(0f, controller.TimeRemaining));
+            int seconds = Mathf.CeilToInt(Mathf.Max(0f, source.TimeRemaining));
             return seconds.ToString(timerFormat);
         }
 
         // Score: show live during round; otherwise show last finished score (or placeholder if none yet).
-        if (controller.IsActive)
-            return controller.Score.ToString(scoreFormat);
-        int last = controller.LastFinishedScore;
+        if (source.IsActive)
+            return source.Score.ToString(scoreFormat);
+        int last = source.LastFinishedScore;
         return last > 0 ? last.ToString(scoreFormat) : idlePlaceholder;
     }
 }

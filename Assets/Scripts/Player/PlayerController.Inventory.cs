@@ -615,7 +615,7 @@ public partial class PlayerController
         TryDropSelectedLocal();
     }
 
-    bool TryShootHeldHeavyThrowable()
+    bool TryShootHeldHeavyThrowable(float charge01)
     {
         Vector3 f = CameraTransformForFacing != null ? CameraTransformForFacing.forward : transform.forward;
 
@@ -628,7 +628,7 @@ public partial class PlayerController
             NetworkHeavyThrowableHold hold = NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(id);
             if (hold != null)
             {
-                hold.RequestShootFromOwningClient(f, this);
+                hold.RequestShootFromOwningClient(f, this, charge01);
                 return true;
             }
         }
@@ -637,7 +637,7 @@ public partial class PlayerController
             NetworkHeavyThrowableHold offline = NetworkHeavyThrowableHold.FindOfflineHeldBy(this);
             if (offline != null)
             {
-                offline.RequestShootFromOwningClient(f, this);
+                offline.RequestShootFromOwningClient(f, this, charge01);
                 return true;
             }
         }

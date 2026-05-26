@@ -5,7 +5,15 @@
       "Bash(git commit *)",
       "Bash(powershell -Command \"Get-ChildItem -Recurse Assets/Scripts -Filter *Ticket* -ErrorAction SilentlyContinue\")",
       "Bash(xargs grep -l \"NetworkPrefab\\\\|DefaultNetworkPrefabs\\\\|NetworkManager\")",
-      "Bash(awk '{print $NF}')"
+      "Bash(awk '{print $NF}')",
+      "Bash(claude mcp *)",
+      "mcp__UnityMCP__manage_prefabs",
+      "mcp__UnityMCP__manage_camera",
+      "mcp__UnityMCP__refresh_unity",
+      "mcp__UnityMCP__read_console",
+      "mcp__UnityMCP__execute_code",
+      "Bash(cd H:\\\\Unity\\\\Maze Escape *)",
+      "Bash(grep -E \"\\\\.\\(prefab|cs\\)$\")"
     ]
   }
 }

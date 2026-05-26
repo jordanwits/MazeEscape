@@ -995,17 +995,17 @@ public class NetworkPlayerInventory : NetworkBehaviour
         RequestDropHeavyThrowableServerRpc(itemId, itemTypeId, worldHint);
     }
 
-    public void RequestShootHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, Vector3 cameraForward)
+    public void RequestShootHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, Vector3 cameraForward, float charge01)
     {
         if (!IsSpawned)
             return;
         if (IsServer)
         {
-            ServerTryShootHeavyThrowable(itemId, itemTypeId, worldHint, cameraForward, OwnerClientId);
+            ServerTryShootHeavyThrowable(itemId, itemTypeId, worldHint, cameraForward, charge01, OwnerClientId);
             return;
         }
 
-        RequestShootHeavyThrowableServerRpc(itemId, itemTypeId, worldHint, cameraForward);
+        RequestShootHeavyThrowableServerRpc(itemId, itemTypeId, worldHint, cameraForward, charge01);
     }
 
     [ServerRpc]
@@ -1025,11 +1025,11 @@ public class NetworkPlayerInventory : NetworkBehaviour
     }
 
     [ServerRpc]
-    void RequestShootHeavyThrowableServerRpc(ulong itemId, byte itemTypeId, Vector3 worldHint, Vector3 cameraForward, ServerRpcParams serverRpcParams = default)
+    void RequestShootHeavyThrowableServerRpc(ulong itemId, byte itemTypeId, Vector3 worldHint, Vector3 cameraForward, float charge01, ServerRpcParams serverRpcParams = default)
     {
         if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
             return;
-        ServerTryShootHeavyThrowable(itemId, itemTypeId, worldHint, cameraForward, serverRpcParams.Receive.SenderClientId);
+        ServerTryShootHeavyThrowable(itemId, itemTypeId, worldHint, cameraForward, charge01, serverRpcParams.Receive.SenderClientId);
     }
 
     void ServerTryPickupHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, ulong senderClientId)
@@ -1046,11 +1046,11 @@ public class NetworkPlayerInventory : NetworkBehaviour
         hold.ServerTryDropFromRelay(NetworkObjectId, senderClientId);
     }
 
-    void ServerTryShootHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, Vector3 cameraForward, ulong senderClientId)
+    void ServerTryShootHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, Vector3 cameraForward, float charge01, ulong senderClientId)
     {
         if (!TryResolveHeavyThrowable(itemId, itemTypeId, worldHint, out NetworkHeavyThrowableHold hold))
             return;
-        hold.ServerTryShootFromRelay(NetworkObjectId, senderClientId, cameraForward);
+        hold.ServerTryShootFromRelay(NetworkObjectId, senderClientId, cameraForward, charge01);
     }
 
     static bool TryResolveHeavyThrowable(ulong itemId, byte itemTypeId, Vector3 worldHint, out NetworkHeavyThrowableHold hold)

@@ -104,6 +104,10 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
             && spawnedObject.TryGetComponent(out BasketballGameController _))
             return true;
 
+        if (TryGetComponent(out RingTossGameController _)
+            && spawnedObject.TryGetComponent(out RingTossGameController _))
+            return true;
+
         return NormalizeInstanceName(spawnedObject.name) == NormalizeInstanceName(gameObject.name);
     }
 

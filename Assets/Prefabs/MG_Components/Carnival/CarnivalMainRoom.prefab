@@ -5813,15 +5813,11 @@ Transform:
   - {fileID: 8126496046100699257}
   - {fileID: 240411532356678238}
   - {fileID: 4333671605680460598}
-  - {fileID: 3303280393504783503}
   - {fileID: 7062676540331889073}
-  - {fileID: 7434463376123011469}
-  - {fileID: 7122145987377785801}
-  - {fileID: 6118236132778971032}
   - {fileID: 4699531454470103663}
-  - {fileID: 495523849097423156}
   - {fileID: 2647161740330340027}
   - {fileID: 3402284479490834459}
+  - {fileID: 660776986050803128}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!167 &8485263428639262145
@@ -7255,51 +7251,6 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 1}
   m_Center: {x: 0, y: 0, z: 0}
---- !u!1 &1793186055079623824
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 7122145987377785801}
-  - component: {fileID: 2345678901234560002}
-  m_Layer: 0
-  m_Name: GreenRingSpawn
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &7122145987377785801
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1793186055079623824}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0.128, y: 1.861, z: -9.779}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 994192676363671744}
-  m_LocalEulerAnglesHint: {x: 90, y: 0, z: 0}
---- !u!114 &2345678901234560002
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1793186055079623824}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e5f6a7b8c9d0e1f2a3b4c5d6e7f8a900, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CarnivalRingSpawnAnchor
-  ringPrefab: {fileID: 1831756137279748588, guid: 592216fadf0f1414a9fd365082dfe7f6, type: 3}
 --- !u!1 &1846349754893073361
 GameObject:
   m_ObjectHideFlags: 0
@@ -11592,51 +11543,6 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 1}
   m_Center: {x: 0, y: 0, z: 0}
---- !u!1 &2858916743868685215
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 6118236132778971032}
-  - component: {fileID: 2345678901234560003}
-  m_Layer: 0
-  m_Name: YellowRingSpawn
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &6118236132778971032
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2858916743868685215}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0.5, y: -0.5, z: 0.5, w: 0.5}
-  m_LocalPosition: {x: -0.622, y: 1.861, z: -9.779}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 994192676363671744}
-  m_LocalEulerAnglesHint: {x: 90, y: 0, z: 90}
---- !u!114 &2345678901234560003
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2858916743868685215}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e5f6a7b8c9d0e1f2a3b4c5d6e7f8a900, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CarnivalRingSpawnAnchor
-  ringPrefab: {fileID: 1831756137279748588, guid: d65cc4a867ae40c4ab98971a7ba4e8df, type: 3}
 --- !u!1 &2872699490335592256
 GameObject:
   m_ObjectHideFlags: 0
@@ -23019,6 +22925,51 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 1}
   m_Center: {x: 0, y: 0, z: 0}
+--- !u!1 &6007257435511068234
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 660776986050803128}
+  - component: {fileID: 6535877779107152748}
+  m_Layer: 0
+  m_Name: RingTossGameSpawn
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &660776986050803128
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6007257435511068234}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0.7071068, y: 0, z: 0, w: 0.7071068}
+  m_LocalPosition: {x: 0.08, y: 1.75, z: -12.026}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 994192676363671744}
+  m_LocalEulerAnglesHint: {x: -90, y: 0, z: 0}
+--- !u!114 &6535877779107152748
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6007257435511068234}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 950aa8bde28b01a4ab159fa38ec2a088, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CarnivalBasketballGameSpawnAnchor
+  prefab: {fileID: 3111488976965806104, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
 --- !u!1 &6017843796665645713
 GameObject:
   m_ObjectHideFlags: 0
@@ -31133,51 +31084,6 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 1}
   m_Center: {x: 0, y: 0, z: 0}
---- !u!1 &8153794867188159538
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 7434463376123011469}
-  - component: {fileID: 2345678901234560005}
-  m_Layer: 0
-  m_Name: BlueRingSpawn
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &7434463376123011469
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8153794867188159538}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0.5, y: -0.5, z: 0.5, w: 0.5}
-  m_LocalPosition: {x: 0.726, y: 1.861, z: -9.779}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 994192676363671744}
-  m_LocalEulerAnglesHint: {x: 90, y: 0, z: 90}
---- !u!114 &2345678901234560005
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8153794867188159538}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e5f6a7b8c9d0e1f2a3b4c5d6e7f8a900, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CarnivalRingSpawnAnchor
-  ringPrefab: {fileID: 1831756137279748588, guid: 15d65beecc94dfb48bee74b64e87e226, type: 3}
 --- !u!1 &8166103310561218984
 GameObject:
   m_ObjectHideFlags: 0
@@ -35221,68 +35127,6 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 8929403653688053993, guid: f3ebed7c346547a4c85423c06e8704d9, type: 3}
   m_PrefabInstance: {fileID: 2209855388488793677}
   m_PrefabAsset: {fileID: 0}
---- !u!1001 &2523724697414203272
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 994192676363671744}
-    m_Modifications:
-    - target: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: -0.406
-      objectReference: {fileID: 0}
-    - target: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 1.8295
-      objectReference: {fileID: 0}
-    - target: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: -8.853
-      objectReference: {fileID: 0}
-    - target: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0.7071068
-      objectReference: {fileID: 0}
-    - target: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: -0.7071068
-      objectReference: {fileID: 0}
-    - target: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 180
-      objectReference: {fileID: 0}
-    - target: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 90
-      objectReference: {fileID: 0}
-    - target: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 3363545439274992646, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-      propertyPath: m_Name
-      value: PrizeTicket
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
---- !u!4 &495523849097423156 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 2730982842643209916, guid: 6eb993ab011d8c44e829230e9acec2d3, type: 3}
-  m_PrefabInstance: {fileID: 2523724697414203272}
-  m_PrefabAsset: {fileID: 0}
 --- !u!1001 &3234230659726020688
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -35496,76 +35340,6 @@ PrefabInstance:
 Transform:
   m_CorrespondingSourceObject: {fileID: 8200888558832877602, guid: fb6255dae784e834d99834d11777dce8, type: 3}
   m_PrefabInstance: {fileID: 4426851764957119236}
-  m_PrefabAsset: {fileID: 0}
---- !u!1001 &6256979829265692879
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 994192676363671744}
-    m_Modifications:
-    - target: {fileID: 3111488976965806104, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_Name
-      value: RingToss
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalScale.y
-      value: 198.99002
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalScale.z
-      value: 198.99002
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 0.08
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 1.75
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: -12.026
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0.7071068
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0.7071068
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: -90
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 180
-      objectReference: {fileID: 0}
-    - target: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
---- !u!4 &3303280393504783503 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 8863891128776590400, guid: 596df9b318abcc64e948b3e02bb00829, type: 3}
-  m_PrefabInstance: {fileID: 6256979829265692879}
   m_PrefabAsset: {fileID: 0}
 --- !u!1001 &8758197781489105470
 PrefabInstance:

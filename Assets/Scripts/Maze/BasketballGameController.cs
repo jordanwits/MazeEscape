@@ -14,7 +14,7 @@ using UnityEngine;
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
-public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameStart
+public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameStart, ICarnivalScoreSource
 {
     const float SpawnedCounterpartSearchDistance = 3f;
 

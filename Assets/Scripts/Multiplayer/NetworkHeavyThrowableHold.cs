@@ -29,11 +29,13 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     [Tooltip("Forward speed in m/s ≈ Player DropItemImpulse × this. Impulse on heavy props is weak; use velocity.")]
     [SerializeField] float dropForwardSpeedFromPlayerImpulse = 8.5f;
 
-    [Header("Shoot (left click — toss arc, XZ forward + up)")]
-    [Tooltip("Horizontal forward speed added (m/s).")]
-    [SerializeField] float shootForwardSpeed = 10f;
-    [Tooltip("Upward speed added (m/s).")]
-    [SerializeField] float shootUpSpeed = 6f;
+    [Header("Shoot (left click — charge-and-release arc)")]
+    [Tooltip("Launch angle above horizontal, in degrees. Higher = a steeper, taller arc that drops in more sharply (good for landing in a hoop or over pegs). The arc SHAPE is constant; charge scales how hard the throw is, so the arc gets higher and longer with charge but never flattens into a line drive.")]
+    [SerializeField, Range(10f, 80f)] float shootLaunchAngleDegrees = 55f;
+    [Tooltip("Launch speed at zero charge — a quick tap. Keep low for a weak, short lob.")]
+    [SerializeField] float minShootSpeed = 2.5f;
+    [Tooltip("Launch speed at full charge (bar full), in m/s. Drives the maximum throw distance and arc height.")]
+    [SerializeField] float maxShootSpeed = 8.5f;
     [FormerlySerializedAs("releaseForwardOffset")]
     [SerializeField] float releaseForwardOffset = 0.42f;
 
@@ -467,21 +469,21 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         return true;
     }
 
-    public void RequestShootFromOwningClient(Vector3 cameraForward, PlayerController shooter)
+    public void RequestShootFromOwningClient(Vector3 cameraForward, PlayerController shooter, float charge01)
     {
         if (shooter == null || _item == null || !_item.IsHeld)
             return;
 
         if (!NetworkManager.Singleton || !NetworkManager.Singleton.IsListening)
         {
-            ShootOffline(cameraForward, shooter);
+            ShootOffline(cameraForward, shooter, charge01);
             return;
         }
 
         if (!IsSpawned)
         {
             if (shooter.TryGetComponent(out NetworkPlayerInventory inventory))
-                inventory.RequestShootHeavyThrowable(_item.ItemId, _item.ItemTypeId, _item.transform.position, cameraForward);
+                inventory.RequestShootHeavyThrowable(_item.ItemId, _item.ItemTypeId, _item.transform.position, cameraForward, charge01);
             return;
         }
 
@@ -489,15 +491,15 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         {
             NetworkObject shooterNet = shooter.GetComponent<NetworkObject>();
             if (shooterNet != null && shooterNet.NetworkObjectId == _holderNetworkObjectId.Value)
-                ApplyShootAuthority(cameraForward, shooter);
+                ApplyShootAuthority(cameraForward, shooter, charge01);
             return;
         }
 
-        RequestShootServerRpc(cameraForward);
+        RequestShootServerRpc(cameraForward, charge01);
     }
 
     [ServerRpc(RequireOwnership = false)]
-    void RequestShootServerRpc(Vector3 cameraForward, ServerRpcParams rpcParams = default)
+    void RequestShootServerRpc(Vector3 cameraForward, float charge01, ServerRpcParams rpcParams = default)
     {
         if (!IsServer || !IsSpawned)
             return;
@@ -514,14 +516,15 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         if (!client.PlayerObject.TryGetComponent(out PlayerController pc))
             return;
 
-        ApplyShootAuthority(cameraForward, pc);
+        ApplyShootAuthority(cameraForward, pc, charge01);
     }
 
-    void ApplyShootAuthority(Vector3 cameraForward, PlayerController shooter)
+    void ApplyShootAuthority(Vector3 cameraForward, PlayerController shooter, float charge01)
     {
         BuildShootVelocity(
             shooter,
             cameraForward,
+            charge01,
             out Vector3 velocityDelta,
             out Vector3 angularVelocity,
             out Vector3 dropPos,
@@ -653,6 +656,7 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     void BuildShootVelocity(
         PlayerController shooter,
         Vector3 cameraForward,
+        float charge01,
         out Vector3 velocityDelta,
         out Vector3 angularVelocity,
         out Vector3 dropPosition,
@@ -664,7 +668,13 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             flat = Vector3.ProjectOnPlane(shooter.transform.forward, Vector3.up);
         flat.Normalize();
 
-        velocityDelta = flat * shootForwardSpeed + Vector3.up * shootUpSpeed;
+        // Fixed launch angle keeps a proper arc at EVERY charge (never a flat line drive); charge
+        // scales the launch speed, so a quick tap is a weak short lob and a full charge is a hard,
+        // higher, farther throw. Re-clamp here: this runs server-authoritative, so a forged client
+        // charge can't exceed max range.
+        float speed = Mathf.Lerp(minShootSpeed, maxShootSpeed, Mathf.Clamp01(charge01));
+        float angleRad = shootLaunchAngleDegrees * Mathf.Deg2Rad;
+        velocityDelta = flat * (speed * Mathf.Cos(angleRad)) + Vector3.up * (speed * Mathf.Sin(angleRad));
 
         Transform cam = shooter.CameraTransformForFacing;
         Vector3 origin = cam != null ? cam.position : shooter.transform.position + Vector3.up * 1.6f;
@@ -701,7 +711,7 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         return cam != null ? cam.rotation : Quaternion.LookRotation(shooter.transform.forward, Vector3.up);
     }
 
-    void ShootOffline(Vector3 cameraForward, PlayerController shooter)
+    void ShootOffline(Vector3 cameraForward, PlayerController shooter, float charge01)
     {
         if (_offlineHolder != shooter || !_item.IsHeld)
             return;
@@ -709,6 +719,7 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         BuildShootVelocity(
             shooter,
             cameraForward,
+            charge01,
             out Vector3 velocityDelta,
             out Vector3 angularVelocity,
             out Vector3 dropPos,
@@ -742,11 +753,11 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         return true;
     }
 
-    public bool ServerTryShootFromRelay(ulong playerNetworkObjectId, ulong senderClientId, Vector3 cameraForward)
+    public bool ServerTryShootFromRelay(ulong playerNetworkObjectId, ulong senderClientId, Vector3 cameraForward, float charge01)
     {
         if (!TryResolveRelayHolder(playerNetworkObjectId, senderClientId, out PlayerController pc))
             return false;
-        ApplyShootAuthority(cameraForward, pc);
+        ApplyShootAuthority(cameraForward, pc, charge01);
         return true;
     }
 
