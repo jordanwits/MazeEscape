@@ -84,6 +84,22 @@ public class ClownAI : MonoBehaviour
     [Tooltip("Contacts flatter than this |normal.y| count as walls (vs floor/ceiling).")]
     [SerializeField, Range(0f, 1f)] float wallSlideMaxNormalY = 0.7f;
 
+    [Header("Chase corridor centering")]
+    [Tooltip(
+        "While chasing, steer toward the middle of the hallway instead of letting the baked NavMesh path hug "
+            + "the inside corners. The baked path was string-pulled for the small base radius, so the grown body "
+            + "clips the walls and hangs on corners. Probing the sides and leaning toward the open one keeps the "
+            + "Clown off the walls before it grinds into them.")]
+    [SerializeField] bool chaseCenterInCorridor = true;
+    [Tooltip("Gap (m, on top of the Clown's own scaled radius) it tries to keep from a side wall while chasing. Also the sideways probe reach.")]
+    [SerializeField, Min(0f)] float chaseWallSideClearance = 0.9f;
+    [Tooltip("How far ahead (m) to also probe so the Clown widens its line BEFORE it reaches the corner the path is cutting.")]
+    [SerializeField, Min(0f)] float chaseWallLookAhead = 1.4f;
+    [Tooltip("Max fraction of chase speed redirected sideways toward the open side (1 ≈ a 45° lean toward center).")]
+    [SerializeField, Range(0f, 1f)] float chaseCenterSteerStrength = 0.65f;
+    [Tooltip("Height (m) above the feet at which the left/right clearance rays are cast.")]
+    [SerializeField, Min(0f)] float chaseWallProbeHeight = 1f;
+
     [Header("Pit recovery")]
     [Tooltip(
         "Watchdog for the case where the Clown lands on a tiny NavMesh patch inside a pit. "
@@ -178,6 +194,21 @@ public class ClownAI : MonoBehaviour
     [SerializeField, Min(0f)] float slamForwardSpeed = 13f;
     [Tooltip("Downward launch speed at the slam (drives the body into the floor; keep modest so the body skids forward rather than just pancaking).")]
     [SerializeField, Min(0f)] float slamDownwardSpeed = 6f;
+    [Header("Slam direction (avoid walls / throw down hallways)")]
+    [Tooltip("If ON, the slam launch is redirected to the most open horizontal direction (e.g. down a hallway) so the player isn't thrown straight into a nearby wall.")]
+    [SerializeField] bool slamAvoidWalls = true;
+    [Tooltip("Obstacle layers used to probe for walls. Leave as Nothing to auto-use everything except actors (players/enemies).")]
+    [SerializeField] LayerMask slamObstacleMask;
+    [Tooltip("How far to probe each candidate direction for clearance (m).")]
+    [SerializeField, Min(1f)] float slamClearanceProbeRange = 8f;
+    [Tooltip("A direction counts as 'open' if it has at least this much clearance (m). The most open direction nearest the slam intent is chosen.")]
+    [SerializeField, Min(0.5f)] float slamMinClearance = 3f;
+    [Tooltip("Probe sphere radius (≈ player width) so narrow gaps don't count as open.")]
+    [SerializeField, Min(0.05f)] float slamClearanceProbeRadius = 0.4f;
+    [Tooltip("Height above the slam point to probe from (≈ the skidding body's height).")]
+    [SerializeField, Min(0f)] float slamClearanceProbeHeight = 0.5f;
+    [Tooltip("Clearance (m) at/above which the slam uses full forward speed. Below it, the forward launch is scaled down so the ragdoll isn't flung into a nearby wall hard enough to tunnel through it.")]
+    [SerializeField, Min(0.5f)] float slamForwardFullSpeedClearance = 4f;
     [SerializeField] ForceMode slamForceMode = ForceMode.VelocityChange;
     [Tooltip("Damage dealt by the slam. Player auto-recovers unless this kills them.")]
     [SerializeField, Min(0f)] float slamDamage = 22f;
@@ -208,6 +239,7 @@ public class ClownAI : MonoBehaviour
     bool _grabContactDone;
     bool _slamDone;
     Vector3 _grabContactHandWorldPos;
+    Vector3 _grabFrozenPosition;
     PlayerHealth _grabbedHealth;
     PlayerRagdollController _grabbedRagdoll;
     NetworkPlayerRagdoll _grabbedNetRagdoll;
@@ -1397,7 +1429,79 @@ public class ClownAI : MonoBehaviour
         if (desiredVelocity.sqrMagnitude > moveSpeed * moveSpeed)
             desiredVelocity = desiredVelocity.normalized * moveSpeed;
 
+        // Lean the path-following velocity toward the centre of the hall so the body doesn't clip corners.
+        desiredVelocity = ApplyChaseCorridorCentering(desiredVelocity);
+
         return desiredVelocity;
+    }
+
+    /// <summary>
+    /// Biases the chase velocity toward the centre of the corridor. The baked NavMesh path string-pulls tight
+    /// against inside corners; with the Clown's body (especially once <see cref="ClownDynamicScale"/> has grown
+    /// it) wider than the baked clearance, that line clips the wall and the CharacterController hangs for a beat.
+    /// Probing left/right at the body and a look-ahead point and leaning toward whichever side has more room
+    /// keeps speed constant, so the Clown still closes on the target — just down the middle of the hall.
+    /// </summary>
+    Vector3 ApplyChaseCorridorCentering(Vector3 desiredVelocity)
+    {
+        if (!chaseCenterInCorridor)
+            return desiredVelocity;
+
+        Vector3 flat = desiredVelocity;
+        flat.y = 0f;
+        float speed = flat.magnitude;
+        if (speed < 0.05f)
+            return desiredVelocity;
+
+        Vector3 dir = flat / speed;
+        Vector3 right = Vector3.Cross(Vector3.up, dir);
+        if (right.sqrMagnitude < 1e-4f)
+            return desiredVelocity;
+        right.Normalize();
+
+        float clownRadius = 0.5f;
+        if (characterController != null)
+        {
+            float lossy = Mathf.Max(transform.lossyScale.x, transform.lossyScale.z);
+            clownRadius = characterController.radius * Mathf.Max(0.01f, lossy);
+        }
+
+        float probe = clownRadius + Mathf.Max(0f, chaseWallSideClearance);
+        // Walls/props only — don't steer away from the player or other actors (we WANT to reach the player).
+        int mask = Physics.DefaultRaycastLayers & ~_wallSlideIgnoreLayers;
+
+        float leftClear = probe;
+        float rightClear = probe;
+        AccumulateSideClearance(transform.position, right, probe, mask, ref leftClear, ref rightClear);
+        if (chaseWallLookAhead > 0.01f)
+            AccumulateSideClearance(
+                transform.position + dir * chaseWallLookAhead, right, probe, mask, ref leftClear, ref rightClear);
+
+        float imbalance = rightClear - leftClear; // + => more room to the right
+        if (Mathf.Abs(imbalance) < 0.01f)
+            return desiredVelocity;
+
+        float lateral = Mathf.Clamp(imbalance / probe, -1f, 1f) * chaseCenterSteerStrength;
+        Vector3 steered = dir + right * lateral;
+        if (steered.sqrMagnitude < 1e-4f)
+            return desiredVelocity;
+
+        return steered.normalized * speed; // keep full speed, just biased toward the open side
+    }
+
+    /// <summary>
+    /// Casts a left and right ray from <paramref name="origin"/> (lifted to the probe height) and records the
+    /// nearest wall distance on each side, so the closer wall pulls the Clown away from it.
+    /// </summary>
+    void AccumulateSideClearance(Vector3 origin, Vector3 right, float probe, int mask, ref float leftClear, ref float rightClear)
+    {
+        origin += Vector3.up * Mathf.Max(0f, chaseWallProbeHeight);
+
+        if (Physics.Raycast(origin, right, out RaycastHit rightHit, probe, mask, QueryTriggerInteraction.Ignore))
+            rightClear = Mathf.Min(rightClear, rightHit.distance);
+
+        if (Physics.Raycast(origin, -right, out RaycastHit leftHit, probe, mask, QueryTriggerInteraction.Ignore))
+            leftClear = Mathf.Min(leftClear, leftHit.distance);
     }
 
     void EnterIdle()
@@ -1487,7 +1591,11 @@ public class ClownAI : MonoBehaviour
             navMeshAgent.ResetPath();
         }
         _horizontalVelocity = Vector3.zero;
+        _verticalVelocity = Vector3.zero;
         _intendedMoveSpeed = 0f;
+        // Lock the Clown here for the whole grab/slam (see UpdateGrabbing) so its CharacterController can't be
+        // depenetrated/ejected through a nearby wall while it's scaled up in a corner.
+        _grabFrozenPosition = transform.position;
 
         // Face the player so the grab/slam reads forward.
         if (_target != null)
@@ -1535,8 +1643,11 @@ public class ClownAI : MonoBehaviour
             && (ShouldLeaveGrabAnimation() || Time.time >= _grabbingStartedTime + grabClipDurationFallback + 0.3f))
             EnterRecover();
 
-        // Stand still and grounded (never re-path while grabbing).
-        ApplyMovement(Vector3.zero);
+        // Hold the Clown rock-solid where it grabbed — do NOT call CharacterController.Move, so it can't be
+        // depenetrated/ejected through a nearby wall (which dragged the pinned player through the map too).
+        transform.position = _grabFrozenPosition;
+        if (navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh)
+            navMeshAgent.nextPosition = _grabFrozenPosition;
     }
 
     /// <summary>Normalized time (0-1+) of the Grab and Slam state if it's currently playing (incl. during the
@@ -1579,7 +1690,10 @@ public class ClownAI : MonoBehaviour
             EnterIdle();
             return;
         }
-        ApplyMovement(Vector3.zero);
+        // Stay frozen through the brief post-slam cooldown (same wall-eject safety as the grab).
+        transform.position = _grabFrozenPosition;
+        if (navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh)
+            navMeshAgent.nextPosition = _grabFrozenPosition;
     }
 
     /// <summary>Animation event from the Grab and Slam clip: the hands close on the player.</summary>
@@ -1653,14 +1767,30 @@ public class ClownAI : MonoBehaviour
             slamDir = fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.forward;
         }
 
-        Vector3 slamForce = (slamDir * slamForwardSpeed) + (Vector3.down * slamDownwardSpeed);
         Vector3 forcePos = _grabBone != null ? _grabBone.position : transform.position;
+
+        // In tight spaces (maze hallways) the raw slam direction can point into a wall, so redirect the
+        // launch to the most open direction (down the hallway) nearest the intended slam direction, and
+        // scale the forward speed down if even the best direction is tight (so the ragdoll can't tunnel
+        // through a nearby wall and fall out of the map).
+        float forwardFactor = 1f;
+        if (slamAvoidWalls)
+        {
+            slamDir = ResolveOpenSlamDirection(forcePos, slamDir, out float clearance);
+            forwardFactor = Mathf.Clamp01(clearance / Mathf.Max(0.5f, slamForwardFullSpeedClearance));
+        }
+
+        Vector3 slamForce = (slamDir * slamForwardSpeed * forwardFactor) + (Vector3.down * slamDownwardSpeed);
+
+        // Where the ragdoll will START: clamped to the Clown's side of any wall and onto valid floor, so a
+        // slam against a wall can never spawn the player outside the map.
+        Vector3 safeReleasePos = ComputeSafeReleasePosition(forcePos);
 
         bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
         if (inNetSession)
         {
             if (_grabbedNetRagdoll != null)
-                _grabbedNetRagdoll.ReleaseSlamFromServer(slamForce, forcePos, slamDamage, (byte)slamForceMode);
+                _grabbedNetRagdoll.ReleaseSlamFromServer(slamForce, safeReleasePos, slamDamage, (byte)slamForceMode);
         }
         else if (_grabbedRagdoll != null)
         {
@@ -1670,8 +1800,127 @@ public class ClownAI : MonoBehaviour
                 _grabbedHealth.TakeDamage(slamDamage);
                 survived = !_grabbedHealth.IsDead;
             }
-            _grabbedRagdoll.ReleaseFromHeld(slamForce, forcePos, slamForceMode, allowAutoRecovery: survived);
+            _grabbedRagdoll.ReleaseFromHeld(slamForce, safeReleasePos, slamForceMode, allowAutoRecovery: survived);
         }
+    }
+
+    /// <summary>
+    /// Returns the horizontal launch direction nearest <paramref name="intendedDir"/> that is actually open
+    /// (so a hallway slam throws the player down the hall instead of into a side wall). If the intended
+    /// direction is already clear it's kept unchanged (open rooms behave as before).
+    /// </summary>
+    Vector3 ResolveOpenSlamDirection(Vector3 slamPoint, Vector3 intendedDir, out float chosenClearance)
+    {
+        intendedDir.y = 0f;
+        if (intendedDir.sqrMagnitude < 1e-4f)
+        {
+            Vector3 f = transform.forward; f.y = 0f;
+            intendedDir = f.sqrMagnitude > 1e-4f ? f.normalized : Vector3.forward;
+        }
+        else
+            intendedDir.Normalize();
+
+        // Everything except actors blocks (auto) unless an explicit mask is set.
+        int mask = slamObstacleMask.value != 0 ? slamObstacleMask.value : ~_wallSlideIgnoreLayers;
+        Vector3 origin = new Vector3(slamPoint.x, slamPoint.y + slamClearanceProbeHeight, slamPoint.z);
+
+        // If the intended direction is already open, keep it (open room / aligned hallway).
+        float intendedClear = MeasureClearance(origin, intendedDir, mask);
+        if (intendedClear >= slamMinClearance)
+        {
+            chosenClearance = intendedClear;
+            return intendedDir;
+        }
+
+        // Otherwise sweep the circle: among directions that are open enough, take the one most aligned with
+        // the slam intent; if none are open enough, take the single most open direction (best escape).
+        const int samples = 24;
+        Vector3 bestOpenAligned = intendedDir;
+        float bestOpenAlignedClear = intendedClear;
+        float bestAlign = float.NegativeInfinity;
+        bool anyOpen = false;
+        Vector3 mostOpenDir = intendedDir;
+        float mostOpenClear = -1f;
+
+        for (int i = 0; i < samples; i++)
+        {
+            Vector3 dir = Quaternion.Euler(0f, i * (360f / samples), 0f) * Vector3.forward;
+            float clear = MeasureClearance(origin, dir, mask);
+            if (clear > mostOpenClear)
+            {
+                mostOpenClear = clear;
+                mostOpenDir = dir;
+            }
+            if (clear >= slamMinClearance)
+            {
+                anyOpen = true;
+                float align = Vector3.Dot(dir, intendedDir);
+                if (align > bestAlign)
+                {
+                    bestAlign = align;
+                    bestOpenAligned = dir;
+                    bestOpenAlignedClear = clear;
+                }
+            }
+        }
+
+        if (anyOpen)
+        {
+            chosenClearance = bestOpenAlignedClear;
+            return bestOpenAligned;
+        }
+        chosenClearance = mostOpenClear;
+        return mostOpenDir;
+    }
+
+    float MeasureClearance(Vector3 origin, Vector3 dir, int mask)
+    {
+        if (Physics.SphereCast(origin, slamClearanceProbeRadius, dir, out RaycastHit hit,
+                slamClearanceProbeRange, mask, QueryTriggerInteraction.Ignore))
+            return hit.distance;
+        return slamClearanceProbeRange;
+    }
+
+    /// <summary>
+    /// A guaranteed-safe world position for the slammed ragdoll to START at: clamped to the Clown's side of
+    /// any wall between the Clown and <paramref name="candidate"/>, and snapped onto valid floor. Falls back
+    /// to the Clown's own grounded position (always valid — it's frozen on the NavMesh) if no floor is found.
+    /// Prevents a slam against a wall from spawning the player outside the map.
+    /// </summary>
+    Vector3 ComputeSafeReleasePosition(Vector3 candidate)
+    {
+        int mask = slamObstacleMask.value != 0 ? slamObstacleMask.value : ~_wallSlideIgnoreLayers;
+        Vector3 clownGround = _grabFrozenPosition; // frozen on the NavMesh during the grab → known good
+        Vector3 clownCenter = clownGround + Vector3.up * Mathf.Max(0.1f, slamClearanceProbeHeight);
+
+        Vector3 result = candidate;
+
+        // 1) Keep it on the Clown's side of any wall between the Clown and the candidate.
+        Vector3 to = candidate - clownCenter;
+        to.y = 0f;
+        float dist = to.magnitude;
+        if (dist > 0.01f)
+        {
+            Vector3 dir = to / dist;
+            if (Physics.SphereCast(clownCenter, slamClearanceProbeRadius, dir, out RaycastHit wallHit, dist,
+                    mask, QueryTriggerInteraction.Ignore))
+            {
+                float safe = Mathf.Max(0f, wallHit.distance - 0.3f);
+                Vector3 clamped = clownCenter + dir * safe;
+                result.x = clamped.x;
+                result.z = clamped.z;
+            }
+        }
+
+        // 2) Snap onto valid floor; if there's none below (e.g. over a gap or still beyond a wall), fall back
+        // to the Clown's grounded spot, which is guaranteed valid.
+        Vector3 rayStart = new Vector3(result.x, clownGround.y + 2f, result.z);
+        if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit floorHit, 6f, mask, QueryTriggerInteraction.Ignore))
+            result.y = floorHit.point.y + 0.15f;
+        else
+            return clownGround;
+
+        return result;
     }
 
     void EnterRecover()

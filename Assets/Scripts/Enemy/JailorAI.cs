@@ -141,6 +141,22 @@ public class JailorAI : MonoBehaviour
     [SerializeField, Min(0.05f)] float propStuckNudgeMaxRadius = 2.1f;
     [SerializeField, Min(0.25f)] float propStuckNavSampleRadius = 3.5f;
 
+    [Header("Chase corridor centering")]
+    [Tooltip(
+        "While chasing, steer toward the middle of the hallway instead of letting the baked NavMesh path hug "
+            + "the inside corners. The string-pulled path runs tight against corners, so the body clips the walls "
+            + "and hangs on them. Probing the sides and leaning toward the open one keeps the Jailor off the walls "
+            + "before it grinds into them.")]
+    [SerializeField] bool chaseCenterInCorridor = true;
+    [Tooltip("Gap (m, on top of the Jailor's own scaled radius) it tries to keep from a side wall while chasing. Also the sideways probe reach.")]
+    [SerializeField, Min(0f)] float chaseWallSideClearance = 0.9f;
+    [Tooltip("How far ahead (m) to also probe so the Jailor widens its line BEFORE it reaches the corner the path is cutting.")]
+    [SerializeField, Min(0f)] float chaseWallLookAhead = 1.4f;
+    [Tooltip("Max fraction of chase speed redirected sideways toward the open side (1 ≈ a 45° lean toward center).")]
+    [SerializeField, Range(0f, 1f)] float chaseCenterSteerStrength = 0.65f;
+    [Tooltip("Height (m) above the feet at which the left/right clearance rays are cast.")]
+    [SerializeField, Min(0f)] float chaseWallProbeHeight = 1f;
+
     [Header("Pit recovery")]
     [Tooltip(
         "Watchdog for the case where the Jailor lands on a tiny NavMesh patch inside a pit. "
@@ -310,6 +326,7 @@ public class JailorAI : MonoBehaviour
     float _pitStuckAccumulatedTime;
     float _nextPitStuckCheckTime;
     float _nextPitStuckRescueTime;
+    int _chaseWallIgnoreLayers;
 
     JailDeliveryPhase _jailDeliveryPhase;
     HingeInteractDoor _activeJailDoor;
@@ -335,6 +352,21 @@ public class JailorAI : MonoBehaviour
         ApplyAgentSettings();
         EnsurePatrolPathScratch();
         _grabStateHash = Animator.StringToHash(grabStateName);
+        _chaseWallIgnoreLayers = BuildActorLayerMask();
+    }
+
+    /// <summary>Layers the corridor-centering probe must ignore — players and other enemies are not "walls".</summary>
+    static int BuildActorLayerMask()
+    {
+        int mask = 0;
+        string[] actorLayers = { "Player", EnemyLayerName, JailorLayerName, "Clown" };
+        for (int i = 0; i < actorLayers.Length; i++)
+        {
+            int layer = LayerMask.NameToLayer(actorLayers[i]);
+            if (layer >= 0)
+                mask |= 1 << layer;
+        }
+        return mask;
     }
 
     void OnValidate()
@@ -1786,6 +1818,9 @@ public class JailorAI : MonoBehaviour
         if (desiredVelocity.sqrMagnitude > carrySpeed * carrySpeed)
             desiredVelocity = desiredVelocity.normalized * carrySpeed;
 
+        // Carrying makes the Jailor effectively wider (the dangling player), so keep it off the walls too.
+        desiredVelocity = ApplyChaseCorridorCentering(desiredVelocity);
+
         return desiredVelocity;
     }
 
@@ -2465,7 +2500,79 @@ public class JailorAI : MonoBehaviour
         if (desiredVelocity.sqrMagnitude > moveSpeed * moveSpeed)
             desiredVelocity = desiredVelocity.normalized * moveSpeed;
 
+        // Lean the path-following velocity toward the centre of the hall so the body doesn't clip corners.
+        desiredVelocity = ApplyChaseCorridorCentering(desiredVelocity);
+
         return desiredVelocity;
+    }
+
+    /// <summary>
+    /// Biases the chase velocity toward the centre of the corridor. The baked NavMesh path string-pulls tight
+    /// against inside corners; with the Jailor's body wider than the baked clearance, that line clips the wall
+    /// and the CharacterController hangs for a beat. Probing left/right at the body and a look-ahead point and
+    /// leaning toward whichever side has more room keeps speed constant, so the Jailor still closes on the
+    /// target — just down the middle of the hall.
+    /// </summary>
+    Vector3 ApplyChaseCorridorCentering(Vector3 desiredVelocity)
+    {
+        if (!chaseCenterInCorridor)
+            return desiredVelocity;
+
+        Vector3 flat = desiredVelocity;
+        flat.y = 0f;
+        float speed = flat.magnitude;
+        if (speed < 0.05f)
+            return desiredVelocity;
+
+        Vector3 dir = flat / speed;
+        Vector3 right = Vector3.Cross(Vector3.up, dir);
+        if (right.sqrMagnitude < 1e-4f)
+            return desiredVelocity;
+        right.Normalize();
+
+        float jailorRadius = 0.5f;
+        if (characterController != null)
+        {
+            float lossy = Mathf.Max(transform.lossyScale.x, transform.lossyScale.z);
+            jailorRadius = characterController.radius * Mathf.Max(0.01f, lossy);
+        }
+
+        float probe = jailorRadius + Mathf.Max(0f, chaseWallSideClearance);
+        // Walls/props only — don't steer away from the player or other actors (we WANT to reach the player).
+        int mask = Physics.DefaultRaycastLayers & ~_chaseWallIgnoreLayers;
+
+        float leftClear = probe;
+        float rightClear = probe;
+        AccumulateSideClearance(transform.position, right, probe, mask, ref leftClear, ref rightClear);
+        if (chaseWallLookAhead > 0.01f)
+            AccumulateSideClearance(
+                transform.position + dir * chaseWallLookAhead, right, probe, mask, ref leftClear, ref rightClear);
+
+        float imbalance = rightClear - leftClear; // + => more room to the right
+        if (Mathf.Abs(imbalance) < 0.01f)
+            return desiredVelocity;
+
+        float lateral = Mathf.Clamp(imbalance / probe, -1f, 1f) * chaseCenterSteerStrength;
+        Vector3 steered = dir + right * lateral;
+        if (steered.sqrMagnitude < 1e-4f)
+            return desiredVelocity;
+
+        return steered.normalized * speed; // keep full speed, just biased toward the open side
+    }
+
+    /// <summary>
+    /// Casts a left and right ray from <paramref name="origin"/> (lifted to the probe height) and records the
+    /// nearest wall distance on each side, so the closer wall pulls the Jailor away from it.
+    /// </summary>
+    void AccumulateSideClearance(Vector3 origin, Vector3 right, float probe, int mask, ref float leftClear, ref float rightClear)
+    {
+        origin += Vector3.up * Mathf.Max(0f, chaseWallProbeHeight);
+
+        if (Physics.Raycast(origin, right, out RaycastHit rightHit, probe, mask, QueryTriggerInteraction.Ignore))
+            rightClear = Mathf.Min(rightClear, rightHit.distance);
+
+        if (Physics.Raycast(origin, -right, out RaycastHit leftHit, probe, mask, QueryTriggerInteraction.Ignore))
+            leftClear = Mathf.Min(leftClear, leftHit.distance);
     }
 
     void EnterIdle()

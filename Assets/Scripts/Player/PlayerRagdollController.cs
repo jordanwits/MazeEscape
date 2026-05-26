@@ -294,6 +294,19 @@ public class PlayerRagdollController : MonoBehaviour
         if (hipsRigidbody != null)
             hipsRigidbody.interpolation = _hipsInterpolationBeforeHold;
 
+        // Snap the still-rigid body to the validated safe release position (passed by the enemy) BEFORE it
+        // goes limp, so the ragdoll never starts embedded in / beyond a wall (which dropped the player out of
+        // the map). The body is rigid here, so moving the hips translates the whole skeleton with it.
+        if (wasRigid && hipsRigidbody != null)
+        {
+            Vector3 delta = worldForcePosition - hipsRigidbody.position;
+            if (delta.sqrMagnitude > 1e-6f)
+            {
+                hipsRigidbody.position = worldForcePosition;
+                Physics.SyncTransforms();
+            }
+        }
+
         // Begin the full ragdoll now so the slam launches a limp body, not a rigid one. CharacterController
         // and animator were already suspended during the hold.
         if (wasRigid && !IsRagdolled)
