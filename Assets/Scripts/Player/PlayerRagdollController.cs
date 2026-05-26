@@ -80,6 +80,17 @@ public class PlayerRagdollController : MonoBehaviour
     public bool IsRagdolled { get; private set; }
     public bool IsGettingUp { get; private set; }
 
+    // "Held by external point" mode: the hips Rigidbody is pinned kinematically to a target transform
+    // (e.g. an enemy's hand) each FixedUpdate. During the hold the body is held RIGID (animator off,
+    // bodies kinematic) so it doesn't flail while being swung; full ragdoll begins at ReleaseFromHeld.
+    bool _isHeld;
+    bool _heldRigid;
+    Transform _heldTarget;
+    Vector3 _heldLocalPos;
+    Quaternion _heldLocalRot;
+    RigidbodyInterpolation _hipsInterpolationBeforeHold;
+    public bool IsHeld => _isHeld;
+
     void Awake()
     {
         if (characterController == null)
@@ -200,12 +211,7 @@ public class PlayerRagdollController : MonoBehaviour
 
         SetRagdollPhysicsActive(true);
 
-        Vector3 appliedForce = worldForce;
-        if (forceMode == ForceMode.Impulse && maxImpulseMagnitude > 0f && appliedForce.sqrMagnitude > maxImpulseMagnitude * maxImpulseMagnitude)
-            appliedForce = appliedForce.normalized * maxImpulseMagnitude;
-        if (forceMode == ForceMode.VelocityChange && maxVelocityChangeMagnitude > 0f
-            && appliedForce.sqrMagnitude > maxVelocityChangeMagnitude * maxVelocityChangeMagnitude)
-            appliedForce = appliedForce.normalized * maxVelocityChangeMagnitude;
+        Vector3 appliedForce = ClampForce(worldForce, forceMode);
 
         // Apply to ALL ragdoll bodies so the whole body launches (joints absorb single-body impulse).
         if (appliedForce.sqrMagnitude > 1e-6f)
@@ -228,6 +234,135 @@ public class PlayerRagdollController : MonoBehaviour
 
         if (recoverWhenLandedAndStill)
             _landRecoverRoutine = StartCoroutine(LandRecoverWhenStillRoutine());
+    }
+
+    /// <summary>
+    /// Holds the player RIGID (suspends the CharacterController + animator, bodies kinematic) and pins the
+    /// hips Rigidbody to follow <paramref name="target"/> each FixedUpdate. The frozen skeleton follows the
+    /// hips as one piece, so it does not flail while being swung. Full ragdoll begins only at
+    /// <see cref="ReleaseFromHeld"/> (the slam). Networked callers drive this on every client against a
+    /// transform all clients agree on, so it stays in sync with no per-frame streaming.
+    /// </summary>
+    public void BeginHeldByPoint(Transform target, Vector3 localPosOffset, Quaternion localRotOffset)
+    {
+        if (target == null)
+            return;
+
+        ResolveHips();
+        if (hipsRigidbody == null)
+            return;
+
+        // Suspend animated control WITHOUT going full ragdoll (no dynamic limbs → no flailing).
+        StopRecoveryCoroutines();
+        if (characterController != null)
+            characterController.enabled = false;
+        Physics.SyncTransforms();
+        if (animator != null)
+            animator.enabled = false;
+        if (_movementViewBob != null)
+            _movementViewBob.enabled = false;
+        SetRagdollPhysicsActive(false); // bodies kinematic, bone colliders off — rigid frozen pose
+
+        _heldTarget = target;
+        _heldLocalPos = localPosOffset;
+        _heldLocalRot = localRotOffset;
+        _isHeld = true;
+        _heldRigid = true;
+
+        // Pin the hips kinematically; the rest of the (frozen) skeleton follows it rigidly.
+        _hipsInterpolationBeforeHold = hipsRigidbody.interpolation;
+        hipsRigidbody.isKinematic = true;
+        hipsRigidbody.useGravity = false;
+        hipsRigidbody.interpolation = RigidbodyInterpolation.Interpolate; // smooth between fixed steps
+    }
+
+    /// <summary>
+    /// Releases a held player into the slam: switches the rigid hold into a full ragdoll (limbs go limp),
+    /// applies the launch force to all bodies, and (when <paramref name="allowAutoRecovery"/>) starts land
+    /// recovery so the player gets back up. Stays in ragdoll until that recovery (or a forced exit) runs.
+    /// </summary>
+    public void ReleaseFromHeld(Vector3 worldForce, Vector3 worldForcePosition, ForceMode forceMode, bool allowAutoRecovery)
+    {
+        if (!_isHeld)
+            return;
+
+        bool wasRigid = _heldRigid;
+        _isHeld = false;
+        _heldRigid = false;
+        _heldTarget = null;
+
+        if (hipsRigidbody != null)
+            hipsRigidbody.interpolation = _hipsInterpolationBeforeHold;
+
+        // Begin the full ragdoll now so the slam launches a limp body, not a rigid one. CharacterController
+        // and animator were already suspended during the hold.
+        if (wasRigid && !IsRagdolled)
+        {
+            IsRagdolled = true;
+            SetRagdollPhysicsActive(true); // all bodies dynamic (incl. hips) + colliders on
+        }
+        else if (hipsRigidbody != null)
+        {
+            hipsRigidbody.isKinematic = false;
+            hipsRigidbody.useGravity = true;
+        }
+
+        if (!IsRagdolled)
+            return;
+
+        Vector3 applied = ClampForce(worldForce, forceMode);
+        if (applied.sqrMagnitude > 1e-6f)
+        {
+            for (int i = 0; i < _ragdollBodies.Count; i++)
+            {
+                Rigidbody rb = _ragdollBodies[i];
+                if (rb != null && !rb.isKinematic)
+                    rb.AddForce(applied, forceMode);
+            }
+        }
+
+        if (!allowAutoRecovery)
+            return;
+
+        StopRecoveryCoroutines();
+        if (autoRecoverAfterSeconds > 0f)
+            _autoRecoverRoutine = StartCoroutine(AutoRecoverAfterDelay());
+        if (recoverWhenLandedAndStill)
+            _landRecoverRoutine = StartCoroutine(LandRecoverWhenStillRoutine());
+    }
+
+    void ClearHeldState()
+    {
+        if (!_isHeld)
+            return;
+
+        _isHeld = false;
+        _heldRigid = false;
+        _heldTarget = null;
+        if (hipsRigidbody != null)
+            hipsRigidbody.interpolation = _hipsInterpolationBeforeHold;
+    }
+
+    Vector3 ClampForce(Vector3 force, ForceMode forceMode)
+    {
+        if (forceMode == ForceMode.Impulse && maxImpulseMagnitude > 0f
+            && force.sqrMagnitude > maxImpulseMagnitude * maxImpulseMagnitude)
+            return force.normalized * maxImpulseMagnitude;
+        if (forceMode == ForceMode.VelocityChange && maxVelocityChangeMagnitude > 0f
+            && force.sqrMagnitude > maxVelocityChangeMagnitude * maxVelocityChangeMagnitude)
+            return force.normalized * maxVelocityChangeMagnitude;
+        return force;
+    }
+
+    void FixedUpdate()
+    {
+        if (!_isHeld || _heldTarget == null || hipsRigidbody == null)
+            return;
+
+        // MovePosition/MoveRotation (vs. setting .position) keeps interpolation smooth and lets the
+        // joint-connected limbs drag along naturally each physics step.
+        hipsRigidbody.MovePosition(_heldTarget.TransformPoint(_heldLocalPos));
+        hipsRigidbody.MoveRotation(_heldTarget.rotation * _heldLocalRot);
     }
 
     IEnumerator AutoRecoverAfterDelay()
@@ -317,6 +452,7 @@ public class PlayerRagdollController : MonoBehaviour
         if (!IsRagdolled)
             return;
 
+        ClearHeldState();
         StopRecoveryCoroutines();
         ResolveHips();
 
@@ -557,9 +693,10 @@ public class PlayerRagdollController : MonoBehaviour
     /// </summary>
     public void ForceExitRagdollWithoutGroundSnap()
     {
-        if (!IsRagdolled && !IsGettingUp)
+        if (!IsRagdolled && !IsGettingUp && !_isHeld)
             return;
 
+        ClearHeldState();
         StopRecoveryCoroutines();
         SetRagdollPhysicsActive(false);
 

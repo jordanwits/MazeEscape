@@ -471,7 +471,7 @@ public partial class PlayerController : MonoBehaviour
 
         EnsureCameraPitchParentedToHead();
 
-        if (_ragdollController != null && _ragdollController.IsRagdolled)
+        if (_ragdollController != null && (_ragdollController.IsRagdolled || _ragdollController.IsHeld))
         {
             CancelThrowCharge();
             if (MultiplayerMenuOverlay.BlocksGameplayInput)
@@ -972,7 +972,7 @@ public partial class PlayerController : MonoBehaviour
 
     void UpdateLookOnlyWhileMovementLocked()
     {
-        if (_ragdollController != null && (_ragdollController.IsRagdolled || _ragdollController.IsGettingUp))
+        if (_ragdollController != null && (_ragdollController.IsRagdolled || _ragdollController.IsGettingUp || _ragdollController.IsHeld))
             return;
 
         EnsureCameraPitchParentedToHead();
@@ -1581,7 +1581,7 @@ public partial class PlayerController : MonoBehaviour
         }
 
         bool wantAttach = _ragdollController != null && firstPersonLook
-            && (_ragdollController.IsRagdolled || _ragdollController.IsGettingUp);
+            && (_ragdollController.IsRagdolled || _ragdollController.IsGettingUp || _ragdollController.IsHeld);
 
         if (wantAttach && !_cameraPitchParentedToHead)
         {

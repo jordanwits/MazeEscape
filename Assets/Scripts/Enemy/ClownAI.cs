@@ -1,0 +1,2186 @@
+using System.Collections.Generic;
+using Unity.Netcode;
+using UnityEngine;
+using UnityEngine.AI;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
+/// <summary>
+/// Basic carnival Clown enemy AI: server-authoritative patrol + audio-driven investigation + chase.
+/// A trimmed sibling of <see cref="JailorAI"/> — it shares the patrol/detection/investigation/chase
+/// locomotion but intentionally has no grab, carry, jail delivery, off-mesh jump, key drop, or attack.
+/// </summary>
+[DisallowMultipleComponent]
+[RequireComponent(typeof(Animator))]
+[RequireComponent(typeof(NavMeshAgent))]
+[RequireComponent(typeof(CharacterController))]
+public class ClownAI : MonoBehaviour
+{
+    enum ClownState
+    {
+        Idle,
+        Patrol,
+        Investigating,
+        Chase,
+        Grabbing,
+        Recover
+    }
+
+    [Header("References")]
+    [SerializeField] Animator animator;
+    [SerializeField] NavMeshAgent navMeshAgent;
+    [SerializeField] CharacterController characterController;
+
+    [Header("Detection")]
+    [SerializeField] LayerMask detectionMask;
+    [SerializeField] float detectionRadius = 12f;
+    [SerializeField] float loseTargetRadiusMultiplier = 1.5f;
+    [SerializeField] float hearingRadius = 18f;
+    [SerializeField] float voiceHearRadius = 22f;
+    [SerializeField] float zombieNoiseHearRadius = 22f;
+    [SerializeField] float targetNavMeshSampleRadius = 3f;
+    [Tooltip("If enabled, sight checks require a clear ray to the player.")]
+    [SerializeField] bool requireDetectionLineOfSight = true;
+    [SerializeField] LayerMask detectionLineOfSightMask = Physics.DefaultRaycastLayers;
+    [SerializeField] float detectionLineOfSightHeight = 1.1f;
+
+    [Header("Movement")]
+    [SerializeField] float walkSpeed = 2.6f;
+    [SerializeField] float runSpeed = 4f;
+    [SerializeField] float rotationSpeed = 360f;
+    [SerializeField] float gravity = -20f;
+    [SerializeField] float groundedStickDown = 2f;
+    [Tooltip("How often chase destination is refreshed. Lower = more reactive, higher = less path jitter.")]
+    [SerializeField] float destinationRefreshInterval = 0.1f;
+    [Tooltip("Minimum target movement before forcing a path refresh.")]
+    [SerializeField] float destinationRefreshMinDistance = 0.2f;
+    [Tooltip("When chasing, use run speed (Clown does not use stamina).")]
+    [SerializeField] bool alwaysRunWhenChasing = true;
+    [Tooltip(
+        "Buffer (m) beyond solid contact (Clown radius + player radius, both auto-measured) at which the Clown "
+            + "stops chasing and stands/looms. 0 = stop right at contact. Keep >= 0; making it negative would let "
+            + "it try to overlap the player and run in place again.")]
+    [SerializeField, Min(0f)] float chaseStopPadding = 0.15f;
+    [Tooltip(
+        "CharacterController can snag on small prop colliders that still sit on the NavMesh. When intent speed stays high but "
+            + "actual motion stays near zero, nudge to a nearby NavMesh point and reset the path.")]
+    [SerializeField] float propStuckDesiredSpeedThreshold = 0.28f;
+    [SerializeField] float propStuckActualSpeedThreshold = 0.06f;
+    [SerializeField] float propStuckAccumulateSeconds = 0.55f;
+    [SerializeField] float propStuckRecoveryCooldown = 1.1f;
+    [SerializeField, Min(3)] int propStuckSampleAttempts = 12;
+    [SerializeField, Min(0.05f)] float propStuckNudgeMinRadius = 0.4f;
+    [SerializeField, Min(0.05f)] float propStuckNudgeMaxRadius = 2.1f;
+    [SerializeField, Min(0.25f)] float propStuckNavSampleRadius = 3.5f;
+
+    [Header("Corner slide assist")]
+    [Tooltip(
+        "When the body grinds into a wall/corner (common once scaled up, since the NavMesh path was baked for "
+            + "the small base radius), redirect movement to slide ALONG the wall at full speed instead of stalling.")]
+    [SerializeField] bool enableWallSlide = true;
+    [Tooltip("How long (s) a wall contact keeps deflecting movement after the last touch.")]
+    [SerializeField, Min(0.02f)] float wallSlideMemorySeconds = 0.15f;
+    [Tooltip("Contacts flatter than this |normal.y| count as walls (vs floor/ceiling).")]
+    [SerializeField, Range(0f, 1f)] float wallSlideMaxNormalY = 0.7f;
+
+    [Header("Pit recovery")]
+    [Tooltip(
+        "Watchdog for the case where the Clown lands on a tiny NavMesh patch inside a pit. "
+            + "RecoverNavMeshIfOffMesh skips when isOnNavMesh=true, so this fires when his Y sits well below the nearest rim NavMesh.")]
+    [SerializeField, Min(0.05f)] float pitStuckCheckInterval = 0.25f;
+    [Tooltip("How far (meters) below the nearest sampled NavMesh point he must sit to count as 'in a pit'.")]
+    [SerializeField, Min(0.25f)] float pitStuckBelowNavMeshThreshold = 1.5f;
+    [Tooltip("Vertical search lift used when sampling NavMesh above the Clown — should cover the deepest pit.")]
+    [SerializeField, Min(1f)] float pitStuckVerticalSearchHeight = 12f;
+    [Tooltip("XZ sample radii (meters) tried in order when looking for a rim NavMesh point to warp to.")]
+    [SerializeField] float[] pitStuckSampleRadii = { 4f, 8f, 16f, 28f };
+    [Tooltip("Below this horizontal speed (m/s) the Clown counts as 'not progressing' for pit-stuck accumulation.")]
+    [SerializeField, Min(0f)] float pitStuckLowSpeedThreshold = 0.25f;
+    [Tooltip("Sustained seconds matching all pit-stuck conditions before a rescue warp fires.")]
+    [SerializeField, Min(0.25f)] float pitStuckAccumulateSeconds = 1.75f;
+    [Tooltip("Minimum seconds between pit-stuck rescue warps so the watchdog can't loop on a deep arrival landing.")]
+    [SerializeField, Min(0.25f)] float pitStuckRescueCooldown = 1.5f;
+    [Tooltip("Vertical lift applied after pit-stuck warp so the agent does not immediately re-sample pit-floor NavMesh.")]
+    [SerializeField, Min(0f)] float pitStuckRescueLift = 0.1f;
+
+    [Header("Patrol")]
+    [SerializeField] float patrolSpeed = 2.2f;
+    [SerializeField] float patrolMinWaypointDistance = 6f;
+    [SerializeField] float patrolMaxWaypointDistance = 14f;
+    [SerializeField] float patrolArrivalDistance = 1f;
+    [SerializeField] float patrolDestinationRefreshInterval = 0.45f;
+    [SerializeField] int patrolSampleAttempts = 14;
+    [Tooltip("Avoid recently visited points so the clown does not bounce in dead-end loops.")]
+    [SerializeField] int patrolRecentDestinationMemory = 6;
+    [SerializeField] float patrolRecentDestinationRadius = 3.5f;
+    [SerializeField] float patrolStuckVelocityThreshold = 0.18f;
+    [SerializeField] float patrolProgressCheckInterval = 0.35f;
+    [SerializeField] float patrolMinProgressDistance = 0.1f;
+    [SerializeField] float patrolStuckSeconds = 2f;
+    [SerializeField] float patrolRepathCooldown = 0.9f;
+    [SerializeField] float investigationArrivalDistance = 1.2f;
+    [SerializeField] float investigationLingerSeconds = 10f;
+    [SerializeField] float investigationSearchRadius = 3.5f;
+    [SerializeField] float investigationSearchMinWaypointDistance = 1.2f;
+    [SerializeField] int investigationSearchSampleAttempts = 10;
+    [SerializeField] float chaseLoseLineOfSightSeconds = 2f;
+
+    [Header("Animator")]
+    [SerializeField] string speedParameter = "Speed";
+    [SerializeField] string groundedParameter = "Grounded";
+    [SerializeField] string verticalVelocityParameter = "VerticalVelocity";
+    [Tooltip("Use actual horizontal move speed for the blend tree (matches feet). 0 = instant; higher = less flicker between idle and move.")]
+    [SerializeField] float animatorSpeedLerp = 12f;
+    [Tooltip("Below this normalized speed, treat movement as idle to avoid idle/walk chatter.")]
+    [SerializeField] float idleSpeedDeadZone = 0.08f;
+
+    [Header("Audio")]
+    [Tooltip("Single clown footstep clip. Trigger timing uses the walk/run animation phases.")]
+    [SerializeField] AudioClip clownFootstepClip;
+    [SerializeField, Range(0f, 1f)] float clownFootstepVolume = 0.45f;
+    [SerializeField] AudioSource clownFootstepAudioSource;
+    [SerializeField] float clownMinFootstepMoveSpeed = 0.2f;
+    [Tooltip("Normalized animation times where walk footsteps should fire (x and y in 0-1).")]
+    [SerializeField] Vector2 clownWalkFootstepPhases = new Vector2(0.13f, 0.63f);
+    [Tooltip("Normalized animation times where run footsteps should fire (x and y in 0-1).")]
+    [SerializeField] Vector2 clownRunFootstepPhases = new Vector2(0.1f, 0.6f);
+
+    [Header("Grab & slam")]
+    [Tooltip("Clown bone the player is pinned to while held, by index into the shared grab-bone table " +
+        "(0=RightHand, 1=LeftHand, 2=Hips, 3=Spine1). The player's hips track this bone through the swing.")]
+    [SerializeField] int grabBoneIndex = 0;
+    [Tooltip("Animator Trigger that starts the Grab and Slam state.")]
+    [SerializeField] string grabTriggerParameter = "Grab";
+    [Tooltip("Name of the Grab and Slam state in the animator (used to detect when it finishes).")]
+    [SerializeField] string grabStateName = "Grab and Slam";
+    [Tooltip("Length (s) of the Grab and Slam clip; fallback if the exit can't be read from the animator.")]
+    [SerializeField, Min(0.1f)] float grabClipDurationFallback = 2.27f;
+    [Tooltip("Max horizontal distance (m, before scale) to the player to start a grab.")]
+    [SerializeField, Min(0.1f)] float grabRange = 1.7f;
+    [SerializeField, Min(0f)] float grabHitRangePadding = 0.2f;
+    [Tooltip("Forward cone half-angle (deg): only grabs a player roughly in front.")]
+    [SerializeField, Range(0f, 180f)] float grabHitHalfAngle = 55f;
+    [Tooltip("Max vertical offset (m) to the player to start a grab.")]
+    [SerializeField, Min(0.1f)] float maxGrabVerticalDelta = 1.2f;
+    [Tooltip("Primary trigger: normalized clip time (0-1) at which the hands close on the player. Driven off actual animation playback (frame-accurate).")]
+    [SerializeField, Range(0f, 1f)] float grabContactNormalizedTime = 0.31f;   // ~0.70s of the 2.27s clip
+    [Tooltip("Primary trigger: normalized clip time (0-1) at which the body hits the floor and the slam launches. Frame-accurate, so the propulsion lands exactly on the slam.")]
+    [SerializeField, Range(0f, 1f)] float slamImpactNormalizedTime = 0.735f;   // ~1.667s of the 2.27s clip
+    [Tooltip("Safety fallback (s) to attach the player if the animator never reaches the grab state. Should be after the normalized-time trigger.")]
+    [SerializeField, Min(0f)] float grabContactFallbackDelay = 0.95f;
+    [Tooltip("Safety fallback (s) to release the slam if the animator never reaches the grab state. Should be after the normalized-time trigger.")]
+    [SerializeField, Min(0f)] float slamImpactFallbackDelay = 1.9f;
+    [Tooltip("Player hips offset relative to the grab bone while held (local to the bone). Tune so the body dangles by its center mass.")]
+    [SerializeField] Vector3 heldPlayerHipsLocalPosOffset = Vector3.zero;
+    [SerializeField] Vector3 heldPlayerHipsLocalEulerOffset = Vector3.zero;
+    [Tooltip("Outward/forward launch speed at the slam, along the actual slam direction (the hand's travel). Capped by the player's ragdoll force cap (~16).")]
+    [SerializeField, Min(0f)] float slamForwardSpeed = 13f;
+    [Tooltip("Downward launch speed at the slam (drives the body into the floor; keep modest so the body skids forward rather than just pancaking).")]
+    [SerializeField, Min(0f)] float slamDownwardSpeed = 6f;
+    [SerializeField] ForceMode slamForceMode = ForceMode.VelocityChange;
+    [Tooltip("Damage dealt by the slam. Player auto-recovers unless this kills them.")]
+    [SerializeField, Min(0f)] float slamDamage = 22f;
+    [Tooltip("After a slam, the Clown won't grab again (or re-chase) for this long.")]
+    [SerializeField, Min(0f)] float postSlamCooldownSeconds = 2.5f;
+
+    readonly Collider[] _detectionHits = new Collider[16];
+    readonly RaycastHit[] _lineOfSightHits = new RaycastHit[16];
+
+    ClownState _state;
+    Transform _target;
+    PlayerHealth _targetHealth;
+    Vector3 _horizontalVelocity;
+    Vector3 _verticalVelocity;
+    float _intendedMoveSpeed;
+    float _smoothedAnimSpeed;
+    Vector3 _lastPathDestination;
+    float _nextDestinationRefreshTime;
+    bool _hasSpeedParameter = true;
+    bool _hasGroundedParameter = true;
+    bool _hasVerticalVelocityParameter = true;
+    bool _loggedMissingAnimatorParams;
+    bool _hasGrabTriggerParameter;
+    int _grabStateHash;
+
+    Transform _grabBone;
+    float _grabbingStartedTime;
+    bool _grabContactDone;
+    bool _slamDone;
+    Vector3 _grabContactHandWorldPos;
+    PlayerHealth _grabbedHealth;
+    PlayerRagdollController _grabbedRagdoll;
+    NetworkPlayerRagdoll _grabbedNetRagdoll;
+    float _suppressGrabAndChaseUntil;
+
+    const string EnemyLayerName = "Enemy";
+    const string JailorLayerName = "Jailor";
+    const string ClownLayerName = "Clown";
+    static bool s_HasConfiguredClownCollision;
+
+    /// <summary>
+    /// Register before any Awake so the Clown never relies on spawn order for layer ignores against other enemies.
+    /// </summary>
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    static void RegisterIgnoreClownPhysicsCollision()
+    {
+        int clownLayer = LayerMask.NameToLayer(ClownLayerName);
+        if (clownLayer < 0)
+            return;
+
+        int enemyLayer = LayerMask.NameToLayer(EnemyLayerName);
+        int jailorLayer = LayerMask.NameToLayer(JailorLayerName);
+        if (enemyLayer >= 0)
+            Physics.IgnoreLayerCollision(enemyLayer, clownLayer, true);
+        if (jailorLayer >= 0)
+            Physics.IgnoreLayerCollision(jailorLayer, clownLayer, true);
+        s_HasConfiguredClownCollision = true;
+    }
+
+    NetworkObject _networkObject;
+    NetworkClownAvatar _networkClownAvatar;
+
+    bool _hasPatrolDestination;
+    Vector3 _patrolDestination;
+    float _nextPatrolDestinationRefreshTime;
+    float _nextPatrolProgressCheckTime;
+    float _patrolPreviousRemainingDistance = float.PositiveInfinity;
+    float _patrolStuckAccumulatedTime;
+    float _nextPatrolRepathAllowedTime;
+    readonly Queue<Vector3> _recentPatrolDestinations = new();
+    NavMeshPath _patrolPathScratch;
+    Vector3 _investigationPoint;
+    bool _hasInvestigationPoint;
+    bool _isLingerAtInvestigationPoint;
+    float _investigationLingerEndTime;
+    bool _hasInvestigationSearchDestination;
+    Vector3 _investigationSearchDestination;
+    float _chaseLineOfSightLostSince = -1f;
+    int _lastFootstepAnimStateHash;
+    float _lastFootstepAnimNormalizedTime;
+    bool _hasFootstepAnimSample;
+    Vector3 _positionBeforeCharacterMove;
+    float _propStuckAccumulatedTime;
+    float _nextPropStuckRecoveryTime;
+    Vector3 _wallSlideNormal;
+    float _wallSlideHitTime = -999f;
+    int _wallSlideIgnoreLayers;
+    float _pitStuckAccumulatedTime;
+    float _nextPitStuckCheckTime;
+    float _nextPitStuckRescueTime;
+
+    void Reset()
+    {
+        CacheReferences();
+        EnsureEnemyAndClownLayerSetup();
+        ApplyAgentSettings();
+        EnsurePatrolPathScratch();
+        AutoAssignClownAudioInEditor();
+    }
+
+    void Awake()
+    {
+        AutoAssignClownAudioInEditor();
+        CacheReferences();
+        EnsureEnemyAndClownLayerSetup();
+        ApplyAgentSettings();
+        EnsurePatrolPathScratch();
+        _wallSlideIgnoreLayers = BuildActorLayerMask();
+    }
+
+    /// <summary>Layers the wall-slide must ignore — players and other enemies are not "walls" to slide along.</summary>
+    static int BuildActorLayerMask()
+    {
+        int mask = 0;
+        string[] actorLayers = { "Player", EnemyLayerName, JailorLayerName, ClownLayerName };
+        for (int i = 0; i < actorLayers.Length; i++)
+        {
+            int layer = LayerMask.NameToLayer(actorLayers[i]);
+            if (layer >= 0)
+                mask |= 1 << layer;
+        }
+        return mask;
+    }
+
+    void OnValidate()
+    {
+        AutoAssignClownAudioInEditor();
+    }
+
+    void EnsurePatrolPathScratch()
+    {
+        if (_patrolPathScratch == null)
+            _patrolPathScratch = new NavMeshPath();
+    }
+
+    void ClearInvestigationState()
+    {
+        _hasInvestigationPoint = false;
+        _isLingerAtInvestigationPoint = false;
+        _investigationLingerEndTime = 0f;
+        _hasInvestigationSearchDestination = false;
+        _investigationSearchDestination = Vector3.zero;
+    }
+
+    static bool ShouldIgnorePlayer(PlayerHealth health)
+    {
+        if (health == null || health.IsDead)
+            return false;
+
+        NetworkPlayerAvatar avatar = health.GetComponent<NetworkPlayerAvatar>();
+        return avatar != null && avatar.IsSealedInJailCell;
+    }
+
+    void OnEnable()
+    {
+        ServerProximityVoiceNotifications.Register(this);
+        TrySnapToNavMesh();
+    }
+
+    void OnDisable()
+    {
+        ServerProximityVoiceNotifications.Unregister(this);
+
+        // Safety: if disabled/despawned mid-hold (player grabbed but not yet slammed), release so the player
+        // isn't left ragdoll-pinned to a destroyed bone.
+        if (_state == ClownState.Grabbing && _grabContactDone && !_slamDone)
+            ServerReleaseSlam();
+    }
+
+    void CacheReferences()
+    {
+        if (animator == null)
+            animator = GetComponent<Animator>();
+        if (navMeshAgent == null)
+            navMeshAgent = GetComponent<NavMeshAgent>();
+        if (characterController == null)
+            characterController = GetComponent<CharacterController>();
+        _networkObject = GetComponent<NetworkObject>();
+        _networkClownAvatar = GetComponent<NetworkClownAvatar>();
+        _grabBone = NetworkPlayerRagdoll.FindGrabBone(transform, grabBoneIndex);
+        ConfigureClownFootstepAudioSource();
+
+        if (animator != null)
+        {
+            animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            foreach (Animator other in GetComponentsInChildren<Animator>(true))
+            {
+                if (other != null && other != animator)
+                    other.enabled = false;
+            }
+
+            CacheAnimatorParameterAvailability();
+        }
+    }
+
+    void ConfigureClownFootstepAudioSource()
+    {
+        if (clownFootstepAudioSource == null)
+            clownFootstepAudioSource = EnsureNamedChildAudioSource("ClownFootstepAudio");
+        if (clownFootstepAudioSource == null)
+            return;
+
+        clownFootstepAudioSource.playOnAwake = false;
+        clownFootstepAudioSource.loop = false;
+        clownFootstepAudioSource.spatialBlend = 1f;
+        clownFootstepAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
+        clownFootstepAudioSource.minDistance = 1.5f;
+        clownFootstepAudioSource.maxDistance = 25f;
+        clownFootstepAudioSource.dopplerLevel = 0f;
+        GameAudioManager.RouteSfxSource(clownFootstepAudioSource);
+    }
+
+    AudioSource EnsureNamedChildAudioSource(string childName)
+    {
+        if (string.IsNullOrWhiteSpace(childName))
+            return null;
+
+        Transform child = transform.Find(childName);
+        if (child == null)
+        {
+            GameObject go = new GameObject(childName);
+            go.transform.SetParent(transform, false);
+            child = go.transform;
+        }
+
+        AudioSource source = child.GetComponent<AudioSource>();
+        if (source == null)
+            source = child.gameObject.AddComponent<AudioSource>();
+
+        return source;
+    }
+
+    void AutoAssignClownAudioInEditor()
+    {
+#if UNITY_EDITOR
+        if (clownFootstepAudioSource == null)
+            clownFootstepAudioSource = EnsureNamedChildAudioSource("ClownFootstepAudio");
+
+        if (clownFootstepClip == null)
+        {
+            string[] expected =
+            {
+                "JailorFootstep1",
+                "Jailorfootstep2",
+                "Jailorfootstep3",
+                "Jailorfootstep4"
+            };
+
+            for (int i = 0; i < expected.Length; i++)
+            {
+                AudioClip resolved = FindFirstAudioClipByName(expected[i]);
+                if (resolved == null)
+                    continue;
+
+                clownFootstepClip = resolved;
+                break;
+            }
+        }
+#endif
+    }
+
+#if UNITY_EDITOR
+    static AudioClip FindFirstAudioClipByName(string clipName)
+    {
+        if (string.IsNullOrWhiteSpace(clipName))
+            return null;
+
+        string[] guids = AssetDatabase.FindAssets($"{clipName} t:AudioClip");
+        for (int i = 0; i < guids.Length; i++)
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guids[i]);
+            AudioClip clip = AssetDatabase.LoadAssetAtPath<AudioClip>(path);
+            if (clip != null)
+                return clip;
+        }
+
+        return null;
+    }
+#endif
+
+    void CacheAnimatorParameterAvailability()
+    {
+        _hasSpeedParameter = HasAnimatorParameter(speedParameter, AnimatorControllerParameterType.Float);
+        _hasGroundedParameter = HasAnimatorParameter(groundedParameter, AnimatorControllerParameterType.Bool);
+        _hasVerticalVelocityParameter = HasAnimatorParameter(verticalVelocityParameter, AnimatorControllerParameterType.Float);
+        _hasGrabTriggerParameter = HasAnimatorParameter(grabTriggerParameter, AnimatorControllerParameterType.Trigger);
+        _grabStateHash = Animator.StringToHash(grabStateName);
+    }
+
+    bool HasAnimatorParameter(string parameterName, AnimatorControllerParameterType parameterType)
+    {
+        if (animator == null || string.IsNullOrWhiteSpace(parameterName))
+            return false;
+
+        AnimatorControllerParameter[] parameters = animator.parameters;
+        for (int i = 0; i < parameters.Length; i++)
+        {
+            if (parameters[i].type == parameterType && parameters[i].name == parameterName)
+                return true;
+        }
+
+        return false;
+    }
+
+    void ApplyAgentSettings()
+    {
+        if (navMeshAgent == null)
+            return;
+
+        navMeshAgent.enabled = true;
+        navMeshAgent.speed = walkSpeed;
+        navMeshAgent.angularSpeed = rotationSpeed;
+        navMeshAgent.stoppingDistance = 0.5f;
+        navMeshAgent.acceleration = Mathf.Max(navMeshAgent.acceleration, runSpeed * 4f);
+        navMeshAgent.updatePosition = false;
+        navMeshAgent.updateRotation = false;
+        navMeshAgent.baseOffset = 0f;
+        // Lower value = higher priority in NavMesh local avoidance — prevents deadlocks vs other agents also at default 50.
+        navMeshAgent.avoidancePriority = 12;
+
+        if (characterController != null)
+        {
+            characterController.skinWidth = 0.02f;
+            characterController.minMoveDistance = 0.001f;
+        }
+    }
+
+    bool ShouldRunSimulation()
+    {
+        if (_networkObject != null
+            && NetworkManager.Singleton != null
+            && NetworkManager.Singleton.IsListening
+            && !NetworkManager.Singleton.IsServer)
+            return false;
+        return true;
+    }
+
+    void Update()
+    {
+        if (!ShouldRunSimulation())
+            return;
+
+        // Grab/slam own the Clown fully while active — don't run chase/target logic that would interrupt them.
+        if (_state == ClownState.Grabbing)
+        {
+            UpdateGrabbing();
+            UpdateAnimatorParameters();
+            return;
+        }
+
+        if (_state == ClownState.Recover)
+        {
+            UpdateRecover();
+            UpdateAnimatorParameters();
+            return;
+        }
+
+        RecoverNavMeshIfOffMesh();
+        UpdatePitStuckWatchdog();
+
+        RefreshTargetFromSightAndHearing();
+
+        float loseRadius = Mathf.Max(detectionRadius, hearingRadius, voiceHearRadius)
+            * Mathf.Max(1f, loseTargetRadiusMultiplier);
+
+        if (_targetHealth != null && !_targetHealth.IsDead && ShouldIgnorePlayer(_targetHealth))
+            ClearTarget();
+
+        if (_targetHealth != null && !_targetHealth.IsDead)
+        {
+            if (_state == ClownState.Chase && UpdateChaseLostLineOfSight())
+            {
+                UpdateAnimatorParameters();
+                return;
+            }
+
+            float d = Vector3.Distance(transform.position, _target.position);
+            if (d > loseRadius)
+                ClearTarget();
+        }
+
+        Vector3 desiredHorizontal = Vector3.zero;
+        if (_targetHealth != null && !_targetHealth.IsDead)
+        {
+            switch (_state)
+            {
+                case ClownState.Idle:
+                case ClownState.Patrol:
+                case ClownState.Investigating:
+                    EnterChase();
+                    desiredHorizontal = UpdateChase();
+                    break;
+                case ClownState.Chase:
+                    desiredHorizontal = UpdateChase();
+                    if (ShouldStartGrab())
+                    {
+                        EnterGrabbing();
+                        desiredHorizontal = Vector3.zero;
+                    }
+                    break;
+            }
+        }
+        else
+        {
+            if (_hasInvestigationPoint)
+            {
+                EnterInvestigating();
+                desiredHorizontal = UpdateInvestigating();
+            }
+            else
+            {
+                EnterPatrol();
+                desiredHorizontal = UpdatePatrol();
+            }
+        }
+
+        ApplyMovement(desiredHorizontal);
+
+        HandleClownFootsteps();
+        UpdateAnimatorParameters();
+    }
+
+    void HandleClownFootsteps()
+    {
+        if (clownFootstepAudioSource == null || characterController == null || animator == null)
+            return;
+        if (_state == ClownState.Grabbing || _state == ClownState.Recover)
+            return;
+        if (_state == ClownState.Idle)
+        {
+            _hasFootstepAnimSample = false;
+            return;
+        }
+        if (!characterController.isGrounded)
+        {
+            _hasFootstepAnimSample = false;
+            return;
+        }
+
+        float horizontalSpeed = new Vector3(_horizontalVelocity.x, 0f, _horizontalVelocity.z).magnitude;
+        if (horizontalSpeed < Mathf.Max(0.01f, clownMinFootstepMoveSpeed))
+        {
+            _hasFootstepAnimSample = false;
+            return;
+        }
+
+        AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(0);
+        int stateHash = stateInfo.shortNameHash;
+        float normalizedTime = stateInfo.normalizedTime;
+
+        if (!_hasFootstepAnimSample || stateHash != _lastFootstepAnimStateHash)
+        {
+            _lastFootstepAnimStateHash = stateHash;
+            _lastFootstepAnimNormalizedTime = normalizedTime;
+            _hasFootstepAnimSample = true;
+            return;
+        }
+
+        bool isRunningStep = _intendedMoveSpeed > walkSpeed + 0.05f;
+        Vector2 phases = isRunningStep ? clownRunFootstepPhases : clownWalkFootstepPhases;
+
+        bool hitFirst = DidCrossFootstepPhase(_lastFootstepAnimNormalizedTime, normalizedTime, phases.x);
+        bool hitSecond = DidCrossFootstepPhase(_lastFootstepAnimNormalizedTime, normalizedTime, phases.y);
+        bool shouldPlay = hitFirst || hitSecond;
+
+        _lastFootstepAnimStateHash = stateHash;
+        _lastFootstepAnimNormalizedTime = normalizedTime;
+        if (!shouldPlay)
+            return;
+
+        NotifyFootstepSfx();
+    }
+
+    static bool DidCrossFootstepPhase(float previousNormalizedTime, float currentNormalizedTime, float phase)
+    {
+        float p = Mathf.Repeat(phase, 1f);
+        float prev = Mathf.Repeat(previousNormalizedTime, 1f);
+        float curr = Mathf.Repeat(currentNormalizedTime, 1f);
+
+        if (Mathf.Abs(currentNormalizedTime - previousNormalizedTime) > 1f)
+            return true;
+
+        if (curr >= prev)
+            return p > prev && p <= curr;
+
+        return p > prev || p <= curr;
+    }
+
+    void NotifyFootstepSfx()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (_networkClownAvatar != null
+            && nm != null
+            && nm.IsListening
+            && _networkObject != null
+            && _networkObject.IsSpawned)
+        {
+            _networkClownAvatar.PlayFootstepSfxForObservers();
+            return;
+        }
+
+        PlayFootstepSfxLocal();
+    }
+
+    public void PlayFootstepSfxLocal()
+    {
+        if (clownFootstepAudioSource == null || clownFootstepClip == null)
+            return;
+
+        clownFootstepAudioSource.PlayOneShot(clownFootstepClip, Mathf.Clamp01(clownFootstepVolume));
+    }
+
+    /// <summary>Moves the CharacterController root and syncs <see cref="NavMeshAgent"/> to a NavMesh-safe point.</summary>
+    void WarpTransformToNavMeshPoint(Vector3 safeWorldPosition)
+    {
+        bool ccWasEnabled = characterController != null && characterController.enabled;
+        if (characterController != null)
+            characterController.enabled = false;
+
+        transform.position = safeWorldPosition;
+
+        if (navMeshAgent != null && navMeshAgent.enabled)
+        {
+            if (navMeshAgent.isOnNavMesh)
+                navMeshAgent.Warp(safeWorldPosition);
+            navMeshAgent.isStopped = false;
+            navMeshAgent.ResetPath();
+            navMeshAgent.nextPosition = transform.position;
+        }
+
+        if (characterController != null && ccWasEnabled)
+            characterController.enabled = true;
+
+        _verticalVelocity.y = 0f;
+    }
+
+    bool TryRecoverFromPropStuck()
+    {
+        if (navMeshAgent == null || !navMeshAgent.enabled || !navMeshAgent.isOnNavMesh)
+            return false;
+
+        Vector3 origin = transform.position;
+        float navRadius = Mathf.Max(0.5f, propStuckNavSampleRadius);
+        int attempts = Mathf.Max(3, propStuckSampleAttempts);
+
+        Vector3 hintFlat = Vector3.zero;
+        if (navMeshAgent.hasPath
+            && navMeshAgent.path != null
+            && navMeshAgent.path.corners != null
+            && navMeshAgent.path.corners.Length >= 2)
+        {
+            hintFlat = navMeshAgent.path.corners[1] - origin;
+            hintFlat.y = 0f;
+            if (hintFlat.sqrMagnitude > 0.04f)
+                hintFlat.Normalize();
+            else
+                hintFlat = Vector3.zero;
+        }
+
+        if (hintFlat.sqrMagnitude < 0.01f)
+        {
+            Vector3 dv = navMeshAgent.desiredVelocity;
+            dv.y = 0f;
+            if (dv.sqrMagnitude > 0.04f)
+                hintFlat = dv.normalized;
+        }
+
+        float rMin = Mathf.Min(propStuckNudgeMinRadius, propStuckNudgeMaxRadius);
+        float rMax = Mathf.Max(propStuckNudgeMinRadius, propStuckNudgeMaxRadius);
+
+        for (int attempt = 0; attempt < attempts; attempt++)
+        {
+            Vector3 offset;
+            if (attempt == 0 && hintFlat.sqrMagnitude > 0.01f)
+                offset = hintFlat * Random.Range(rMin, rMax);
+            else
+            {
+                float ang = Random.Range(0f, Mathf.PI * 2f);
+                float rad = Random.Range(rMin, rMax);
+                offset = new Vector3(Mathf.Cos(ang) * rad, 0f, Mathf.Sin(ang) * rad);
+            }
+
+            Vector3 samplePoint = origin + offset;
+            if (!NavMesh.SamplePosition(samplePoint, out NavMeshHit hit, navRadius, NavMesh.AllAreas))
+                continue;
+
+            Vector3 deltaFlat = hit.position - origin;
+            deltaFlat.y = 0f;
+            if (deltaFlat.sqrMagnitude < 0.007f)
+                continue;
+
+            WarpTransformToNavMeshPoint(hit.position);
+            _nextDestinationRefreshTime = 0f;
+            _nextPatrolDestinationRefreshTime = 0f;
+            _patrolStuckAccumulatedTime = 0f;
+            return true;
+        }
+
+        navMeshAgent.ResetPath();
+        _nextDestinationRefreshTime = 0f;
+        _nextPatrolDestinationRefreshTime = 0f;
+        _patrolStuckAccumulatedTime = 0f;
+        return true;
+    }
+
+    void EnterPatrol()
+    {
+        if (_state != ClownState.Patrol)
+            _state = ClownState.Patrol;
+
+        _intendedMoveSpeed = patrolSpeed;
+        if (!TrySnapToNavMesh())
+            return;
+
+        if (navMeshAgent == null || !navMeshAgent.isOnNavMesh)
+            return;
+
+        navMeshAgent.isStopped = false;
+        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.stoppingDistance = Mathf.Max(0.2f, patrolArrivalDistance * 0.8f);
+
+        if (!_hasPatrolDestination)
+            TrySetNextPatrolDestination();
+    }
+
+    Vector3 UpdatePatrol()
+    {
+        _intendedMoveSpeed = patrolSpeed;
+        if (!TrySnapToNavMesh() || navMeshAgent == null || !navMeshAgent.isOnNavMesh)
+            return Vector3.zero;
+
+        navMeshAgent.isStopped = false;
+        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.stoppingDistance = Mathf.Max(0.2f, patrolArrivalDistance * 0.8f);
+
+        if (!_hasPatrolDestination)
+        {
+            TrySetNextPatrolDestination();
+            return Vector3.zero;
+        }
+
+        bool shouldRefreshDestination = Time.time >= _nextPatrolDestinationRefreshTime;
+        if (shouldRefreshDestination)
+        {
+            navMeshAgent.SetDestination(_patrolDestination);
+            _nextPatrolDestinationRefreshTime = Time.time + Mathf.Max(0.1f, patrolDestinationRefreshInterval);
+        }
+
+        if (!navMeshAgent.pathPending)
+        {
+            if (!navMeshAgent.hasPath
+                || navMeshAgent.pathStatus == NavMeshPathStatus.PathInvalid
+                || navMeshAgent.pathStatus == NavMeshPathStatus.PathPartial)
+            {
+                if (Time.time >= _nextPatrolRepathAllowedTime)
+                {
+                    _nextPatrolRepathAllowedTime = Time.time + Mathf.Max(0.1f, patrolRepathCooldown);
+                    TrySetNextPatrolDestination();
+                }
+                return Vector3.zero;
+            }
+
+            if (navMeshAgent.remainingDistance <= patrolArrivalDistance)
+            {
+                RememberPatrolDestination(_patrolDestination);
+                _hasPatrolDestination = false;
+                TrySetNextPatrolDestination();
+            }
+            else if (Time.time >= _nextPatrolProgressCheckTime)
+            {
+                float remainingDistance = navMeshAgent.remainingDistance;
+                float speed = navMeshAgent.velocity.magnitude;
+                float gainedDistance = _patrolPreviousRemainingDistance - remainingDistance;
+                if (speed <= patrolStuckVelocityThreshold && gainedDistance < patrolMinProgressDistance)
+                    _patrolStuckAccumulatedTime += Mathf.Max(0.05f, patrolProgressCheckInterval);
+                else
+                    _patrolStuckAccumulatedTime = 0f;
+
+                _patrolPreviousRemainingDistance = remainingDistance;
+                _nextPatrolProgressCheckTime = Time.time + Mathf.Max(0.05f, patrolProgressCheckInterval);
+
+                if (_patrolStuckAccumulatedTime >= patrolStuckSeconds
+                    && Time.time >= _nextPatrolRepathAllowedTime)
+                {
+                    _nextPatrolRepathAllowedTime = Time.time + Mathf.Max(0.1f, patrolRepathCooldown);
+                    _patrolStuckAccumulatedTime = 0f;
+                    TrySetNextPatrolDestination();
+                }
+            }
+        }
+
+        Vector3 desiredVelocity = navMeshAgent.velocity.sqrMagnitude > 0.0001f
+            ? navMeshAgent.velocity
+            : navMeshAgent.desiredVelocity;
+        desiredVelocity.y = 0f;
+        if (desiredVelocity.sqrMagnitude > patrolSpeed * patrolSpeed)
+            desiredVelocity = desiredVelocity.normalized * patrolSpeed;
+
+        return desiredVelocity;
+    }
+
+    bool TrySetNextPatrolDestination()
+    {
+        if (navMeshAgent == null || !navMeshAgent.enabled || !navMeshAgent.isOnNavMesh)
+            return false;
+
+        if (!TryPickPatrolDestination(out Vector3 destination))
+            return false;
+
+        if (!navMeshAgent.SetDestination(destination))
+            return false;
+
+        _patrolDestination = destination;
+        _hasPatrolDestination = true;
+        _nextPatrolDestinationRefreshTime = Time.time + Mathf.Max(0.1f, patrolDestinationRefreshInterval);
+        _nextPatrolProgressCheckTime = Time.time + Mathf.Max(0.05f, patrolProgressCheckInterval);
+        _patrolPreviousRemainingDistance = float.PositiveInfinity;
+        _patrolStuckAccumulatedTime = 0f;
+        return true;
+    }
+
+    bool TryPickPatrolDestination(out Vector3 destination)
+    {
+        destination = transform.position;
+        Vector3 origin = transform.position;
+        Vector3 flatForward = transform.forward;
+        flatForward.y = 0f;
+        if (flatForward.sqrMagnitude < 0.0001f)
+            flatForward = Vector3.forward;
+        else
+            flatForward.Normalize();
+
+        float minDistance = Mathf.Max(1f, patrolMinWaypointDistance);
+        float maxDistance = Mathf.Max(minDistance + 1f, patrolMaxWaypointDistance);
+        int attempts = Mathf.Max(4, patrolSampleAttempts);
+        float sampleRadius = Mathf.Max(1.5f, maxDistance * 0.7f);
+
+        Vector3 bestCandidate = Vector3.zero;
+        float bestScore = float.MinValue;
+        bool found = false;
+
+        for (int i = 0; i < attempts; i++)
+        {
+            Vector2 random2 = Random.insideUnitCircle;
+            Vector3 randomDir = new Vector3(random2.x, 0f, random2.y);
+            if (randomDir.sqrMagnitude < 0.0001f)
+                randomDir = flatForward;
+            randomDir.Normalize();
+
+            float forwardBias = Random.Range(0.35f, 0.8f);
+            Vector3 biasedDir = (flatForward * forwardBias + randomDir * (1f - forwardBias)).normalized;
+            float distance = Random.Range(minDistance, maxDistance);
+            Vector3 rawCandidate = origin + biasedDir * distance;
+
+            if (!NavMesh.SamplePosition(rawCandidate, out NavMeshHit hit, sampleRadius, NavMesh.AllAreas))
+                continue;
+
+            Vector3 flatTo = hit.position - origin;
+            flatTo.y = 0f;
+            float flatDistance = flatTo.magnitude;
+            if (flatDistance < minDistance * 0.55f)
+                continue;
+
+            bool shouldAvoidRecent = i < attempts - 3;
+            if (shouldAvoidRecent && IsNearRecentPatrolDestination(hit.position))
+                continue;
+
+            if (!TryHasReasonablePatrolPath(hit.position))
+                continue;
+
+            float directionalScore = flatDistance > 0.01f
+                ? Vector3.Dot(flatForward, flatTo / flatDistance)
+                : 0f;
+            float score = flatDistance + directionalScore * 2.5f;
+            if (!found || score > bestScore)
+            {
+                found = true;
+                bestScore = score;
+                bestCandidate = hit.position;
+            }
+        }
+
+        if (!found)
+            return false;
+
+        destination = bestCandidate;
+        return true;
+    }
+
+    bool TryHasReasonablePatrolPath(Vector3 destination)
+    {
+        if (navMeshAgent == null || !navMeshAgent.enabled || !navMeshAgent.isOnNavMesh)
+            return false;
+        EnsurePatrolPathScratch();
+
+        if (!NavMesh.CalculatePath(transform.position, destination, NavMesh.AllAreas, _patrolPathScratch))
+            return false;
+
+        return _patrolPathScratch.status == NavMeshPathStatus.PathComplete
+            && _patrolPathScratch.corners != null
+            && _patrolPathScratch.corners.Length >= 2;
+    }
+
+    bool IsNearRecentPatrolDestination(Vector3 candidate)
+    {
+        if (_recentPatrolDestinations.Count == 0)
+            return false;
+
+        float radiusSqr = patrolRecentDestinationRadius * patrolRecentDestinationRadius;
+        foreach (Vector3 recent in _recentPatrolDestinations)
+        {
+            Vector3 delta = candidate - recent;
+            delta.y = 0f;
+            if (delta.sqrMagnitude <= radiusSqr)
+                return true;
+        }
+
+        return false;
+    }
+
+    void RememberPatrolDestination(Vector3 destination)
+    {
+        int maxMemory = Mathf.Max(1, patrolRecentDestinationMemory);
+        while (_recentPatrolDestinations.Count >= maxMemory)
+            _recentPatrolDestinations.Dequeue();
+        _recentPatrolDestinations.Enqueue(destination);
+    }
+
+    public void OnServerHeardVoiceFrame(ulong speakerClientId)
+    {
+        if (!ShouldRunSimulation())
+            return;
+
+        if (!VoiceClientRegistry.TryGet(speakerClientId, out NetworkPlayerVoice voice)
+            || voice == null)
+            return;
+
+        PlayerHealth health = voice.GetComponentInParent<PlayerHealth>();
+        if (health == null || health.IsDead || ShouldIgnorePlayer(health))
+            return;
+
+        float d = Vector3.Distance(transform.position, voice.transform.position);
+        if (d > voiceHearRadius)
+            return;
+
+        SetInvestigationPoint(voice.transform.position);
+    }
+
+    void RefreshTargetFromSightAndHearing()
+    {
+        if (_targetHealth != null && !_targetHealth.IsDead)
+            return;
+
+        PlayerHealth bestSeen = null;
+        float bestSeenScore = float.MaxValue;
+        Vector3 bestSoundPoint = Vector3.zero;
+        float bestSoundScore = float.MaxValue;
+        bool hasSoundPoint = false;
+
+        int mask = detectionMask.value == 0 ? Physics.DefaultRaycastLayers : detectionMask.value;
+        int hitCount = Physics.OverlapSphereNonAlloc(
+            transform.position,
+            Mathf.Max(detectionRadius, Mathf.Max(hearingRadius, Mathf.Max(voiceHearRadius, zombieNoiseHearRadius))),
+            _detectionHits,
+            mask,
+            QueryTriggerInteraction.Ignore);
+
+        for (int i = 0; i < hitCount; i++)
+        {
+            Collider hit = _detectionHits[i];
+            _detectionHits[i] = null;
+            if (hit == null)
+                continue;
+
+            PlayerHealth candidate = hit.GetComponentInParent<PlayerHealth>();
+            if (candidate != null && !candidate.IsDead && !ShouldIgnorePlayer(candidate))
+            {
+                float distance = Vector3.Distance(transform.position, candidate.transform.position);
+                bool seen = distance <= detectionRadius
+                    && (!requireDetectionLineOfSight || HasDetectionLineOfSight(candidate));
+                if (seen && distance < bestSeenScore)
+                {
+                    bestSeenScore = distance;
+                    bestSeen = candidate;
+                }
+
+                bool heardSprint = distance <= hearingRadius && IsPlayerAudiblySprinting(candidate);
+                if (heardSprint && distance < bestSoundScore)
+                {
+                    bestSoundScore = distance;
+                    bestSoundPoint = candidate.transform.position;
+                    hasSoundPoint = true;
+                }
+            }
+
+            ZombieAI zombie = hit.GetComponentInParent<ZombieAI>();
+            if (zombie != null && zombie.IsMakingNoiseForAi)
+            {
+                float distance = Vector3.Distance(transform.position, zombie.transform.position);
+                if (distance <= zombieNoiseHearRadius && distance < bestSoundScore)
+                {
+                    bestSoundScore = distance;
+                    bestSoundPoint = zombie.transform.position;
+                    hasSoundPoint = true;
+                }
+            }
+        }
+
+        if (bestSeen == null)
+        {
+            foreach (PlayerHealth candidate in FindObjectsByType<PlayerHealth>(FindObjectsInactive.Exclude))
+            {
+                if (candidate == null || candidate.IsDead || ShouldIgnorePlayer(candidate))
+                    continue;
+
+                float distance = Vector3.Distance(transform.position, candidate.transform.position);
+                if (distance > Mathf.Max(detectionRadius, hearingRadius))
+                    continue;
+
+                bool seen = distance <= detectionRadius
+                    && (!requireDetectionLineOfSight || HasDetectionLineOfSight(candidate));
+                if (seen && distance < bestSeenScore)
+                {
+                    bestSeenScore = distance;
+                    bestSeen = candidate;
+                }
+
+                bool heardSprint = distance <= hearingRadius && IsPlayerAudiblySprinting(candidate);
+                if (heardSprint && distance < bestSoundScore)
+                {
+                    bestSoundScore = distance;
+                    bestSoundPoint = candidate.transform.position;
+                    hasSoundPoint = true;
+                }
+            }
+        }
+
+        if (bestSeen == null)
+        {
+            foreach (ZombieAI zombie in FindObjectsByType<ZombieAI>(FindObjectsInactive.Exclude))
+            {
+                if (zombie == null || !zombie.IsMakingNoiseForAi)
+                    continue;
+
+                float distance = Vector3.Distance(transform.position, zombie.transform.position);
+                if (distance > zombieNoiseHearRadius || distance >= bestSoundScore)
+                    continue;
+
+                bestSoundScore = distance;
+                bestSoundPoint = zombie.transform.position;
+                hasSoundPoint = true;
+            }
+        }
+
+        if (bestSeen != null)
+        {
+            AssignTarget(bestSeen);
+            _hasInvestigationPoint = false;
+            return;
+        }
+
+        if (hasSoundPoint)
+            SetInvestigationPoint(bestSoundPoint);
+    }
+
+    void AssignTarget(PlayerHealth health)
+    {
+        _targetHealth = health;
+        _target = health.transform;
+        _hasInvestigationPoint = false;
+        _chaseLineOfSightLostSince = -1f;
+    }
+
+    void ClearTarget()
+    {
+        _target = null;
+        _targetHealth = null;
+        _chaseLineOfSightLostSince = -1f;
+    }
+
+    /// <summary>
+    /// True while the Clown is actively chasing a live, non-sealed player; outputs that player's world
+    /// position. <see cref="ClownDynamicScale"/> uses this to grow the Clown the closer it gets to its quarry.
+    /// </summary>
+    public bool TryGetChaseTargetPosition(out Vector3 position)
+    {
+        if ((_state == ClownState.Chase || _state == ClownState.Grabbing)
+            && _target != null
+            && _targetHealth != null
+            && !_targetHealth.IsDead
+            && !ShouldIgnorePlayer(_targetHealth))
+        {
+            position = _target.position;
+            return true;
+        }
+
+        position = Vector3.zero;
+        return false;
+    }
+
+    /// <summary>
+    /// The player the Clown should visually fixate on: the active chase target if any, otherwise the
+    /// nearest live, non-sealed player within <paramref name="maxRange"/>. Returns null if none.
+    /// <see cref="ClownDynamicScale"/> uses this to aim the head.
+    /// </summary>
+    public Transform GetLookAtPlayer(float maxRange)
+    {
+        if (_target != null && _targetHealth != null && !_targetHealth.IsDead && !ShouldIgnorePlayer(_targetHealth))
+            return _target;
+
+        Transform best = null;
+        float bestSqr = maxRange * maxRange;
+        foreach (PlayerHealth candidate in FindObjectsByType<PlayerHealth>(FindObjectsInactive.Exclude))
+        {
+            if (candidate == null || candidate.IsDead || ShouldIgnorePlayer(candidate))
+                continue;
+
+            float sqr = (candidate.transform.position - transform.position).sqrMagnitude;
+            if (sqr <= bestSqr)
+            {
+                bestSqr = sqr;
+                best = candidate.transform;
+            }
+        }
+
+        return best;
+    }
+
+    bool UpdateChaseLostLineOfSight()
+    {
+        if (_targetHealth == null || _targetHealth.IsDead)
+            return false;
+
+        if (HasDetectionLineOfSight(_targetHealth))
+        {
+            _chaseLineOfSightLostSince = -1f;
+            return false;
+        }
+
+        if (_chaseLineOfSightLostSince < 0f)
+        {
+            _chaseLineOfSightLostSince = Time.time;
+            return false;
+        }
+
+        if (Time.time - _chaseLineOfSightLostSince < Mathf.Max(0.05f, chaseLoseLineOfSightSeconds))
+            return false;
+
+        Vector3 lastKnownPosition = _target.position;
+        SetInvestigationPoint(lastKnownPosition);
+        ClearTarget();
+        EnterInvestigating();
+        return true;
+    }
+
+    static bool IsPlayerAudiblySprinting(PlayerHealth playerHealth)
+    {
+        if (playerHealth == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = playerHealth.GetComponent<NetworkPlayerAvatar>();
+        if (avatar != null && avatar.IsSpawned)
+            return avatar.AudiblySprintingForAi;
+
+        PlayerController pc = playerHealth.GetComponent<PlayerController>();
+        return pc != null && pc.IsAudiblySprintingForAi;
+    }
+
+    bool HasDetectionLineOfSight(PlayerHealth targetHealth)
+    {
+        return HasLineOfSightToTarget(targetHealth, detectionLineOfSightMask, detectionLineOfSightHeight, Vector3.zero);
+    }
+
+    bool HasLineOfSightToTarget(PlayerHealth targetHealth, LayerMask lineOfSightMask, float lineOfSightHeight, Vector3 originOffset)
+    {
+        if (targetHealth == null)
+            return false;
+
+        Vector3 origin = transform.position + Vector3.up * lineOfSightHeight + originOffset;
+        Vector3 targetPoint = targetHealth.transform.position + Vector3.up * lineOfSightHeight;
+        Vector3 toTarget = targetPoint - origin;
+        float distanceToTarget = toTarget.magnitude;
+        if (distanceToTarget <= 0.001f)
+            return true;
+
+        int rayMask = lineOfSightMask.value == 0 ? Physics.DefaultRaycastLayers : lineOfSightMask.value;
+        int hitCount = Physics.RaycastNonAlloc(
+            origin,
+            toTarget / distanceToTarget,
+            _lineOfSightHits,
+            distanceToTarget,
+            rayMask,
+            QueryTriggerInteraction.Ignore);
+        if (hitCount == 0)
+            return true;
+
+        System.Array.Sort(_lineOfSightHits, 0, hitCount, RaycastHitDistanceComparer.Instance);
+        for (int i = 0; i < hitCount; i++)
+        {
+            RaycastHit hit = _lineOfSightHits[i];
+            _lineOfSightHits[i] = default;
+
+            if (hit.transform == null)
+                continue;
+
+            if (hit.transform == transform || hit.transform.IsChildOf(transform))
+                continue;
+
+            return hit.transform == targetHealth.transform || hit.transform.IsChildOf(targetHealth.transform);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Distance at which the Clown counts as "at" the player while chasing — its current collision radius
+    /// (which grows with <see cref="ClownDynamicScale"/>) plus padding for the player's own radius. Keeping
+    /// this in sync with the physical body stops the big Clown from perpetually trying to close a gap it can
+    /// never reach.
+    /// </summary>
+    float GetChaseStopDistance()
+    {
+        float clownRadius = 0.5f;
+        if (characterController != null)
+        {
+            float lossy = Mathf.Max(transform.lossyScale.x, transform.lossyScale.z);
+            clownRadius = characterController.radius * Mathf.Max(0.01f, lossy);
+        }
+
+        // Auto-account for the player's own radius so the gap matches the real solid-capsule contact distance.
+        // (chaseStopPadding is then just a small buffer beyond contact, not a stand-in for the player's size.)
+        float playerRadius = 0.4f;
+        if (_target != null)
+        {
+            CharacterController playerCc = _target.GetComponentInParent<CharacterController>();
+            if (playerCc == null)
+                playerCc = _target.GetComponentInChildren<CharacterController>();
+            if (playerCc != null)
+            {
+                float playerLossy = Mathf.Max(playerCc.transform.lossyScale.x, playerCc.transform.lossyScale.z);
+                playerRadius = playerCc.radius * Mathf.Max(0.01f, playerLossy);
+            }
+        }
+
+        return clownRadius + playerRadius + Mathf.Max(0f, chaseStopPadding);
+    }
+
+    /// <summary>
+    /// True when the Clown is right next to the player it is chasing. Being held at the player's body is
+    /// expected contact, not a prop snag — so the prop-stuck watchdog must NOT warp-nudge here (that caused
+    /// the close-range forward/back snapping and, when a nudge landed it overlapping the player, a
+    /// depenetration that tunnelled it through the floor).
+    /// </summary>
+    bool IsBlockedByChaseTarget()
+    {
+        if (_state != ClownState.Chase || _target == null)
+            return false;
+
+        Vector3 flat = _target.position - transform.position;
+        flat.y = 0f;
+        return flat.magnitude <= GetChaseStopDistance() * 1.5f;
+    }
+
+    Vector3 UpdateChase()
+    {
+        if (_target == null)
+        {
+            EnterIdle();
+            return Vector3.zero;
+        }
+
+        float moveSpeed = alwaysRunWhenChasing ? runSpeed : walkSpeed;
+        _intendedMoveSpeed = moveSpeed;
+
+        if (!TrySnapToNavMesh())
+            return Vector3.zero;
+
+        float stopDistance = GetChaseStopDistance();
+        navMeshAgent.isStopped = false;
+        navMeshAgent.speed = moveSpeed;
+        navMeshAgent.stoppingDistance = stopDistance;
+
+        // Arrived at the size-aware contact gap: stand and loom rather than ramming the player and running
+        // in place (which also made the prop-stuck watchdog misfire and warp-jitter the Clown).
+        Vector3 flatToTarget = _target.position - transform.position;
+        flatToTarget.y = 0f;
+        if (flatToTarget.magnitude <= stopDistance)
+        {
+            _intendedMoveSpeed = 0f;
+            return Vector3.zero;
+        }
+
+        if (!TryGetTargetDestination(out Vector3 destination))
+            return Vector3.zero;
+
+        bool shouldRefreshDestination =
+            Time.time >= _nextDestinationRefreshTime
+            || (destination - _lastPathDestination).sqrMagnitude
+                >= destinationRefreshMinDistance * destinationRefreshMinDistance;
+
+        if (shouldRefreshDestination)
+        {
+            if (!navMeshAgent.SetDestination(destination))
+            {
+                _nextDestinationRefreshTime = Time.time + Mathf.Max(0.02f, destinationRefreshInterval);
+                return Vector3.zero;
+            }
+
+            _lastPathDestination = destination;
+            _nextDestinationRefreshTime = Time.time + Mathf.Max(0.02f, destinationRefreshInterval);
+        }
+
+        Vector3 desiredVelocity = navMeshAgent.velocity.sqrMagnitude > 0.0001f
+            ? navMeshAgent.velocity
+            : navMeshAgent.desiredVelocity;
+        desiredVelocity.y = 0f;
+        if (desiredVelocity.sqrMagnitude > moveSpeed * moveSpeed)
+            desiredVelocity = desiredVelocity.normalized * moveSpeed;
+
+        return desiredVelocity;
+    }
+
+    void EnterIdle()
+    {
+        if (_state == ClownState.Idle && _target == null)
+            return;
+
+        _state = ClownState.Idle;
+        ClearTarget();
+        _hasPatrolDestination = false;
+        _patrolStuckAccumulatedTime = 0f;
+        _propStuckAccumulatedTime = 0f;
+
+        if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
+        {
+            navMeshAgent.isStopped = true;
+            navMeshAgent.ResetPath();
+        }
+
+        _horizontalVelocity = Vector3.zero;
+        _intendedMoveSpeed = 0f;
+        _nextDestinationRefreshTime = 0f;
+    }
+
+    void EnterChase()
+    {
+        _hasPatrolDestination = false;
+        _patrolStuckAccumulatedTime = 0f;
+        _hasInvestigationPoint = false;
+        _state = ClownState.Chase;
+    }
+
+    // ---- Grab & slam ---------------------------------------------------------------------------------
+
+    bool ShouldStartGrab()
+    {
+        if (Time.time < _suppressGrabAndChaseUntil)
+            return false;
+        if (_state != ClownState.Chase || _target == null || _targetHealth == null || _targetHealth.IsDead)
+            return false;
+        if (ShouldIgnorePlayer(_targetHealth))
+            return false;
+
+        // Don't grab a player who is already ragdolled / held (e.g. by another Clown or a trap).
+        PlayerRagdollController ragdoll = _targetHealth.GetComponent<PlayerRagdollController>();
+        if (ragdoll != null && (ragdoll.IsRagdolled || ragdoll.IsHeld || ragdoll.IsGettingUp))
+            return false;
+
+        Vector3 to = _target.position - transform.position;
+        if (Mathf.Abs(to.y) > Mathf.Max(0.1f, maxGrabVerticalDelta))
+            return false;
+
+        Vector3 flat = new Vector3(to.x, 0f, to.z);
+        float dist = flat.magnitude;
+        // The grab reach grows with the Clown (ClownDynamicScale enlarges its arms).
+        float reach = (grabRange + Mathf.Max(0f, grabHitRangePadding)) * Mathf.Max(1f, transform.lossyScale.x);
+        if (dist > reach)
+            return false;
+
+        if (dist > 0.001f)
+        {
+            Vector3 fwd = new Vector3(transform.forward.x, 0f, transform.forward.z);
+            if (fwd.sqrMagnitude < 1e-4f)
+                return false;
+            if (Vector3.Angle(fwd.normalized, flat / dist) > grabHitHalfAngle)
+                return false;
+        }
+
+        return true;
+    }
+
+    void EnterGrabbing()
+    {
+        _state = ClownState.Grabbing;
+        _grabContactDone = false;
+        _slamDone = false;
+        _grabbingStartedTime = Time.time;
+        _grabbedHealth = _targetHealth;
+        _grabbedRagdoll = _targetHealth != null ? _targetHealth.GetComponent<PlayerRagdollController>() : null;
+        _grabbedNetRagdoll = _targetHealth != null ? _targetHealth.GetComponent<NetworkPlayerRagdoll>() : null;
+        if (_grabBone == null)
+            _grabBone = NetworkPlayerRagdoll.FindGrabBone(transform, grabBoneIndex);
+
+        if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
+        {
+            navMeshAgent.isStopped = true;
+            navMeshAgent.ResetPath();
+        }
+        _horizontalVelocity = Vector3.zero;
+        _intendedMoveSpeed = 0f;
+
+        // Face the player so the grab/slam reads forward.
+        if (_target != null)
+        {
+            Vector3 to = _target.position - transform.position;
+            to.y = 0f;
+            if (to.sqrMagnitude > 1e-4f)
+                transform.rotation = Quaternion.LookRotation(to.normalized);
+        }
+
+        // Triggers must route through the NetworkAnimator to replicate; fall back to the local animator offline.
+        if (_hasGrabTriggerParameter && animator != null)
+        {
+            bool fired = _networkObject != null
+                && _networkObject.IsSpawned
+                && _networkClownAvatar != null
+                && _networkClownAvatar.TryServerSetAnimatorTrigger(grabTriggerParameter);
+            if (!fired)
+                animator.SetTrigger(grabTriggerParameter);
+        }
+    }
+
+    void UpdateGrabbing()
+    {
+        // PRIMARY trigger: drive the grab/slam off the actual animation playback (frame-accurate), so the
+        // launch lands exactly on the slam-down with no event-dispatch or wall-clock lag.
+        float clipNorm = GetGrabStateNormalizedTime();
+        if (clipNorm >= 0f)
+        {
+            if (!_grabContactDone && clipNorm >= grabContactNormalizedTime)
+                ServerBeginHeldRagdoll();
+            if (!_slamDone && clipNorm >= slamImpactNormalizedTime)
+                ServerReleaseSlam();
+        }
+
+        // SAFETY fallback (only if the animator never reaches the grab state, e.g. missing clip/param).
+        // The animation events OnClownGrabContact / OnClownSlamImpact also call these; all paths are idempotent.
+        if (!_grabContactDone && Time.time >= _grabbingStartedTime + grabContactFallbackDelay)
+            ServerBeginHeldRagdoll();
+
+        if (!_slamDone && Time.time >= _grabbingStartedTime + slamImpactFallbackDelay)
+            ServerReleaseSlam();
+
+        if (_slamDone
+            && (ShouldLeaveGrabAnimation() || Time.time >= _grabbingStartedTime + grabClipDurationFallback + 0.3f))
+            EnterRecover();
+
+        // Stand still and grounded (never re-path while grabbing).
+        ApplyMovement(Vector3.zero);
+    }
+
+    /// <summary>Normalized time (0-1+) of the Grab and Slam state if it's currently playing (incl. during the
+    /// blend-in, where it's the "next" state); -1 if the animator isn't in that state.</summary>
+    float GetGrabStateNormalizedTime()
+    {
+        if (animator == null)
+            return -1f;
+
+        AnimatorStateInfo cur = animator.GetCurrentAnimatorStateInfo(0);
+        if (cur.shortNameHash == _grabStateHash)
+            return cur.normalizedTime;
+
+        if (animator.IsInTransition(0))
+        {
+            AnimatorStateInfo next = animator.GetNextAnimatorStateInfo(0);
+            if (next.shortNameHash == _grabStateHash)
+                return next.normalizedTime;
+        }
+
+        return -1f;
+    }
+
+    bool ShouldLeaveGrabAnimation()
+    {
+        if (animator == null)
+            return Time.time >= _grabbingStartedTime + grabClipDurationFallback;
+
+        AnimatorStateInfo si = animator.GetCurrentAnimatorStateInfo(0);
+        if (si.shortNameHash == _grabStateHash)
+            return si.normalizedTime >= 0.95f;
+
+        return Time.time >= _grabbingStartedTime + grabClipDurationFallback * 0.85f;
+    }
+
+    void UpdateRecover()
+    {
+        if (Time.time >= _suppressGrabAndChaseUntil)
+        {
+            EnterIdle();
+            return;
+        }
+        ApplyMovement(Vector3.zero);
+    }
+
+    /// <summary>Animation event from the Grab and Slam clip: the hands close on the player.</summary>
+    public void OnClownGrabContact() => ServerBeginHeldRagdoll();
+
+    /// <summary>Animation event from the Grab and Slam clip: the body strikes the floor.</summary>
+    public void OnClownSlamImpact() => ServerReleaseSlam();
+
+    void ServerBeginHeldRagdoll()
+    {
+        if (!ShouldRunSimulation() || _grabContactDone)
+            return;
+        if (_grabbedHealth == null || _grabbedHealth.IsDead)
+            return;
+        if (_grabBone == null)
+            return;
+
+        _grabContactDone = true;
+        // Record where the grab point starts so the slam can launch along the hand's actual travel
+        // (the animation turns the body and slams to the side/behind — not the Clown's original facing).
+        _grabContactHandWorldPos = _grabBone.position;
+
+        bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+        if (inNetSession)
+        {
+            if (_grabbedNetRagdoll != null && _networkObject != null && _networkObject.IsSpawned)
+                _grabbedNetRagdoll.BeginHeldByEnemyFromServer(
+                    _networkObject.NetworkObjectId,
+                    grabBoneIndex,
+                    heldPlayerHipsLocalPosOffset,
+                    heldPlayerHipsLocalEulerOffset);
+        }
+        else if (_grabbedRagdoll != null)
+        {
+            _grabbedRagdoll.BeginHeldByPoint(
+                _grabBone,
+                heldPlayerHipsLocalPosOffset,
+                Quaternion.Euler(heldPlayerHipsLocalEulerOffset));
+        }
+    }
+
+    void ServerReleaseSlam()
+    {
+        if (!ShouldRunSimulation() || _slamDone)
+            return;
+
+        _slamDone = true;
+
+        // Launch along the actual slam direction: the horizontal travel of the grab point from where it
+        // grabbed to where it slammed (the animation turns the body, so this is NOT the Clown's facing).
+        Vector3 slamDir = Vector3.zero;
+        if (_grabBone != null)
+        {
+            Vector3 travel = _grabBone.position - _grabContactHandWorldPos;
+            travel.y = 0f;
+            if (travel.sqrMagnitude > 0.0225f) // > ~0.15m of horizontal travel
+                slamDir = travel.normalized;
+            else
+            {
+                // Fallback: from the Clown toward where the hand ended up.
+                Vector3 toHand = _grabBone.position - transform.position;
+                toHand.y = 0f;
+                if (toHand.sqrMagnitude > 0.01f)
+                    slamDir = toHand.normalized;
+            }
+        }
+        if (slamDir.sqrMagnitude < 0.01f)
+        {
+            Vector3 fwd = transform.forward;
+            fwd.y = 0f;
+            slamDir = fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.forward;
+        }
+
+        Vector3 slamForce = (slamDir * slamForwardSpeed) + (Vector3.down * slamDownwardSpeed);
+        Vector3 forcePos = _grabBone != null ? _grabBone.position : transform.position;
+
+        bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+        if (inNetSession)
+        {
+            if (_grabbedNetRagdoll != null)
+                _grabbedNetRagdoll.ReleaseSlamFromServer(slamForce, forcePos, slamDamage, (byte)slamForceMode);
+        }
+        else if (_grabbedRagdoll != null)
+        {
+            bool survived = true;
+            if (_grabbedHealth != null && slamDamage > 0f)
+            {
+                _grabbedHealth.TakeDamage(slamDamage);
+                survived = !_grabbedHealth.IsDead;
+            }
+            _grabbedRagdoll.ReleaseFromHeld(slamForce, forcePos, slamForceMode, allowAutoRecovery: survived);
+        }
+    }
+
+    void EnterRecover()
+    {
+        _state = ClownState.Recover;
+        _suppressGrabAndChaseUntil = Time.time + Mathf.Max(0.25f, postSlamCooldownSeconds);
+        _grabbedHealth = null;
+        _grabbedRagdoll = null;
+        _grabbedNetRagdoll = null;
+        ClearTarget();
+
+        if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
+            navMeshAgent.isStopped = false;
+        _horizontalVelocity = Vector3.zero;
+        _intendedMoveSpeed = 0f;
+    }
+
+    void SetInvestigationPoint(Vector3 worldPoint)
+    {
+        _investigationPoint = worldPoint;
+        _hasInvestigationPoint = true;
+        _isLingerAtInvestigationPoint = false;
+        _investigationLingerEndTime = 0f;
+        _hasInvestigationSearchDestination = false;
+        _investigationSearchDestination = Vector3.zero;
+    }
+
+    void EnterInvestigating()
+    {
+        if (_state != ClownState.Investigating)
+            _state = ClownState.Investigating;
+        _chaseLineOfSightLostSince = -1f;
+
+        _intendedMoveSpeed = patrolSpeed;
+        if (!TrySnapToNavMesh())
+            return;
+        if (navMeshAgent == null || !navMeshAgent.isOnNavMesh)
+            return;
+
+        navMeshAgent.isStopped = false;
+        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.stoppingDistance = Mathf.Max(0.2f, investigationArrivalDistance);
+        if (_isLingerAtInvestigationPoint)
+        {
+            navMeshAgent.isStopped = false;
+            navMeshAgent.speed = patrolSpeed;
+            navMeshAgent.stoppingDistance = Mathf.Max(0.2f, patrolArrivalDistance * 0.7f);
+        }
+    }
+
+    Vector3 UpdateInvestigating()
+    {
+        _intendedMoveSpeed = patrolSpeed;
+        if (!_hasInvestigationPoint || !TrySnapToNavMesh() || navMeshAgent == null || !navMeshAgent.isOnNavMesh)
+            return Vector3.zero;
+
+        navMeshAgent.isStopped = false;
+        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.stoppingDistance = Mathf.Max(0.2f, investigationArrivalDistance);
+
+        if (_isLingerAtInvestigationPoint)
+        {
+            if (Time.time >= _investigationLingerEndTime)
+            {
+                _isLingerAtInvestigationPoint = false;
+                _hasInvestigationPoint = false;
+                _hasInvestigationSearchDestination = false;
+                EnterPatrol();
+                return Vector3.zero;
+            }
+
+            if (!_hasInvestigationSearchDestination)
+            {
+                if (!TryPickInvestigationSearchDestination(out Vector3 firstSearchPoint))
+                    return Vector3.zero;
+                _investigationSearchDestination = firstSearchPoint;
+                _hasInvestigationSearchDestination = true;
+                navMeshAgent.SetDestination(_investigationSearchDestination);
+            }
+            else if (!navMeshAgent.pathPending
+                && (!navMeshAgent.hasPath
+                    || navMeshAgent.pathStatus == NavMeshPathStatus.PathInvalid
+                    || navMeshAgent.pathStatus == NavMeshPathStatus.PathPartial
+                    || navMeshAgent.remainingDistance <= Mathf.Max(0.4f, patrolArrivalDistance * 0.8f)))
+            {
+                if (TryPickInvestigationSearchDestination(out Vector3 nextSearchPoint))
+                {
+                    _investigationSearchDestination = nextSearchPoint;
+                    navMeshAgent.SetDestination(_investigationSearchDestination);
+                }
+            }
+
+            Vector3 searchVelocity = navMeshAgent.velocity.sqrMagnitude > 0.0001f
+                ? navMeshAgent.velocity
+                : navMeshAgent.desiredVelocity;
+            searchVelocity.y = 0f;
+            if (searchVelocity.sqrMagnitude > patrolSpeed * patrolSpeed)
+                searchVelocity = searchVelocity.normalized * patrolSpeed;
+            return searchVelocity;
+        }
+
+        Vector3 targetPoint = _investigationPoint;
+        if (NavMesh.SamplePosition(targetPoint, out NavMeshHit hit, Mathf.Max(0.5f, targetNavMeshSampleRadius), NavMesh.AllAreas))
+            targetPoint = hit.position;
+
+        bool shouldRefreshDestination =
+            Time.time >= _nextDestinationRefreshTime
+            || (targetPoint - _lastPathDestination).sqrMagnitude
+                >= destinationRefreshMinDistance * destinationRefreshMinDistance;
+
+        if (shouldRefreshDestination)
+        {
+            navMeshAgent.SetDestination(targetPoint);
+            _lastPathDestination = targetPoint;
+            _nextDestinationRefreshTime = Time.time + Mathf.Max(0.05f, destinationRefreshInterval);
+        }
+
+        Vector3 flatSelf = transform.position;
+        flatSelf.y = 0f;
+        Vector3 flatDest = targetPoint;
+        flatDest.y = 0f;
+        if (Vector3.Distance(flatSelf, flatDest) <= investigationArrivalDistance)
+        {
+            _isLingerAtInvestigationPoint = true;
+            _investigationLingerEndTime = Time.time + Mathf.Max(0f, investigationLingerSeconds);
+            navMeshAgent.isStopped = true;
+            navMeshAgent.ResetPath();
+            return Vector3.zero;
+        }
+
+        Vector3 desiredVelocity = navMeshAgent.velocity.sqrMagnitude > 0.0001f
+            ? navMeshAgent.velocity
+            : navMeshAgent.desiredVelocity;
+        desiredVelocity.y = 0f;
+        if (desiredVelocity.sqrMagnitude > patrolSpeed * patrolSpeed)
+            desiredVelocity = desiredVelocity.normalized * patrolSpeed;
+        return desiredVelocity;
+    }
+
+    bool TryPickInvestigationSearchDestination(out Vector3 destination)
+    {
+        destination = _investigationPoint;
+        float radius = Mathf.Max(1f, investigationSearchRadius);
+        float minDistance = Mathf.Max(0.2f, investigationSearchMinWaypointDistance);
+        int attempts = Mathf.Max(4, investigationSearchSampleAttempts);
+
+        for (int i = 0; i < attempts; i++)
+        {
+            Vector2 sample2 = Random.insideUnitCircle * radius;
+            Vector3 raw = _investigationPoint + new Vector3(sample2.x, 0f, sample2.y);
+            if (!NavMesh.SamplePosition(raw, out NavMeshHit hit, Mathf.Max(1f, radius * 0.8f), NavMesh.AllAreas))
+                continue;
+
+            Vector3 flatDelta = hit.position - transform.position;
+            flatDelta.y = 0f;
+            if (flatDelta.magnitude < minDistance)
+                continue;
+
+            if (!TryHasReasonablePatrolPath(hit.position))
+                continue;
+
+            destination = hit.position;
+            return true;
+        }
+
+        if (NavMesh.SamplePosition(_investigationPoint, out NavMeshHit centerHit, Mathf.Max(1f, radius), NavMesh.AllAreas))
+        {
+            destination = centerHit.position;
+            return true;
+        }
+
+        return false;
+    }
+
+    void ApplyMovement(Vector3 desiredHorizontalVelocity)
+    {
+        if (characterController == null)
+            return;
+
+        _positionBeforeCharacterMove = transform.position;
+
+        bool grounded = characterController.isGrounded;
+        if (grounded && _verticalVelocity.y < 0f)
+            _verticalVelocity.y = -groundedStickDown;
+
+        _horizontalVelocity = ApplyWallSlide(desiredHorizontalVelocity);
+        _verticalVelocity.y += gravity * Time.deltaTime;
+
+        Vector3 motion = _horizontalVelocity * Time.deltaTime;
+        motion.y = _verticalVelocity.y * Time.deltaTime;
+        characterController.Move(motion);
+
+        if (navMeshAgent != null && navMeshAgent.enabled)
+            navMeshAgent.nextPosition = transform.position;
+
+        Vector3 horizontalDirection = _horizontalVelocity;
+        horizontalDirection.y = 0f;
+        if (horizontalDirection.sqrMagnitude > 0.0001f)
+        {
+            Quaternion targetRotation = Quaternion.LookRotation(horizontalDirection.normalized);
+            transform.rotation = Quaternion.RotateTowards(
+                transform.rotation,
+                targetRotation,
+                rotationSpeed * Time.deltaTime);
+        }
+
+        if (Time.time >= _nextPropStuckRecoveryTime && !IsBlockedByChaseTarget())
+        {
+            Vector3 desiredFlat = desiredHorizontalVelocity;
+            desiredFlat.y = 0f;
+            float desiredMag = desiredFlat.magnitude;
+
+            Vector3 movedFlat = transform.position - _positionBeforeCharacterMove;
+            movedFlat.y = 0f;
+            float dt = Mathf.Max(Time.deltaTime, 0.0001f);
+            float actualMag = movedFlat.magnitude / dt;
+
+            if (desiredMag >= propStuckDesiredSpeedThreshold && actualMag <= propStuckActualSpeedThreshold)
+                _propStuckAccumulatedTime += Time.deltaTime;
+            else
+                _propStuckAccumulatedTime = 0f;
+
+            if (_propStuckAccumulatedTime >= propStuckAccumulateSeconds)
+            {
+                if (TryRecoverFromPropStuck())
+                {
+                    _propStuckAccumulatedTime = 0f;
+                    _nextPropStuckRecoveryTime = Time.time + Mathf.Max(0.1f, propStuckRecoveryCooldown);
+                }
+                else
+                    _propStuckAccumulatedTime = 0f;
+            }
+        }
+        else
+            _propStuckAccumulatedTime = 0f;
+    }
+
+    /// <summary>
+    /// Records the most recent wall (near-vertical) contact so <see cref="ApplyWallSlide"/> can deflect
+    /// movement along it. Without this, the scaled-up body (whose CharacterController radius is larger than
+    /// the NavMesh path's baked clearance) grinds head-on into outer corners and stalls for a moment.
+    /// </summary>
+    void OnControllerColliderHit(ControllerColliderHit hit)
+    {
+        if (!enableWallSlide || hit.collider == null)
+            return;
+
+        if ((_wallSlideIgnoreLayers & (1 << hit.gameObject.layer)) != 0)
+            return; // players / other enemies are not walls to slide along
+
+        if (Mathf.Abs(hit.normal.y) >= wallSlideMaxNormalY)
+            return; // floor or ceiling, not a wall
+
+        _wallSlideNormal = hit.normal;
+        _wallSlideHitTime = Time.time;
+    }
+
+    /// <summary>
+    /// If the desired velocity is pushing into a freshly-touched wall, project it onto the wall plane and
+    /// restore full speed so the Clown slides smoothly around the corner instead of grinding to a crawl.
+    /// </summary>
+    Vector3 ApplyWallSlide(Vector3 desiredHorizontalVelocity)
+    {
+        if (!enableWallSlide)
+            return desiredHorizontalVelocity;
+
+        Vector3 desired = desiredHorizontalVelocity;
+        desired.y = 0f;
+        float speed = desired.magnitude;
+        if (speed < 0.05f || Time.time - _wallSlideHitTime > wallSlideMemorySeconds)
+            return desiredHorizontalVelocity;
+
+        Vector3 normal = _wallSlideNormal;
+        normal.y = 0f;
+        if (normal.sqrMagnitude < 1e-4f)
+            return desiredHorizontalVelocity;
+        normal.Normalize();
+
+        float into = Vector3.Dot(desired, normal);
+        if (into >= -0.01f)
+            return desiredHorizontalVelocity; // already moving away from / parallel to the wall
+
+        Vector3 slide = desired - normal * into; // remove the into-wall component (project onto wall plane)
+        if (slide.sqrMagnitude < 1e-4f)
+            return desiredHorizontalVelocity; // dead-on into a wall facing the goal — let prop-stuck handle it
+
+        return slide.normalized * speed; // keep full speed, just along the wall
+    }
+
+    void UpdateAnimatorParameters()
+    {
+        if (animator == null)
+            return;
+
+        if (!_hasSpeedParameter || !_hasGroundedParameter || !_hasVerticalVelocityParameter)
+        {
+            if (!_loggedMissingAnimatorParams)
+            {
+                string controllerName = animator.runtimeAnimatorController != null
+                    ? animator.runtimeAnimatorController.name
+                    : "(none)";
+                Debug.LogWarning(
+                    $"[ClownAI] Animator controller '{controllerName}' is missing required parameters " +
+                    $"('{speedParameter}' float, '{groundedParameter}' bool, '{verticalVelocityParameter}' float). " +
+                    "Clown movement animation sync is disabled until those parameters exist.",
+                    this);
+                _loggedMissingAnimatorParams = true;
+            }
+            return;
+        }
+
+        float horizontal = new Vector3(_horizontalVelocity.x, 0f, _horizontalVelocity.z).magnitude;
+        if (_state == ClownState.Idle)
+            horizontal = 0f;
+
+        float targetNormalized = runSpeed > 0.001f ? Mathf.Clamp01(horizontal / runSpeed) : 0f;
+        if (targetNormalized < idleSpeedDeadZone)
+            targetNormalized = 0f;
+        if (alwaysRunWhenChasing
+            && _state == ClownState.Chase
+            && _targetHealth != null
+            && targetNormalized > 0.08f)
+            targetNormalized = 1f;
+
+        if (animatorSpeedLerp <= 0f)
+            _smoothedAnimSpeed = targetNormalized;
+        else
+        {
+            float t = animatorSpeedLerp * Time.deltaTime;
+            _smoothedAnimSpeed = Mathf.Lerp(_smoothedAnimSpeed, targetNormalized, 1f - Mathf.Exp(-t));
+        }
+
+        animator.SetFloat(speedParameter, _smoothedAnimSpeed);
+        animator.SetBool(groundedParameter, characterController != null && characterController.isGrounded);
+        animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);
+    }
+
+    static readonly float[] NavMeshSnapRadiiDefault = { 2f, 6f, 12f };
+    static readonly float[] NavMeshSnapRadiiAggressive = { 3f, 8f, 16f, 24f, 48f };
+
+    /// <summary>Pushes agent back onto NavMesh after pits / physics pushes.</summary>
+    void RecoverNavMeshIfOffMesh()
+    {
+        if (navMeshAgent == null || !navMeshAgent.enabled || navMeshAgent.isOnNavMesh)
+            return;
+
+        TryWarpToNearestNavMesh(NavMeshSnapRadiiAggressive);
+    }
+
+    /// <summary>
+    /// Defends against the case where the Clown falls into a pit but lands on a tiny NavMesh island —
+    /// <see cref="RecoverNavMeshIfOffMesh"/> skips while <c>isOnNavMesh</c> is true and the pit's KillZone trigger may not reach him.
+    /// Compares his Y to the nearest rim NavMesh point; if he stays meaningfully below it without moving, warp him out.
+    /// </summary>
+    void UpdatePitStuckWatchdog()
+    {
+        if (navMeshAgent == null || !navMeshAgent.enabled)
+        {
+            _pitStuckAccumulatedTime = 0f;
+            return;
+        }
+
+        if (Time.time < _nextPitStuckCheckTime)
+            return;
+        _nextPitStuckCheckTime = Time.time + Mathf.Max(0.05f, pitStuckCheckInterval);
+
+        Vector3 origin = transform.position + Vector3.up * Mathf.Max(1f, pitStuckVerticalSearchHeight);
+        NavMeshHit hit = default;
+        bool sampled = false;
+        if (pitStuckSampleRadii != null)
+        {
+            for (int i = 0; i < pitStuckSampleRadii.Length; i++)
+            {
+                float radius = pitStuckSampleRadii[i];
+                if (radius <= 0f)
+                    continue;
+                if (NavMesh.SamplePosition(origin, out hit, radius, NavMesh.AllAreas))
+                {
+                    sampled = true;
+                    break;
+                }
+            }
+        }
+
+        if (!sampled)
+        {
+            _pitStuckAccumulatedTime = 0f;
+            return;
+        }
+
+        float drop = hit.position.y - transform.position.y;
+        Vector3 horizontalVelocity = navMeshAgent.velocity;
+        horizontalVelocity.y = 0f;
+        float horizontalSpeed = horizontalVelocity.magnitude;
+
+        if (drop >= pitStuckBelowNavMeshThreshold && horizontalSpeed <= pitStuckLowSpeedThreshold)
+            _pitStuckAccumulatedTime += Mathf.Max(0.05f, pitStuckCheckInterval);
+        else
+            _pitStuckAccumulatedTime = 0f;
+
+        if (_pitStuckAccumulatedTime < pitStuckAccumulateSeconds || Time.time < _nextPitStuckRescueTime)
+            return;
+
+        Vector3 safePosition = hit.position + Vector3.up * Mathf.Max(0f, pitStuckRescueLift);
+        WarpTransformToNavMeshPoint(safePosition);
+        _pitStuckAccumulatedTime = 0f;
+        _nextPitStuckRescueTime = Time.time + Mathf.Max(0.25f, pitStuckRescueCooldown);
+    }
+
+    bool TrySnapToNavMesh()
+    {
+        return TryWarpToNearestNavMesh(NavMeshSnapRadiiDefault);
+    }
+
+    bool TryWarpToNearestNavMesh(float[] radii)
+    {
+        if (navMeshAgent == null || !navMeshAgent.enabled)
+            return false;
+
+        if (navMeshAgent.isOnNavMesh)
+            return true;
+
+        if (radii == null || radii.Length == 0)
+            return false;
+
+        Vector3 basePos = transform.position;
+        Vector3[] verticalOrigins =
+        {
+            basePos,
+            basePos + Vector3.up * 4f,
+            basePos + Vector3.up * 10f,
+        };
+
+        for (int o = 0; o < verticalOrigins.Length; o++)
+        {
+            Vector3 origin = verticalOrigins[o];
+            for (int i = 0; i < radii.Length; i++)
+            {
+                if (!NavMesh.SamplePosition(origin, out NavMeshHit hit, radii[i], NavMesh.AllAreas))
+                    continue;
+
+                bool ccWasEnabled = characterController != null && characterController.enabled;
+                if (characterController != null)
+                    characterController.enabled = false;
+
+                navMeshAgent.Warp(hit.position);
+
+                if (characterController != null)
+                    characterController.enabled = ccWasEnabled;
+
+                if (navMeshAgent.isOnNavMesh)
+                {
+                    _verticalVelocity.y = Mathf.Min(_verticalVelocity.y, 0f);
+                    navMeshAgent.nextPosition = transform.position;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool TryGetTargetDestination(out Vector3 destination)
+    {
+        destination = Vector3.zero;
+        if (_target == null)
+            return false;
+
+        if (NavMesh.SamplePosition(_target.position, out NavMeshHit hit, targetNavMeshSampleRadius, NavMesh.AllAreas))
+        {
+            destination = hit.position;
+            return true;
+        }
+
+        destination = _target.position;
+        return true;
+    }
+
+    void EnsureEnemyAndClownLayerSetup()
+    {
+        int clownLayer = LayerMask.NameToLayer(ClownLayerName);
+        if (clownLayer >= 0 && gameObject.layer != clownLayer)
+            gameObject.layer = clownLayer;
+
+        if (s_HasConfiguredClownCollision)
+            return;
+
+        if (clownLayer < 0)
+        {
+            Debug.LogWarning(
+                $"[{nameof(ClownAI)}] Missing layer '{ClownLayerName}'. " +
+                "Add it in Project Settings > Tags and Layers so the Clown does not shove other enemies.",
+                this);
+            return;
+        }
+
+        int enemyLayer = LayerMask.NameToLayer(EnemyLayerName);
+        int jailorLayer = LayerMask.NameToLayer(JailorLayerName);
+        if (enemyLayer >= 0)
+            Physics.IgnoreLayerCollision(enemyLayer, clownLayer, true);
+        if (jailorLayer >= 0)
+            Physics.IgnoreLayerCollision(jailorLayer, clownLayer, true);
+        s_HasConfiguredClownCollision = true;
+    }
+
+    sealed class RaycastHitDistanceComparer : IComparer<RaycastHit>
+    {
+        public static readonly RaycastHitDistanceComparer Instance = new();
+
+        public int Compare(RaycastHit a, RaycastHit b) => a.distance.CompareTo(b.distance);
+    }
+}

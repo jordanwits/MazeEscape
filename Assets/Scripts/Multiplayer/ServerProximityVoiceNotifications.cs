@@ -3,11 +3,13 @@ using Unity.Netcode;
 using UnityEngine;
 
 /// <summary>
-/// Server-only fan-out for proximity voice frames so AI (e.g. <see cref="JailorAI"/>) can react without polling.
+/// Server-only fan-out for proximity voice frames so AI (e.g. <see cref="JailorAI"/>, <see cref="ClownAI"/>)
+/// can react without polling.
 /// </summary>
 public static class ServerProximityVoiceNotifications
 {
     static readonly List<JailorAI> s_Jailors = new();
+    static readonly List<ClownAI> s_Clowns = new();
 
     public static void Register(JailorAI jailor)
     {
@@ -21,6 +23,20 @@ public static class ServerProximityVoiceNotifications
         if (jailor == null)
             return;
         s_Jailors.Remove(jailor);
+    }
+
+    public static void Register(ClownAI clown)
+    {
+        if (clown == null || s_Clowns.Contains(clown))
+            return;
+        s_Clowns.Add(clown);
+    }
+
+    public static void Unregister(ClownAI clown)
+    {
+        if (clown == null)
+            return;
+        s_Clowns.Remove(clown);
     }
 
     public static void NotifyVoiceFrameFromClient(ulong speakerClientId)
@@ -39,6 +55,18 @@ public static class ServerProximityVoiceNotifications
             }
 
             j.OnServerHeardVoiceFrame(speakerClientId);
+        }
+
+        for (int i = s_Clowns.Count - 1; i >= 0; i--)
+        {
+            ClownAI c = s_Clowns[i];
+            if (c == null)
+            {
+                s_Clowns.RemoveAt(i);
+                continue;
+            }
+
+            c.OnServerHeardVoiceFrame(speakerClientId);
         }
     }
 }
