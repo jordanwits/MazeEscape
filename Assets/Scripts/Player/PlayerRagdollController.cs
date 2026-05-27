@@ -91,6 +91,12 @@ public class PlayerRagdollController : MonoBehaviour
     RigidbodyInterpolation _hipsInterpolationBeforeHold;
     public bool IsHeld => _isHeld;
 
+    /// <summary>
+    /// The hips/pelvis transform — the heavy central bone the physics engine keeps inside the level.
+    /// Used as a guaranteed-inside anchor for camera containment. Resolved in <see cref="ResolveHips"/>.
+    /// </summary>
+    public Transform HipsTransform => hipsRigidbody != null ? hipsRigidbody.transform : null;
+
     void Awake()
     {
         if (characterController == null)
