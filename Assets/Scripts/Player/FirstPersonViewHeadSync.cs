@@ -45,7 +45,10 @@ public class FirstPersonViewHeadSync : MonoBehaviour
             _wasFollowingHead = false;
             return;
         }
-        if (ragdoll != null && (ragdoll.IsRagdolled || ragdoll.IsGettingUp))
+        // While ragdolled / held / getting up the ragdoll camera path (RagdollCameraDamper + RagdollCameraCollision)
+        // owns CameraPitch — including IsHeld, where it is now parented to the damper proxy rather than the head bone,
+        // so the IsChildOf(head) guard below no longer covers it.
+        if (ragdoll != null && (ragdoll.IsRagdolled || ragdoll.IsGettingUp || ragdoll.IsHeld))
         {
             _wasFollowingHead = false;
             return;

@@ -235,6 +235,7 @@ public partial class PlayerController : MonoBehaviour
     NetworkPlayerAvatar _networkPlayerAvatar;
     PlayerRagdollController _ragdollController;
     RagdollCameraCollision _ragdollCameraCollision;
+    RagdollCameraDamper _ragdollCameraDamper;
     PlayerHealth _playerHealth;
 
     float _ragdollRecoverAnimatorSuppressUntil;
@@ -367,12 +368,16 @@ public partial class PlayerController : MonoBehaviour
         _networkPlayerInventory = GetComponent<NetworkPlayerInventory>();
         _ragdollController = GetComponent<PlayerRagdollController>();
         _ragdollCameraCollision = GetComponent<RagdollCameraCollision>();
+        _ragdollCameraDamper = GetComponent<RagdollCameraDamper>();
         _playerHealth = GetComponent<PlayerHealth>();
         HookupCarnivalTickets();
         EnsureInventoryStashRoot();
 
         if (firstPersonLook && _ragdollController != null && _ragdollCameraCollision == null)
             _ragdollCameraCollision = gameObject.AddComponent<RagdollCameraCollision>();
+
+        if (firstPersonLook && _ragdollController != null && _ragdollCameraDamper == null)
+            _ragdollCameraDamper = gameObject.AddComponent<RagdollCameraDamper>();
 
         if (cameraPitchTransform == null)
         {
@@ -1597,7 +1602,17 @@ public partial class PlayerController : MonoBehaviour
                 _hasSavedCameraPitchPrefabPose = true;
             }
 
-            cameraPitchTransform.SetParent(head, true);
+            // Parent to the damper's smoothed proxy (which chases the head) rather than the head bone directly,
+            // so the view inherits a dampened pose instead of the head's raw physics flailing. Falls back to the
+            // head bone if no damper is present.
+            Transform followParent = head;
+            if (_ragdollCameraDamper != null)
+            {
+                _ragdollCameraDamper.BeginFollow(head);
+                followParent = _ragdollCameraDamper.Proxy;
+            }
+
+            cameraPitchTransform.SetParent(followParent, true);
             _cameraPitchParentedToHead = true;
         }
         else if (!wantAttach && _cameraPitchParentedToHead)
@@ -1615,6 +1630,9 @@ public partial class PlayerController : MonoBehaviour
             cameraPitchTransform.localPosition = _savedCameraPitchLocalPosition;
             cameraPitchTransform.localRotation = _savedCameraPitchLocalRotation;
         }
+
+        if (_ragdollCameraDamper != null)
+            _ragdollCameraDamper.EndFollow();
 
         _cameraPitchParentedToHead = false;
         if (firstPersonLook)
