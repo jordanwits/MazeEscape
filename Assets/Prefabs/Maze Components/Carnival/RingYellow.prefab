@@ -360,7 +360,10 @@ MonoBehaviour:
   maxPickupHorizontalDistance: 5.25
   maxPickupVerticalDelta: 2.6
   dropForwardSpeedFromPlayerImpulse: 2
-  shootLaunchAngleDegrees: 45
+  straightThrowLaunchAngleDegrees: 20
+  archedThrowLaunchAngleDegrees: 50
+  lookDownPitchForStraightThrow: 10
+  lookUpPitchForArchedThrow: 30
   minShootSpeed: 2
   maxShootSpeed: 7
   releaseForwardOffset: 0.42

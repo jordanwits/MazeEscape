@@ -30,8 +30,14 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     [SerializeField] float dropForwardSpeedFromPlayerImpulse = 8.5f;
 
     [Header("Shoot (left click — charge-and-release arc)")]
-    [Tooltip("Launch angle above horizontal, in degrees. Higher = a steeper, taller arc that drops in more sharply (good for landing in a hoop or over pegs). The arc SHAPE is constant; charge scales how hard the throw is, so the arc gets higher and longer with charge but never flattens into a line drive.")]
-    [SerializeField, Range(10f, 80f)] float shootLaunchAngleDegrees = 55f;
+    [Tooltip("Launch angle when the player is aiming straight down (or below LookDownPitchForStraightThrow). Lower = a flat, near-horizontal throw. Bottom of the look-driven angle range.")]
+    [SerializeField, Range(5f, 80f)] float straightThrowLaunchAngleDegrees = 30f;
+    [Tooltip("Launch angle when the player is aiming straight up (or above LookUpPitchForArchedThrow). Higher = a tall, sharply-dropping lob (good for landing in a hoop or over pegs). Top of the look-driven angle range.")]
+    [SerializeField, Range(5f, 80f)] float archedThrowLaunchAngleDegrees = 70f;
+    [Tooltip("How far below horizontal the player must look (degrees) for the throw to reach its flattest, StraightThrowLaunchAngle. Looking further down clamps to that angle.")]
+    [SerializeField, Range(1f, 90f)] float lookDownPitchForStraightThrow = 50f;
+    [Tooltip("How far above horizontal the player must look (degrees) for the throw to reach its tallest, ArchedThrowLaunchAngle. Looking further up clamps to that angle.")]
+    [SerializeField, Range(1f, 90f)] float lookUpPitchForArchedThrow = 50f;
     [Tooltip("Launch speed at zero charge — a quick tap. Keep low for a weak, short lob.")]
     [SerializeField] float minShootSpeed = 2.5f;
     [Tooltip("Launch speed at full charge (bar full), in m/s. Drives the maximum throw distance and arc height.")]
@@ -668,12 +674,19 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             flat = Vector3.ProjectOnPlane(shooter.transform.forward, Vector3.up);
         flat.Normalize();
 
-        // Fixed launch angle keeps a proper arc at EVERY charge (never a flat line drive); charge
-        // scales the launch speed, so a quick tap is a weak short lob and a full charge is a hard,
-        // higher, farther throw. Re-clamp here: this runs server-authoritative, so a forged client
-        // charge can't exceed max range.
+        // Launch angle tracks where the player is aiming: look up for a tall arcing lob, look down
+        // to flatten toward a straight throw. f is unit length, so f.y is sin(lookPitch); map that
+        // pitch (clamped between the down/up thresholds) onto the straight→arched angle range. The
+        // chosen angle sets the arc SHAPE for this throw; charge only scales the launch speed, so a
+        // quick tap is weak and short while a full charge is hard and far, but neither flattens a
+        // chosen arc into a line drive. Re-clamp charge here: this runs server-authoritative, so a
+        // forged client value can't exceed max range.
+        float lookPitchDeg = Mathf.Asin(Mathf.Clamp(f.y, -1f, 1f)) * Mathf.Rad2Deg;
+        float lookT = Mathf.InverseLerp(-lookDownPitchForStraightThrow, lookUpPitchForArchedThrow, lookPitchDeg);
+        float launchAngleDeg = Mathf.Lerp(straightThrowLaunchAngleDegrees, archedThrowLaunchAngleDegrees, lookT);
+
         float speed = Mathf.Lerp(minShootSpeed, maxShootSpeed, Mathf.Clamp01(charge01));
-        float angleRad = shootLaunchAngleDegrees * Mathf.Deg2Rad;
+        float angleRad = launchAngleDeg * Mathf.Deg2Rad;
         velocityDelta = flat * (speed * Mathf.Cos(angleRad)) + Vector3.up * (speed * Mathf.Sin(angleRad));
 
         Transform cam = shooter.CameraTransformForFacing;
