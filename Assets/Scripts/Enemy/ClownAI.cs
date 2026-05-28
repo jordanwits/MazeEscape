@@ -1622,6 +1622,13 @@ public class ClownAI : MonoBehaviour
             if (!fired)
                 animator.SetTrigger(grabTriggerParameter);
         }
+
+        // NetworkAnimator replicates parameter state but NOT one-shot triggers, so a client that joins
+        // mid-slam sees an idle Clown while NetworkPlayerRagdoll's held snapshot pins the victim against
+        // a non-animating bone. Record the slam animation so the late-join path in NetworkClownAvatar
+        // can Play() the right state at the right normalized time.
+        if (_networkObject != null && _networkObject.IsSpawned && _networkClownAvatar != null)
+            _networkClownAvatar.ServerMarkSlamAnimationStarted(_grabStateHash, grabClipDurationFallback);
     }
 
     void UpdateGrabbing()
@@ -1942,6 +1949,10 @@ public class ClownAI : MonoBehaviour
             navMeshAgent.isStopped = false;
         _horizontalVelocity = Vector3.zero;
         _intendedMoveSpeed = 0f;
+
+        // Slam clip is finished; clear the late-join snapshot so any subsequent joiner sees the Clown idle.
+        if (_networkClownAvatar != null)
+            _networkClownAvatar.ServerMarkSlamAnimationEnded();
     }
 
     void SetInvestigationPoint(Vector3 worldPoint)

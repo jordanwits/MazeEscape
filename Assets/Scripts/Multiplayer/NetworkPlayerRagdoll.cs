@@ -52,6 +52,31 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
+    /// <summary>
+    /// Late-join snapshot of the transient (trap or death) ragdoll. The active visual is driven by
+    /// <see cref="StartRagdollClientRpc"/> on already-connected clients; a brand-new client that joins
+    /// mid-trap or mid-death would never receive that Rpc and would draw the victim standing upright.
+    /// Server-write only; observers rebuild the down pose from it on spawn (see <see cref="OnNetworkSpawn"/>).
+    /// AllowAutoRecovery is recorded so a death snapshot (no auto stand-up) stays distinguishable from a
+    /// trap snapshot, but reconstruction never starts recovery routines for the observer — the owner runs
+    /// recovery and the server fires <see cref="StopRagdollClientRpc"/> when they're back up.
+    /// </summary>
+    public struct TransientRagdollState : INetworkSerializeByMemcpy, System.IEquatable<TransientRagdollState>
+    {
+        public byte Active;                 // 0 = standing, 1 = down (trap or death)
+        public byte AllowAutoRecovery;      // 0 = death-down, 1 = trap-down (informational only on observer)
+
+        public bool Equals(TransientRagdollState o) =>
+            Active == o.Active && AllowAutoRecovery == o.AllowAutoRecovery;
+        public override bool Equals(object o) => o is TransientRagdollState s && Equals(s);
+        public override int GetHashCode() => Active ^ (AllowAutoRecovery << 1);
+    }
+
+    readonly NetworkVariable<TransientRagdollState> _transientRagdoll = new NetworkVariable<TransientRagdollState>(
+        default,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
     Coroutine _heldReconstructRoutine;
 
     void Awake()
@@ -73,6 +98,15 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         // and the owner runs its own ragdoll via the Rpc it received while connected.
         if (!IsServer && !IsOwner && _heldByEnemy.Value.Held != 0)
             _heldReconstructRoutine = StartCoroutine(ReconstructHeldOnSpawnRoutine(_heldByEnemy.Value));
+
+        // Same pattern for trap/death ragdoll-down. An observer late joining mid-trap or mid-death must see
+        // the victim down, not standing. We pass zero force on reconstruction: the original launch happened
+        // before this client joined, so the body is already wherever the physics carried it — applying the
+        // original impulse here would look like a fresh hit. allowAutoRecovery is forced false because the
+        // observer is not the owner; the real owner's client (still connected) drives recovery and the
+        // server fires StopRagdollClientRpc to clear everyone when it lands.
+        if (!IsServer && !IsOwner && _transientRagdoll.Value.Active != 0 && ragdoll != null)
+            ragdoll.ActivateRagdoll(Vector3.zero, Vector3.zero, ForceMode.Impulse, allowAutoRecovery: false);
     }
 
     public override void OnNetworkDespawn()
@@ -82,6 +116,11 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             StopCoroutine(_heldReconstructRoutine);
             _heldReconstructRoutine = null;
         }
+
+        // Per-client trap cooldown lives in a static dict keyed by OwnerClientId; drop our entry on despawn
+        // so a long-lived host doesn't leak one slot per join across a multi-hour session.
+        if (IsServer)
+            s_TrapRagdollNextAllowedTime.Remove(OwnerClientId);
     }
 
     // The enemy NetworkObject and its rig may resolve a few frames after this player spawns on a late
@@ -228,6 +267,16 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         // not pinned to the enemy.
         _heldByEnemy.Value = default;
 
+        // Record the transient ragdoll snapshot so a late joiner during the slam's auto-recovery window
+        // sees the victim down. If the slam killed, the death path (NotifyDeathRagdollFromServer →
+        // BeginRagdollFromServer) will also write this NV with AllowAutoRecovery=0; either write produces
+        // the same observer outcome (down on spawn).
+        _transientRagdoll.Value = new TransientRagdollState
+        {
+            Active = 1,
+            AllowAutoRecovery = (byte)(survived ? 1 : 0),
+        };
+
         // When the slam kills, the death flow owns recovery (stays down until respawn); don't auto-stand.
         ReleaseHeldRagdollClientRpc(worldForce, worldForcePosition, forceMode, survived);
     }
@@ -296,6 +345,12 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         _serverRagdollActive = true;
         // A full ragdoll (trap/death) supersedes any rigid held pose; clear the held snapshot.
         _heldByEnemy.Value = default;
+        // Record the transient ragdoll snapshot so late joiners reconstruct the down pose on spawn.
+        _transientRagdoll.Value = new TransientRagdollState
+        {
+            Active = 1,
+            AllowAutoRecovery = (byte)(allowAutoRecovery ? 1 : 0),
+        };
         StartRagdollClientRpc(worldForce, worldForcePosition, (byte)forceMode, allowAutoRecovery);
     }
 
@@ -306,6 +361,10 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             return;
 
         _serverRagdollActive = false;
+        // Owner is back up; clear the late-join snapshot so a brand-new joiner won't reconstruct the
+        // already-finished trap/death pose.
+        if (_transientRagdoll.Value.Active != 0)
+            _transientRagdoll.Value = default;
         StopRagdollClientRpc(playRecoveryAnimation: true);
     }
 
@@ -315,6 +374,10 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         // respawned player must never reconstruct as grabbed on a late joiner.
         if (IsServer && _heldByEnemy.Value.Held != 0)
             _heldByEnemy.Value = default;
+        // Same for the trap/death snapshot: respawn must scrub it so a late joiner doesn't see the player
+        // dead-down at the new spawn point.
+        if (IsServer && _transientRagdoll.Value.Active != 0)
+            _transientRagdoll.Value = default;
 
         if (!IsServer || !_serverRagdollActive)
             return;

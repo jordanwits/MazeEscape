@@ -24,6 +24,33 @@ public class NetworkClownAvatar : NetworkBehaviour
     [SerializeField] float maxFootstepObserverDistance = 26f;
     ServerNetworkAnimator _serverNetworkAnimator;
 
+    /// <summary>
+    /// Late-join snapshot of the Grab and Slam animation. NGO's <see cref="NetworkAnimator"/> replicates
+    /// parameter state but NOT one-shot triggers, so a client that joins mid-slam would see an idle Clown
+    /// while the held player snapshot rebuilds the pinned pose against nothing. This struct lets observers
+    /// jump the animator straight to the right state at the right normalized time on spawn.
+    /// </summary>
+    public struct SlamAnimationState : INetworkSerializeByMemcpy, System.IEquatable<SlamAnimationState>
+    {
+        public byte Active;                 // 0 = not slamming, 1 = slamming
+        public int StateNameHash;           // animator state hash to Play() (matches the grab/slam state name)
+        public float ServerTimeStarted;     // NetworkManager.ServerTime.TimeAsFloat at slam start
+        public float ClipDurationSeconds;   // for normalizing elapsed → 0..1
+
+        public bool Equals(SlamAnimationState o) =>
+            Active == o.Active && StateNameHash == o.StateNameHash
+            && ServerTimeStarted == o.ServerTimeStarted
+            && ClipDurationSeconds == o.ClipDurationSeconds;
+        public override bool Equals(object o) => o is SlamAnimationState s && Equals(s);
+        public override int GetHashCode() =>
+            Active ^ StateNameHash ^ ServerTimeStarted.GetHashCode() ^ ClipDurationSeconds.GetHashCode();
+    }
+
+    readonly NetworkVariable<SlamAnimationState> _slamAnimation = new NetworkVariable<SlamAnimationState>(
+        default,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
     void Awake()
     {
         if (clownAnimator == null)
@@ -41,6 +68,70 @@ public class NetworkClownAvatar : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         ApplyAuthorityState();
+
+        // Spawn-time state rule: rebuild the slam animation from the replicated snapshot for clients that
+        // joined mid-slam. The server is authoritative and the slam was started here, so it doesn't need
+        // to reconstruct from itself.
+        if (!IsServer && _slamAnimation.Value.Active != 0)
+            ReconstructSlamAnimationFromSnapshot(_slamAnimation.Value);
+    }
+
+    void ReconstructSlamAnimationFromSnapshot(SlamAnimationState state)
+    {
+        if (clownAnimator == null || state.Active == 0 || state.StateNameHash == 0)
+            return;
+
+        // Compute how far through the clip we are based on server time. Play() jumps the animator directly
+        // to the state regardless of trigger transitions, so this works even though the original Trigger
+        // wasn't replayed for us.
+        float clipDuration = Mathf.Max(0.05f, state.ClipDurationSeconds);
+        float nowServer = NetworkManager.Singleton != null
+            ? NetworkManager.Singleton.ServerTime.TimeAsFloat
+            : 0f;
+        float elapsed = Mathf.Max(0f, nowServer - state.ServerTimeStarted);
+        float normalized = elapsed / clipDuration;
+
+        // If we missed the whole clip, do nothing — the server has either already cleared the snapshot or
+        // is about to; either way the recovery state owns visuals from here.
+        if (normalized >= 1f)
+            return;
+
+        clownAnimator.Play(state.StateNameHash, 0, normalized);
+        clownAnimator.Update(0f);
+    }
+
+    /// <summary>
+    /// Server: record that the Grab and Slam animation is now playing so late joiners can reconstruct it.
+    /// Call alongside the existing <see cref="TryServerSetAnimatorTrigger"/> path (the trigger drives clients
+    /// already connected; this snapshot covers everyone who joins during the ~2.3s slam clip).
+    /// </summary>
+    public void ServerMarkSlamAnimationStarted(int stateNameHash, float clipDurationSeconds)
+    {
+        if (!IsServer || !IsSpawned)
+            return;
+
+        float nowServer = NetworkManager.Singleton != null
+            ? NetworkManager.Singleton.ServerTime.TimeAsFloat
+            : 0f;
+
+        _slamAnimation.Value = new SlamAnimationState
+        {
+            Active = 1,
+            StateNameHash = stateNameHash,
+            ServerTimeStarted = nowServer,
+            ClipDurationSeconds = Mathf.Max(0.05f, clipDurationSeconds),
+        };
+    }
+
+    /// <summary>Server: the slam animation finished (recovery begins or the Clown is despawned mid-grab).</summary>
+    public void ServerMarkSlamAnimationEnded()
+    {
+        if (!IsServer || !IsSpawned)
+            return;
+        if (_slamAnimation.Value.Active == 0)
+            return;
+
+        _slamAnimation.Value = default;
     }
 
     void ApplyAuthorityState()

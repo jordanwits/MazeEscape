@@ -104,6 +104,30 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         _holderNetworkObjectId.OnValueChanged -= OnHolderChanged;
     }
 
+    /// <summary>
+    /// React immediately when NGO reassigns ownership (e.g. the thrower disconnected and
+    /// DontDestroyWithOwner=true handed the body back to the server). FixedUpdate's safety re-arm would
+    /// converge eventually, but this avoids a window where the body sits client-owned with no live owner.
+    /// </summary>
+    protected override void OnOwnershipChanged(ulong previousOwnerClientId, ulong currentOwnerClientId)
+    {
+        base.OnOwnershipChanged(previousOwnerClientId, currentOwnerClientId);
+
+        if (!IsServer || _networkObject == null || !_networkObject.IsSpawned)
+            return;
+
+        // We already cleared settle state when WE handed ownership out (TransferOwnershipToClientForLocalSimulation)
+        // and when WE took it back (ReturnOwnershipToServer). The case left is an EXTERNAL transfer — the only
+        // one in practice is the disconnect-driven return to the server. Reset the settle watch so the next
+        // throw starts clean instead of inheriting stale accumulator from the orphan.
+        if (currentOwnerClientId == NetworkManager.ServerClientId)
+        {
+            _serverWatchingForSettle = false;
+            _serverSettleAccumulator = 0f;
+            _hasSpeedSample = false;
+        }
+    }
+
     void ApplySpawnHolderState()
     {
         ulong holder = _holderNetworkObjectId.Value;

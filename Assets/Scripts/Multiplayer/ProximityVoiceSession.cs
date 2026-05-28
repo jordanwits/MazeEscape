@@ -12,6 +12,9 @@ public class ProximityVoiceSession : MonoBehaviour
     public const string VoiceUpMessageName = "maze-escape-prox-voice-up";
     public const string VoiceDownMessageName = "maze-escape-prox-voice-down";
     static bool s_HandlersRegistered;
+    // Track the NetworkManager we subscribed to so unsubscribe can target the same instance even if
+    // Singleton has already moved on (rare: domain reload during shutdown).
+    static NetworkManager s_SubscribedNetworkManager;
 
     /// <summary>
     /// Fixed scratch buffers for voice PCM decode. Netcode message handlers are non-reentrant; avoids per-frame GC on the host when relaying.
@@ -31,6 +34,8 @@ public class ProximityVoiceSession : MonoBehaviour
     /// </summary>
     public static void InvalidateProximityMessaging()
     {
+        UnsubscribeFromNetworkManagerStopEvents();
+
         if (!s_HandlersRegistered)
         {
             VoiceClientRegistry.Clear();
@@ -47,6 +52,34 @@ public class ProximityVoiceSession : MonoBehaviour
 
         s_HandlersRegistered = false;
         VoiceClientRegistry.Clear();
+    }
+
+    /// <summary>
+    /// Tear down voice messaging in lock-step with NGO. <see cref="NetworkManager.Shutdown"/> clears the
+    /// <see cref="CustomMessagingManager"/> in the same frame; without subscribing to the stop events the
+    /// teardown depends on <see cref="Update"/>'s edge detection, which can be skipped if this component is
+    /// destroyed (scene unload) in the same frame as Shutdown — leaving <see cref="s_HandlersRegistered"/>
+    /// stuck true so the next session never re-registers handlers.
+    /// </summary>
+    static void OnNetworkManagerStopped(bool _) => InvalidateProximityMessaging();
+
+    static void SubscribeToNetworkManagerStopEvents(NetworkManager nm)
+    {
+        if (nm == null || s_SubscribedNetworkManager == nm)
+            return;
+        UnsubscribeFromNetworkManagerStopEvents();
+        nm.OnServerStopped += OnNetworkManagerStopped;
+        nm.OnClientStopped += OnNetworkManagerStopped;
+        s_SubscribedNetworkManager = nm;
+    }
+
+    static void UnsubscribeFromNetworkManagerStopEvents()
+    {
+        if (s_SubscribedNetworkManager == null)
+            return;
+        s_SubscribedNetworkManager.OnServerStopped -= OnNetworkManagerStopped;
+        s_SubscribedNetworkManager.OnClientStopped -= OnNetworkManagerStopped;
+        s_SubscribedNetworkManager = null;
     }
 
     void Update()
@@ -78,6 +111,7 @@ public class ProximityVoiceSession : MonoBehaviour
         nm.CustomMessagingManager.RegisterNamedMessageHandler(
             VoiceDownMessageName, HandleVoiceDown);
         s_HandlersRegistered = true;
+        SubscribeToNetworkManagerStopEvents(nm);
     }
 
     static void HandleVoiceUp(ulong senderId, FastBufferReader reader)
