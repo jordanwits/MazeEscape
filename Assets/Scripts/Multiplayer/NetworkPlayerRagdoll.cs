@@ -27,6 +27,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
     [SerializeField] PlayerRagdollController ragdoll;
     [SerializeField] PlayerHealth playerHealth;
+    [SerializeField] OwnerNetworkTransform ownerNetTransform;
 
     bool _serverRagdollActive;
     bool _subscribedToRecoveryStarted;
@@ -94,6 +95,8 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             ragdoll = GetComponent<PlayerRagdollController>();
         if (playerHealth == null)
             playerHealth = GetComponent<PlayerHealth>();
+        if (ownerNetTransform == null)
+            ownerNetTransform = GetComponent<OwnerNetworkTransform>();
     }
 
     public override void OnNetworkSpawn()
@@ -148,6 +151,16 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         // the visible "snap to correct position when they start moving again" symptom.
         if (!IsSpawned || !IsOwner)
             return;
+
+        // Flag the new pose as a teleport on NetworkTransform so observers skip interpolation. Without this,
+        // observer NetworkTransforms are anchored at the (stationary) grab-start root position — the owner's
+        // CharacterController/animator were off the whole ragdoll, so only the hips Rigidbody moved, and
+        // NetworkTransform never saw a root delta to broadcast. Recovery suddenly sets transform.position to
+        // the landing spot, and without a teleport flag the observer interpolates back toward the stale anchor
+        // (the visible "snap to near the Clown grab spot" the player sees just after the body settles).
+        if (ownerNetTransform != null)
+            ownerNetTransform.Teleport(rootPosition, rootRotation, transform.localScale);
+
         NotifyRecoveryStartedServerRpc(rootPosition, rootRotation, onBack);
     }
 
