@@ -589,26 +589,30 @@ public class PlayerRagdollController : MonoBehaviour
     }
 
     /// <summary>
-    /// Applies the owner's authoritative ragdoll pose to this (kinematic) body. Hips world position+rotation
-    /// places the skeleton in world space; per-body world rotations articulate the limbs. Bodies are kinematic
-    /// so this is a direct transform set — no physics integration runs on observers.
+    /// Applies the owner's authoritative ragdoll pose to this (kinematic) body. Per-body world POSITIONS and
+    /// world rotations are both set explicitly — relying on the transform hierarchy to place limbs from
+    /// frozen bind-pose offsets produced visible stretching, because the owner's joint-flex spreads bones
+    /// further apart than the bind-pose chain implies. Bodies are kinematic so direct world sets are safe.
     /// </summary>
-    public void ApplyObserverRagdollPose(Vector3 hipsWorldPos, Quaternion hipsWorldRot, Quaternion[] boneWorldRotations)
+    public void ApplyObserverRagdollPose(Vector3[] boneWorldPositions, Quaternion[] boneWorldRotations)
     {
         if (!IsRagdolled)
             return;
-        if (hipsRigidbody == null)
+        if (boneWorldPositions == null || boneWorldRotations == null)
+            return;
+        if (boneWorldPositions.Length != _ragdollBodies.Count || boneWorldRotations.Length != _ragdollBodies.Count)
             return;
 
-        // Hips first: this drags the rest of the rig (children of hips in the transform hierarchy) into world
-        // space at the owner's position. Then we overwrite each body's world rotation to match the owner's
-        // articulated pose.
-        hipsRigidbody.position = hipsWorldPos;
-        hipsRigidbody.rotation = hipsWorldRot;
-
-        if (boneWorldRotations == null || boneWorldRotations.Length != _ragdollBodies.Count)
-            return;
-
+        // Two passes so children of any given ragdoll bone are not dragged off-target by a later parent set.
+        // Pass 1: place world positions. Pass 2: lock world rotations. Intermediate non-ragdoll bones (Spine,
+        // Spine1, Shoulder, etc.) follow their nearest ragdoll-bone ancestor via bind-pose local offsets — fine,
+        // because their parents are now at the owner's authoritative position.
+        for (int i = 0; i < _ragdollBodies.Count; i++)
+        {
+            Rigidbody rb = _ragdollBodies[i];
+            if (rb != null)
+                rb.position = boneWorldPositions[i];
+        }
         for (int i = 0; i < _ragdollBodies.Count; i++)
         {
             Rigidbody rb = _ragdollBodies[i];
@@ -621,26 +625,39 @@ public class PlayerRagdollController : MonoBehaviour
     /// Samples the owner's ragdoll pose into the supplied buffers. The networking layer calls this each tick
     /// while the owner is ragdolled/held and broadcasts the result to observers.
     /// </summary>
-    public void SampleOwnerRagdollPose(out Vector3 hipsWorldPos, out Quaternion hipsWorldRot, Quaternion[] boneWorldRotationsBuffer)
+    public void SampleOwnerRagdollPose(Vector3[] boneWorldPositionsBuffer, Quaternion[] boneWorldRotationsBuffer)
     {
-        if (hipsRigidbody == null)
-        {
-            hipsWorldPos = transform.position;
-            hipsWorldRot = transform.rotation;
+        if (boneWorldPositionsBuffer == null || boneWorldRotationsBuffer == null)
             return;
-        }
-
-        hipsWorldPos = hipsRigidbody.position;
-        hipsWorldRot = hipsRigidbody.rotation;
-
-        if (boneWorldRotationsBuffer == null || boneWorldRotationsBuffer.Length != _ragdollBodies.Count)
+        if (boneWorldPositionsBuffer.Length != _ragdollBodies.Count || boneWorldRotationsBuffer.Length != _ragdollBodies.Count)
             return;
 
         for (int i = 0; i < _ragdollBodies.Count; i++)
         {
             Rigidbody rb = _ragdollBodies[i];
-            boneWorldRotationsBuffer[i] = rb != null ? rb.rotation : Quaternion.identity;
+            if (rb != null)
+            {
+                boneWorldPositionsBuffer[i] = rb.position;
+                boneWorldRotationsBuffer[i] = rb.rotation;
+            }
+            else
+            {
+                boneWorldPositionsBuffer[i] = Vector3.zero;
+                boneWorldRotationsBuffer[i] = Quaternion.identity;
+            }
         }
+    }
+
+    /// <summary>
+    /// One-shot snap of the observer's hips to a known world position. Used by the slam-release handler to
+    /// move observers off the old enemy-hand position immediately, so the body doesn't visibly hang on the
+    /// Clown's hand during the ~50 ms gap before the first pose-stream tick arrives with the owner's pose.
+    /// </summary>
+    public void SetObserverHipsPosition(Vector3 worldPos)
+    {
+        if (!IsRagdolled || hipsRigidbody == null)
+            return;
+        hipsRigidbody.position = worldPos;
     }
 
     void SnapToGroundForGetUp()

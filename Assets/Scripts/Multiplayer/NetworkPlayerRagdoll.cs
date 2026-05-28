@@ -84,7 +84,8 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
     Coroutine _heldReconstructRoutine;
 
-    Quaternion[] _ownerPoseBuffer;
+    Vector3[] _ownerPosBuffer;
+    Quaternion[] _ownerRotBuffer;
     float _nextPoseSyncTime;
 
     void Awake()
@@ -233,6 +234,8 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
                 worldForcePosition,
                 (ForceMode)forceMode,
                 allowAutoRecovery: allowAutoRecovery);
+            // First pose tick goes out as soon as the next Update runs — no need to wait the 50ms tick gate.
+            _nextPoseSyncTime = 0f;
         }
         else
         {
@@ -337,10 +340,17 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
                 worldForcePosition,
                 (ForceMode)forceMode,
                 allowAutoRecovery: allowAutoRecovery);
+            // Push the first slam pose tick out next Update, so observers don't wait 50ms for the first sample.
+            _nextPoseSyncTime = 0f;
         }
         else
         {
             ragdoll.BeginObserverRagdoll();
+            // Snap observers off the old enemy-hand position right away. The next pose-stream tick (~RPC
+            // latency, often <50ms) will follow with the owner's full physics-integrated pose, but this gets
+            // the body to roughly the right place immediately so there's no visible "stuck on the Clown's hand"
+            // beat during the slam.
+            ragdoll.SetObserverHipsPosition(worldForcePosition);
         }
     }
 
@@ -465,15 +475,17 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         if (count == 0)
             return;
 
-        if (_ownerPoseBuffer == null || _ownerPoseBuffer.Length != count)
-            _ownerPoseBuffer = new Quaternion[count];
+        if (_ownerPosBuffer == null || _ownerPosBuffer.Length != count)
+            _ownerPosBuffer = new Vector3[count];
+        if (_ownerRotBuffer == null || _ownerRotBuffer.Length != count)
+            _ownerRotBuffer = new Quaternion[count];
 
-        ragdoll.SampleOwnerRagdollPose(out Vector3 hipsPos, out Quaternion hipsRot, _ownerPoseBuffer);
-        BroadcastRagdollPoseServerRpc(hipsPos, hipsRot, _ownerPoseBuffer);
+        ragdoll.SampleOwnerRagdollPose(_ownerPosBuffer, _ownerRotBuffer);
+        BroadcastRagdollPoseServerRpc(_ownerPosBuffer, _ownerRotBuffer);
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
-    void BroadcastRagdollPoseServerRpc(Vector3 hipsPos, Quaternion hipsRot, Quaternion[] boneRotations)
+    void BroadcastRagdollPoseServerRpc(Vector3[] bonePositions, Quaternion[] boneRotations)
     {
         // Only forward while the server believes this player is mid-ragdoll or mid-carry. Without this gate, a
         // misbehaving client could stream pose updates outside of legitimate ragdoll windows and visually
@@ -481,15 +493,15 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         if (!_serverRagdollActive && _heldByEnemy.Value.Held == 0)
             return;
 
-        ApplyRagdollPoseClientRpc(hipsPos, hipsRot, boneRotations);
+        ApplyRagdollPoseClientRpc(bonePositions, boneRotations);
     }
 
     [ClientRpc]
-    void ApplyRagdollPoseClientRpc(Vector3 hipsPos, Quaternion hipsRot, Quaternion[] boneRotations)
+    void ApplyRagdollPoseClientRpc(Vector3[] bonePositions, Quaternion[] boneRotations)
     {
         if (IsOwner || ragdoll == null)
             return;
 
-        ragdoll.ApplyObserverRagdollPose(hipsPos, hipsRot, boneRotations);
+        ragdoll.ApplyObserverRagdollPose(bonePositions, boneRotations);
     }
 }
