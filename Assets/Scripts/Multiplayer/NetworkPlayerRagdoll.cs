@@ -13,6 +13,11 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     const float TrapRagdollServerCooldownSeconds = 0.45f;
     static readonly Dictionary<ulong, float> s_TrapRagdollNextAllowedTime = new Dictionary<ulong, float>();
 
+    // Owner samples its authoritative ragdoll pose at this cadence and broadcasts it; observers apply it as a
+    // kinematic puppet. 20 Hz is fine-grained enough that the body looks continuous even during fast tumbles
+    // and keeps bandwidth at ~4 KB/s per ragdolling player (~200 B / snapshot for hips pose + 11 bone rotations).
+    const float RagdollPoseSyncIntervalSeconds = 0.05f;
+
     // Grab bone the enemy holds this player by, resolved by Mixamo bone name on every client so the hips
     // pin (see PlayerRagdollController.BeginHeldByPoint) tracks a transform all clients already agree on.
     static readonly string[] s_GrabBoneNames =
@@ -79,6 +84,9 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
     Coroutine _heldReconstructRoutine;
 
+    Quaternion[] _ownerPoseBuffer;
+    float _nextPoseSyncTime;
+
     void Awake()
     {
         if (ragdoll == null)
@@ -104,13 +112,11 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             _heldReconstructRoutine = StartCoroutine(ReconstructHeldOnSpawnRoutine(_heldByEnemy.Value));
 
         // Same pattern for trap/death ragdoll-down. An observer late joining mid-trap or mid-death must see
-        // the victim down, not standing. We pass zero force on reconstruction: the original launch happened
-        // before this client joined, so the body is already wherever the physics carried it — applying the
-        // original impulse here would look like a fresh hit. allowAutoRecovery is forced false because the
-        // observer is not the owner; the real owner's client (still connected) drives recovery and the
-        // server fires StopRagdollClientRpc to clear everyone when it lands.
+        // the victim down, not standing. We enter the kinematic observer-puppet path; the next pose-stream
+        // tick from the owner (within ~50 ms) populates the bones in the correct world pose. Owner is still
+        // connected and runs recovery; the server fires StopRagdollClientRpc to clear everyone when it lands.
         if (!IsServer && !IsOwner && _transientRagdoll.Value.Active != 0 && ragdoll != null)
-            ragdoll.ActivateRagdoll(Vector3.zero, Vector3.zero, ForceMode.Impulse, allowAutoRecovery: false);
+            ragdoll.BeginObserverRagdoll();
     }
 
     public override void OnNetworkDespawn()
@@ -216,11 +222,22 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         if (ragdoll == null)
             return;
 
-        ragdoll.ActivateRagdoll(
-            worldForce,
-            worldForcePosition,
-            (ForceMode)forceMode,
-            allowAutoRecovery: IsOwner && allowAutoRecovery);
+        // Owner runs the authoritative physics simulation. Observers run a kinematic puppet driven entirely by
+        // the streamed pose (see BroadcastRagdollPoseServerRpc / ApplyRagdollPoseClientRpc) — they do NOT apply
+        // the impulse locally, because their joint-solver/float-precision results would diverge from the
+        // owner's and produce the visible "snap to correct position when they start moving" bug.
+        if (IsOwner)
+        {
+            ragdoll.ActivateRagdoll(
+                worldForce,
+                worldForcePosition,
+                (ForceMode)forceMode,
+                allowAutoRecovery: allowAutoRecovery);
+        }
+        else
+        {
+            ragdoll.BeginObserverRagdoll();
+        }
     }
 
     /// <summary>
@@ -309,11 +326,22 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         if (ragdoll == null)
             return;
 
-        ragdoll.ReleaseFromHeld(
-            worldForce,
-            worldForcePosition,
-            (ForceMode)forceMode,
-            allowAutoRecovery: IsOwner && allowAutoRecovery);
+        // Owner simulates the slam; observers transition from the kinematic Clown carry directly into the
+        // kinematic observer-puppet ragdoll. The pose stream picks up the slam trajectory from the owner —
+        // observers no longer apply the launch impulse locally, which is what made them drift to a different
+        // settle position before.
+        if (IsOwner)
+        {
+            ragdoll.ReleaseFromHeld(
+                worldForce,
+                worldForcePosition,
+                (ForceMode)forceMode,
+                allowAutoRecovery: allowAutoRecovery);
+        }
+        else
+        {
+            ragdoll.BeginObserverRagdoll();
+        }
     }
 
     static Transform ResolveEnemyGrabBone(ulong enemyNetObjId, int boneIndex)
@@ -415,5 +443,53 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             return;
 
         ragdoll.DeactivateRagdollAtAuthoritativeRoot(rootPosition, rootRotation, onBack);
+    }
+
+    void Update()
+    {
+        if (!IsSpawned || !IsOwner || ragdoll == null)
+            return;
+
+        // Stream the authoritative ragdoll pose to observers while we're either flailing (full ragdoll) or
+        // being swung around in the rigid Clown carry. The carry was already deterministic across clients
+        // (everyone pins to the same enemy bone), but funneling it through the same stream avoids relying on
+        // observer-local pinning math during the swing.
+        if (!ragdoll.IsRagdolled && !ragdoll.IsHeld)
+            return;
+
+        if (Time.time < _nextPoseSyncTime)
+            return;
+        _nextPoseSyncTime = Time.time + RagdollPoseSyncIntervalSeconds;
+
+        int count = ragdoll.RagdollBodyCount;
+        if (count == 0)
+            return;
+
+        if (_ownerPoseBuffer == null || _ownerPoseBuffer.Length != count)
+            _ownerPoseBuffer = new Quaternion[count];
+
+        ragdoll.SampleOwnerRagdollPose(out Vector3 hipsPos, out Quaternion hipsRot, _ownerPoseBuffer);
+        BroadcastRagdollPoseServerRpc(hipsPos, hipsRot, _ownerPoseBuffer);
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+    void BroadcastRagdollPoseServerRpc(Vector3 hipsPos, Quaternion hipsRot, Quaternion[] boneRotations)
+    {
+        // Only forward while the server believes this player is mid-ragdoll or mid-carry. Without this gate, a
+        // misbehaving client could stream pose updates outside of legitimate ragdoll windows and visually
+        // teleport observer copies of the player.
+        if (!_serverRagdollActive && _heldByEnemy.Value.Held == 0)
+            return;
+
+        ApplyRagdollPoseClientRpc(hipsPos, hipsRot, boneRotations);
+    }
+
+    [ClientRpc]
+    void ApplyRagdollPoseClientRpc(Vector3 hipsPos, Quaternion hipsRot, Quaternion[] boneRotations)
+    {
+        if (IsOwner || ragdoll == null)
+            return;
+
+        ragdoll.ApplyObserverRagdollPose(hipsPos, hipsRot, boneRotations);
     }
 }

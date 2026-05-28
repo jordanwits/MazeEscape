@@ -81,6 +81,12 @@ public class PlayerRagdollController : MonoBehaviour
     public bool IsGettingUp { get; private set; }
 
     /// <summary>
+    /// Number of cached ragdoll Rigidbodies. The networking layer reads this so it can size the per-bone
+    /// world-rotation array it streams from owner to observers (see <see cref="SampleOwnerRagdollPose"/>).
+    /// </summary>
+    public int RagdollBodyCount => _ragdollBodies.Count;
+
+    /// <summary>
     /// Fired by the local recovery path (auto land-up or auto-recover after delay) right after the root has
     /// been snapped to the standing pose. The networking layer subscribes on the owner so it can replicate the
     /// owner's authoritative recovery pose to observers — without it, each observer's local ragdoll physics
@@ -538,6 +544,103 @@ public class PlayerRagdollController : MonoBehaviour
 
         SnapToStandingHeight();
         FinishStandUp();
+    }
+
+    /// <summary>
+    /// Observer-side activation. The owner runs the full ragdoll physics simulation; observers stay kinematic
+    /// and are driven entirely by the streamed pose (see <see cref="ApplyObserverRagdollPose"/>). Without this
+    /// path, each observer simulated locally from the same impulse and drifted to a different settle position,
+    /// which produced the visible snap on recovery.
+    /// </summary>
+    public void BeginObserverRagdoll()
+    {
+        if (IsRagdolled)
+            return;
+
+        if (_ragdollBodies.Count == 0)
+            return;
+
+        ResolveHips();
+        if (hipsRigidbody == null)
+        {
+            Debug.LogWarning($"{nameof(PlayerRagdollController)}: No hips Rigidbody; cannot begin observer ragdoll.", this);
+            return;
+        }
+
+        // Transitioning from the rigid Clown carry into a slam observer-side: stop the per-FixedUpdate pin to
+        // the enemy bone, leave bodies kinematic.
+        ClearHeldState();
+
+        IsRagdolled = true;
+
+        if (characterController != null)
+            characterController.enabled = false;
+
+        Physics.SyncTransforms();
+
+        if (animator != null)
+            animator.enabled = false;
+
+        if (_movementViewBob != null)
+            _movementViewBob.enabled = false;
+
+        // Keep every body kinematic — observer is a puppet for the owner's authoritative pose.
+        SetRagdollPhysicsActive(false);
+    }
+
+    /// <summary>
+    /// Applies the owner's authoritative ragdoll pose to this (kinematic) body. Hips world position+rotation
+    /// places the skeleton in world space; per-body world rotations articulate the limbs. Bodies are kinematic
+    /// so this is a direct transform set — no physics integration runs on observers.
+    /// </summary>
+    public void ApplyObserverRagdollPose(Vector3 hipsWorldPos, Quaternion hipsWorldRot, Quaternion[] boneWorldRotations)
+    {
+        if (!IsRagdolled)
+            return;
+        if (hipsRigidbody == null)
+            return;
+
+        // Hips first: this drags the rest of the rig (children of hips in the transform hierarchy) into world
+        // space at the owner's position. Then we overwrite each body's world rotation to match the owner's
+        // articulated pose.
+        hipsRigidbody.position = hipsWorldPos;
+        hipsRigidbody.rotation = hipsWorldRot;
+
+        if (boneWorldRotations == null || boneWorldRotations.Length != _ragdollBodies.Count)
+            return;
+
+        for (int i = 0; i < _ragdollBodies.Count; i++)
+        {
+            Rigidbody rb = _ragdollBodies[i];
+            if (rb != null)
+                rb.rotation = boneWorldRotations[i];
+        }
+    }
+
+    /// <summary>
+    /// Samples the owner's ragdoll pose into the supplied buffers. The networking layer calls this each tick
+    /// while the owner is ragdolled/held and broadcasts the result to observers.
+    /// </summary>
+    public void SampleOwnerRagdollPose(out Vector3 hipsWorldPos, out Quaternion hipsWorldRot, Quaternion[] boneWorldRotationsBuffer)
+    {
+        if (hipsRigidbody == null)
+        {
+            hipsWorldPos = transform.position;
+            hipsWorldRot = transform.rotation;
+            return;
+        }
+
+        hipsWorldPos = hipsRigidbody.position;
+        hipsWorldRot = hipsRigidbody.rotation;
+
+        if (boneWorldRotationsBuffer == null || boneWorldRotationsBuffer.Length != _ragdollBodies.Count)
+            return;
+
+        for (int i = 0; i < _ragdollBodies.Count; i++)
+        {
+            Rigidbody rb = _ragdollBodies[i];
+            boneWorldRotationsBuffer[i] = rb != null ? rb.rotation : Quaternion.identity;
+        }
     }
 
     void SnapToGroundForGetUp()
