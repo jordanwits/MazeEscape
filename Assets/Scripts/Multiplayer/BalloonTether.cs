@@ -73,7 +73,14 @@ public sealed class BalloonTether : NetworkBehaviour
     {
         base.OnNetworkSpawn();
         EnsureAnchorLocked();
-        EnsureJoint();
+
+        // Only the simulating authority needs the pendulum joint. On client mirrors the body is made
+        // kinematic by NetworkRigidbody and driven by NetworkTransform, so a joint here is pointless
+        // overhead; tearing down any joint built in Awake also avoids a second writer of body physics.
+        if (SimulateLocally)
+            EnsureJoint();
+        else
+            DestroyJoint();
     }
 
     public override void OnNetworkDespawn()

@@ -45,8 +45,10 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
             yield break;
 
         // Local procedurally-built duplicate: silence its colliders so the player can't hit it with a
-        // raycast or have a thrown body bounce off it.
-        DisableLocalClientInteractColliders();
+        // raycast or have a thrown body bounce off it, and freeze its rigidbodies so it can't fall/drift
+        // (or fall through the floor) under client-only physics while it waits to be deduped — including
+        // the case where the server counterpart never arrives and this duplicate lives out the timeout.
+        NeutralizeLocalClientDuplicate();
 
         float end = Time.unscaledTime + DuplicateSearchSeconds;
         while (Time.unscaledTime < end)
@@ -115,13 +117,29 @@ public sealed class MazePieceNetworkRigidbodySpawn : MonoBehaviour
         return NormalizeInstanceName(spawnedObject.name) == NormalizeInstanceName(gameObject.name);
     }
 
-    void DisableLocalClientInteractColliders()
+    void NeutralizeLocalClientDuplicate()
     {
         Collider[] colliders = GetComponentsInChildren<Collider>(true);
         for (int i = 0; i < colliders.Length; i++)
         {
             if (colliders[i] != null)
                 colliders[i].enabled = false;
+        }
+
+        // Without disabling the dynamic body, the duplicate keeps simulating locally (no NGO authority):
+        // it falls under gravity / drifts, and since its colliders are now off it can fall out of the
+        // world. Freezing it kinematic keeps it parked where the maze placed it until dedup destroys it.
+        Rigidbody[] bodies = GetComponentsInChildren<Rigidbody>(true);
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            if (bodies[i] == null)
+                continue;
+            if (!bodies[i].isKinematic)
+            {
+                bodies[i].linearVelocity = Vector3.zero;
+                bodies[i].angularVelocity = Vector3.zero;
+            }
+            bodies[i].isKinematic = true;
         }
     }
 

@@ -3,11 +3,20 @@ alwaysApply: true
 description: Steam + Netcode for GameObjects - how to add networked gameplay safely
 ---
 
-This is a Steam multiplayer game using **Unity Netcode for GameObjects (NGO)**. New gameplay features must follow **server authority** unless there is a deliberate, documented exception such as purely cosmetic FX.
+This is a Steam multiplayer game using **Unity Netcode for GameObjects (NGO)**. New gameplay features must follow **server authority for shared world state** unless there is a deliberate, documented exception (the established ones are listed below).
+
+## Actual architecture (read this first)
+
+Be honest about what this project really is, so you don't "fix" intentional design or assume guarantees that don't exist:
+
+- **Topology: listen-server, not dedicated.** One peer is host (server + client) over Steam P2P (or Direct IP for LAN debugging). There is no headless build. "The server" means the host. Code must still not assume a given path runs on a client — but a true dedicated/headless server is not a current target, so phrase requirements as **host-authority**, not dedicated-server.
+- **Shared world state is server-authoritative:** doors, chests, traps, enemies, inventory slots, scores, pickups, who-holds-what. This is the rule everything below elaborates.
+- **Player locomotion is client-authoritative by design** (see the exception section). Do not try to make player movement server-authoritative; it would regress responsiveness and fight the existing components.
+- **No connection approval exists yet.** `NetworkConfig.ConnectionApproval` is off — no version check, max-player cap, or auth. Treat adding one as the standard next hardening step; don't assume joins are validated.
 
 ## Core rule
 
-For any shared gameplay state, there must be **one source of truth**. In this project, that source of truth is normally the **server**.
+For any shared **world** gameplay state, there must be **one source of truth**, and in this project that is the **host/server** — with the explicit exceptions in "Client-authoritative by design" below.
 
 Clients may:
 - send input
@@ -19,6 +28,17 @@ Clients must **not**:
 - change shared gameplay state locally and assume it will stay correct
 - use local animator state, local booleans, or local transforms as the source of truth
 - invent a separate sync path when an existing server-authoritative pattern already fits
+
+## Client-authoritative by design (the documented exceptions)
+
+These are deliberate and already shipped. Match them; do not "correct" them to server authority.
+
+- **Player position/rotation:** `OwnerNetworkTransform` (`OnIsServerAuthoritative() => false`) — the owning client simulates its own `CharacterController` and streams the result. Remote players run a kinematic blocking proxy, not the controller.
+- **Player animation:** `OwnerNetworkAnimator` is owner-authoritative. The server cannot author animation on player avatars through it; server-driven anim belongs on enemies via `ServerNetworkAnimator`.
+- **Owner-written NetworkVariables on the avatar:** flashlight look-pitch and `AudiblySprintingForAi` are `WritePermission.Owner`. Note `AudiblySprintingForAi` feeds enemy hearing, so a client technically controls one AI input — accepted because movement is already client-authoritative; do not extend this to other AI-critical inputs.
+- **Heavy throwables in flight** (`NetworkHeavyThrowableHold`): ownership is handed to the throwing client so the arc is lag-free; the server reclaims ownership once the body settles (and re-arms that reclaim if a client is left owning an idle body). These prefabs set `DontDestroyWithOwner = true` so a mid-throw disconnect doesn't despawn them.
+
+Everything **not** in this list defaults to server authority. If you need a new client-authoritative path, it must be added here with a reason.
 
 ## Authority pipeline (default for every networked thing)
 
@@ -85,8 +105,11 @@ For example, if a door open state is a Netvar, the object must read and apply th
   `ZombieAI` skips AI on pure clients; `ZombieHealth` and `NetworkZombieAvatar` keep death in sync.  
   New enemy logic must be **server-only simulation** with replicated pose, animation, and state.
 
-- **Doors / chests**  
+- **Doors / chests**
   `HingeInteractDoor` and `MazeChest`: **`NetworkVariable`** plus **`ServerRpc`** for toggles; clients subscribe to **`OnValueChanged`** and must also apply the current value on spawn/init to animate correctly.
+
+- **Custom named messages** (`CustomMessagingManager`)
+  A sanctioned pattern here for non-`NetworkObject` flows: lobby ready/state (`MultiplayerSessionController`), proximity voice frames (`ProximityVoiceSession`), and the finish-return trigger. Use it when there is no spawned object to hang a NetworkVariable/Rpc on. It is **not** late-join-safe by itself — if joiners must see the resulting state, also store it somewhere replicated. Register handlers on session start and unregister on shutdown.
 
 ## Prefab and spawn checklist
 
@@ -117,20 +140,13 @@ Use **`RequireOwnership = false`** on `ServerRpc` only when appropriate, and alw
 - current game phase
 - allowed interaction type
 
-## Dedicated server rule
+## Host-authority rule
 
-Do not rely on host-only behavior or on client code paths executing on the server.
+This project runs as a **listen-server** (the host is server + client); there is no headless build. So the standard is **host authority**, not dedicated-server correctness:
 
-Any gameplay-critical logic for:
-- spawning
-- validation
-- state mutation
-- damage
-- interaction resolution
+Any gameplay-critical logic for spawning, validation, state mutation, damage, and interaction resolution must live behind `IsServer` and run on the **host**, regardless of which client requested it.
 
-must work on a **dedicated server**, not only in host mode.
-
-If a pattern only works because the host is both client and server, treat it as fragile and fix it before building on top of it.
+Still write it so it does **not depend on the host also being a client** (e.g. don't assume an `IsOwner`/local-input path runs server-side). The codebase already has `IsServer && !IsClient` branches that handle the would-be-dedicated case — keep that discipline so the logic stays correct if a headless build is ever added, and because conflating "host" with "the requesting client" is a common source of bugs. Do not, however, invent dedicated-server-only requirements that the project never exercises.
 
 ## Known fragile areas (extra care)
 
@@ -140,8 +156,12 @@ If a pattern only works because the host is both client and server, treat it as 
 - **`ClientRpc`-only spawned objects** such as split-stack glowstick drops  
   These may assume a listen server or host runs client code paths. A dedicated server may need the same gameplay-critical spawn logic executed on the server too.
 
-- **World items** use `GrabbableMazeClientPhysics` to freeze rigidbodies until procedural maze colliders exist on that client  
+- **World items** use `GrabbableMazeClientPhysics` to freeze rigidbodies until procedural maze colliders exist on that client
   This is presentation / local stabilization only, not gameplay authority. The server still validates pickup and world state.
+
+- **Trigger-driven, `ClientRpc`-only transient state is not late-join-safe.** The trap/death **ragdoll-down** state and the **Clown slam animation** still replicate only via one-shot Rpcs/animator triggers, so a client joining during that window sees the wrong pose until the next transition. (The persistent **Clown grab "held"** pose *is* now late-join-safe via a server-write snapshot on `NetworkPlayerRagdoll` applied in `OnNetworkSpawn` — copy that pattern when promoting the others.)
+
+- **Several `ServerRpc`s validate ownership but not range/cooldown/alive.** Pickup (`NetworkPlayerInventory` uses the client-supplied `worldHint`), melee (`NetworkPlayerCombat` — cooldown/stamina/alive live only in the client's `TryMelee`), `CarnivalTicketBundle` pickup, the four minigame `RequestStartRoundServerRpc`s, and the trap-hit Rpc all trust the client's range check. Acceptable risk for friendly co-op, but the server should re-validate distance/cooldown/alive against its own known player position — never the client hint.
 
 ## Do not invent new sync patterns
 
@@ -168,7 +188,8 @@ Good example:
 - Input or `OnTriggerEnter` directly changing world state without a server path
 - Using animator state or local booleans as gameplay authority
 - Two scripts on the same object both writing open, health, or transform state from different places
-- Relying on **`ClientRpc`** alone for state that joining players must see
+- Relying on **`ClientRpc`** alone (or an animator trigger) for state that joining players must see
+- Validating a `ServerRpc` against a **client-supplied position/hint** instead of the server's own known player transform
 - Adding local randomness for shared objects that are expected to be deterministic
 - Assuming host behavior proves dedicated-server correctness
 - Introducing a second sync pattern for a feature that already has a project-standard pattern
@@ -189,8 +210,8 @@ Before merging a new feature, define all of the following:
 4. **How does a late-joining client learn the correct current state?**  
    Through Netvar current value, authoritative spawn state, or an explicit join snapshot.
 
-5. **Does it work on a dedicated server?**  
-   Do not assume host mode proves correctness.
+5. **Is it host-authoritative without depending on the host being a client?**
+   Gameplay-critical logic runs behind `IsServer` on the host; don't route it through an owner/local-input path that only happens to run because the host is also a client.
 
 6. **Does it reuse an existing project pattern?**  
    If not, explain why a new pattern is necessary.

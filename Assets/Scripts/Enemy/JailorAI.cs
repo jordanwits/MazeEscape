@@ -2299,8 +2299,10 @@ public class JailorAI : MonoBehaviour
 
         if (bestSeen == null)
         {
-            foreach (PlayerHealth candidate in FindObjectsByType<PlayerHealth>(FindObjectsInactive.Exclude))
+            IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
+            for (int i = 0; i < players.Count; i++)
             {
+                PlayerHealth candidate = players[i];
                 if (candidate == null || candidate.IsDead || ShouldJailorIgnorePlayer(candidate))
                     continue;
 
@@ -2328,8 +2330,10 @@ public class JailorAI : MonoBehaviour
 
         if (bestSeen == null)
         {
-            foreach (ZombieAI zombie in FindObjectsByType<ZombieAI>(FindObjectsInactive.Exclude))
+            IReadOnlyList<ZombieAI> zombies = ZombieAIRegistry.All;
+            for (int i = 0; i < zombies.Count; i++)
             {
+                ZombieAI zombie = zombies[i];
                 if (zombie == null || !zombie.IsMakingNoiseForAi)
                     continue;
 

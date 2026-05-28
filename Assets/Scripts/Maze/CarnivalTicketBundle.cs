@@ -65,6 +65,19 @@ public sealed class CarnivalTicketBundle : NetworkBehaviour
         if (playerObj.OwnerClientId != expectedOwnerClientId)
             return;
 
+        // Server-side range gate: without this, any client could claim any ticket bundle on the map from
+        // anywhere ("whoever grabs it first gets the entire payout"). Validate against the server's known
+        // player position — never a client-supplied hint.
+        const float ServerMaxPickupHorizontal = 4f;
+        const float ServerMaxPickupVertical = 3f;
+        Vector3 bundlePos = transform.position;
+        Vector3 playerPos = playerObj.transform.position;
+        Vector3 flatDelta = new Vector3(bundlePos.x - playerPos.x, 0f, bundlePos.z - playerPos.z);
+        if (flatDelta.sqrMagnitude > ServerMaxPickupHorizontal * ServerMaxPickupHorizontal)
+            return;
+        if (Mathf.Abs(bundlePos.y - playerPos.y) > ServerMaxPickupVertical)
+            return;
+
         NetworkPlayerCarnivalTickets wallet = playerObj.GetComponent<NetworkPlayerCarnivalTickets>();
         if (wallet == null)
             return;

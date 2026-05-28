@@ -15,7 +15,11 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     NetworkPlayerAvatar _networkPlayerAvatar;
 
     readonly NetworkVariable<bool> _isDead = new(false);
-    readonly NetworkVariable<float> _currentHealth = new(100f);
+    // The real current health is set by the server in OnNetworkSpawn from PlayerHealth.CurrentHealth,
+    // and late joiners receive that value in the spawn snapshot. Initializing to a hardcoded "100" used
+    // to silently lie about MaxHealth if PlayerHealth.maxHealth was tuned to anything else; use 0 so the
+    // value can only ever come from the authoritative server write.
+    readonly NetworkVariable<float> _currentHealth = new(0f);
 
     MultiplayerProjectSettings _projectSettings;
     Coroutine _respawnRoutine;

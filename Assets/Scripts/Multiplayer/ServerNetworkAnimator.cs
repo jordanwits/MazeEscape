@@ -7,6 +7,7 @@ public class ServerNetworkAnimator : NetworkAnimator
 {
     static FieldInfo s_AnimatorParameterEntriesField;
     static Type s_AnimatorParametersListContainerType;
+    static bool s_ReflectionResolveLogged;
 
     static void CacheReflection()
     {
@@ -18,6 +19,19 @@ public class ServerNetworkAnimator : NetworkAnimator
         s_AnimatorParametersListContainerType = typeof(NetworkAnimator).GetNestedType(
             "AnimatorParametersListContainer",
             BindingFlags.NonPublic);
+
+        // If a future NGO upgrade renames these internals, the silent no-op below would mean
+        // server-authoritative animator parameters quietly stop replicating. Surface the failure once
+        // so the cause is obvious instead of "animations randomly broke after a package bump."
+        if ((s_AnimatorParameterEntriesField == null || s_AnimatorParametersListContainerType == null)
+            && !s_ReflectionResolveLogged)
+        {
+            s_ReflectionResolveLogged = true;
+            Debug.LogError(
+                "[ServerNetworkAnimator] Could not resolve NetworkAnimator internals via reflection " +
+                "(AnimatorParameterEntries field or AnimatorParametersListContainer nested type). " +
+                "An NGO upgrade likely renamed them — update this class's reflection lookups.");
+        }
     }
 
     static void EnsureParameterListContainerExists(NetworkAnimator target)

@@ -85,6 +85,11 @@ public class ProximityVoiceSession : MonoBehaviour
         NetworkManager nm = NetworkManager.Singleton;
         if (nm == null || !nm.IsServer)
             return;
+        // Sender authentication: only relay frames from clients that actually own a registered voice
+        // object on this server. Without this, the host would fan out arbitrary bytes from any
+        // connected client (or a malicious one) to every peer.
+        if (!VoiceClientRegistry.TryGet(senderId, out _))
+            return;
         reader.ReadValueSafe(out ushort seq);
         reader.ReadValueSafe(out ushort count);
         if (count == 0 || count > NetworkPlayerVoice.FrameSamples)

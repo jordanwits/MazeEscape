@@ -156,6 +156,18 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
         if (po.OwnerClientId != rpcParams.Receive.SenderClientId)
             return;
 
+        // Server-side range gate against the booth's own transform so a client can't start a round from
+        // across the map. Bounds are generous to cover the start button on any normally-positioned booth.
+        const float ServerMaxStartHorizontal = 8f;
+        const float ServerMaxStartVertical = 3f;
+        Vector3 here = transform.position;
+        Vector3 there = po.transform.position;
+        Vector3 flat = new Vector3(there.x - here.x, 0f, there.z - here.z);
+        if (flat.sqrMagnitude > ServerMaxStartHorizontal * ServerMaxStartHorizontal)
+            return;
+        if (Mathf.Abs(there.y - here.y) > ServerMaxStartVertical)
+            return;
+
         ServerStartRound(startingPlayerNetObjId);
     }
 

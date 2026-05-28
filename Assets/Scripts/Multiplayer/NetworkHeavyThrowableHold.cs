@@ -572,7 +572,23 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
     void FixedUpdate()
     {
-        if (!IsServer || !_serverWatchingForSettle || _networkObject == null || !_networkObject.IsSpawned)
+        if (!IsServer || _networkObject == null || !_networkObject.IsSpawned)
+            return;
+
+        // Safety re-arm: any released (unheld) body that is still owned by a client must get reclaimed
+        // by the server, even if the settle watch was never armed or got cleared by an ownership change
+        // we didn't initiate (e.g. NGO reassigning ownership after the thrower disconnected). Without
+        // this, such a body could stay client-owned indefinitely, leaving bumps/idle state non-authoritative.
+        if (!_serverWatchingForSettle
+            && _holderNetworkObjectId.Value == 0UL
+            && !_networkObject.IsOwnedByServer)
+        {
+            _serverWatchingForSettle = true;
+            _serverSettleAccumulator = 0f;
+            _hasSpeedSample = false;
+        }
+
+        if (!_serverWatchingForSettle)
             return;
         if (_holderNetworkObjectId.Value != 0UL)
         {

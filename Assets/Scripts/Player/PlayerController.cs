@@ -132,6 +132,9 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] float meleeHitDelay = 0.25f;
     [Tooltip("Cooldown between melee attacks in seconds.")]
     [SerializeField] float meleeCooldown = 0.8f;
+
+    /// <summary>Exposed so <see cref="NetworkPlayerCombat"/> can enforce the same cooldown server-side.</summary>
+    public float MeleeCooldown => meleeCooldown;
     [Tooltip("Trigger parameter name in Animator for melee attack.")]
     [SerializeField] string meleeTrigger = "RightHook";
     [SerializeField] AudioClip meleeSwooshClip;

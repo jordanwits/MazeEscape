@@ -206,6 +206,12 @@ public class ZombieAI : MonoBehaviour
     void OnEnable()
     {
         TrySnapToNavMesh();
+        ZombieAIRegistry.Register(this);
+    }
+
+    void OnDisable()
+    {
+        ZombieAIRegistry.Unregister(this);
     }
 
 #if UNITY_EDITOR
@@ -747,8 +753,8 @@ public class ZombieAI : MonoBehaviour
 
         if (closestTarget == null)
         {
-            PlayerHealth[] players = FindObjectsByType<PlayerHealth>(FindObjectsInactive.Exclude);
-            for (int i = 0; i < players.Length; i++)
+            IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
+            for (int i = 0; i < players.Count; i++)
             {
                 PlayerHealth candidate = players[i];
                 if (candidate == null || candidate.IsDead || IsPlayerCarriedByJailor(candidate))

@@ -93,6 +93,7 @@ public class MultiplayerSessionController : MonoBehaviour
         EnsureNetworkConfig(_unityTransport);
         ConfigureDirectClientTransport(defaultAddress, defaultPort);
         ConfigurePlayerPrefab();
+        EnsureConnectionApprovalCallback();
     }
 
     void OnEnable()
@@ -449,8 +450,69 @@ public class MultiplayerSessionController : MonoBehaviour
 
         _networkManager.NetworkConfig.EnableSceneManagement = true;
 
+        // Connection approval: clients send the build version in NetworkConfig.ConnectionData; the host
+        // rejects mismatched versions and joins past MaxPlayers in OnConnectionApproval.
+        _networkManager.NetworkConfig.ConnectionApproval = true;
+        ApplyConnectionData();
+
         if (transport != null)
             _networkManager.NetworkConfig.NetworkTransport = transport;
+    }
+
+    void EnsureProjectSettings()
+    {
+        if (_projectSettings == null)
+            _projectSettings = Resources.Load<MultiplayerProjectSettings>("MultiplayerProjectSettings");
+    }
+
+    void ApplyConnectionData()
+    {
+        if (_networkManager == null || _networkManager.NetworkConfig == null)
+            return;
+        EnsureProjectSettings();
+        string version = _projectSettings != null ? _projectSettings.BuildVersion : Application.version;
+        _networkManager.NetworkConfig.ConnectionData = System.Text.Encoding.UTF8.GetBytes(version ?? string.Empty);
+    }
+
+    void EnsureConnectionApprovalCallback()
+    {
+        if (_networkManager == null)
+            return;
+        _networkManager.ConnectionApprovalCallback = OnConnectionApproval;
+    }
+
+    void OnConnectionApproval(
+        NetworkManager.ConnectionApprovalRequest request,
+        NetworkManager.ConnectionApprovalResponse response)
+    {
+        // Player objects are spawned manually by this controller (see TrySpawnOrMovePlayerToLevelStart);
+        // NGO must not auto-spawn one here.
+        response.CreatePlayerObject = false;
+
+        EnsureProjectSettings();
+        string expectedVersion = _projectSettings != null ? _projectSettings.BuildVersion : Application.version;
+        string clientVersion = (request.Payload != null && request.Payload.Length > 0)
+            ? System.Text.Encoding.UTF8.GetString(request.Payload)
+            : string.Empty;
+
+        if (!string.Equals(clientVersion, expectedVersion, System.StringComparison.Ordinal))
+        {
+            response.Approved = false;
+            response.Reason = $"Build version mismatch (server: {expectedVersion}, client: {clientVersion}).";
+            return;
+        }
+
+        int max = _projectSettings != null ? Mathf.Max(1, _projectSettings.MaxPlayers) : 4;
+        // The connecting client is not yet in ConnectedClientsIds — so count >= max means this would be
+        // the (max+1)'th and must be rejected. The host's own loopback approval runs while count == 0.
+        if (_networkManager != null && _networkManager.ConnectedClientsIds.Count >= max)
+        {
+            response.Approved = false;
+            response.Reason = $"Lobby is full ({max}/{max}).";
+            return;
+        }
+
+        response.Approved = true;
     }
 
     void HandleServerStarted()

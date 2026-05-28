@@ -26,6 +26,34 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     bool _serverRagdollActive;
     bool _lastOwnerWasRagdolled;
 
+    /// <summary>
+    /// Late-join snapshot of the persistent "held by an enemy" pose (the Clown grab). The grab is driven on
+    /// already-connected clients by the one-shot <see cref="StartHeldRagdollClientRpc"/>; a client that joins
+    /// mid-grab never receives that Rpc, so without a replicated value it would draw the victim standing
+    /// upright. Server-write only; observers rebuild the pose from it on spawn (see <see cref="OnNetworkSpawn"/>).
+    /// </summary>
+    public struct HeldByEnemyState : INetworkSerializeByMemcpy, System.IEquatable<HeldByEnemyState>
+    {
+        public byte Held;          // 0 = not held, 1 = held
+        public ulong EnemyNetObjId;
+        public int GrabBoneIndex;
+        public Vector3 LocalPos;
+        public Vector3 LocalEuler;
+
+        public bool Equals(HeldByEnemyState o) =>
+            Held == o.Held && EnemyNetObjId == o.EnemyNetObjId && GrabBoneIndex == o.GrabBoneIndex
+            && LocalPos == o.LocalPos && LocalEuler == o.LocalEuler;
+        public override bool Equals(object o) => o is HeldByEnemyState s && Equals(s);
+        public override int GetHashCode() => (int)(Held ^ EnemyNetObjId) ^ GrabBoneIndex;
+    }
+
+    readonly NetworkVariable<HeldByEnemyState> _heldByEnemy = new NetworkVariable<HeldByEnemyState>(
+        default,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    Coroutine _heldReconstructRoutine;
+
     void Awake()
     {
         if (ragdoll == null)
@@ -37,6 +65,50 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         _lastOwnerWasRagdolled = ragdoll != null && ragdoll.IsRagdolled;
+
+        // Spawn-time state rule: a client that joins while this player is mid-grab must rebuild the held
+        // pose from the replicated snapshot (the one-shot grab Rpc already played for everyone who was
+        // connected at grab time). We do NOT subscribe to OnValueChanged: connected clients keep using the
+        // Rpc path, so this can never double-apply. Only observers reconstruct — the server is authoritative
+        // and the owner runs its own ragdoll via the Rpc it received while connected.
+        if (!IsServer && !IsOwner && _heldByEnemy.Value.Held != 0)
+            _heldReconstructRoutine = StartCoroutine(ReconstructHeldOnSpawnRoutine(_heldByEnemy.Value));
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        if (_heldReconstructRoutine != null)
+        {
+            StopCoroutine(_heldReconstructRoutine);
+            _heldReconstructRoutine = null;
+        }
+    }
+
+    // The enemy NetworkObject and its rig may resolve a few frames after this player spawns on a late
+    // joiner, so retry briefly. Bails out (leaving the player standing — i.e. today's behavior, no worse)
+    // if the enemy never resolves or the grab ends before we apply it.
+    System.Collections.IEnumerator ReconstructHeldOnSpawnRoutine(HeldByEnemyState state)
+    {
+        const int maxFrames = 180; // ~3s at 60 fps
+        for (int i = 0; i < maxFrames; i++)
+        {
+            if (!IsSpawned || IsOwner || _heldByEnemy.Value.Held == 0 || ragdoll == null)
+            {
+                _heldReconstructRoutine = null;
+                yield break;
+            }
+
+            Transform grabBone = ResolveEnemyGrabBone(state.EnemyNetObjId, state.GrabBoneIndex);
+            if (grabBone != null)
+            {
+                ragdoll.BeginHeldByPoint(grabBone, state.LocalPos, Quaternion.Euler(state.LocalEuler));
+                _heldReconstructRoutine = null;
+                yield break;
+            }
+
+            yield return null;
+        }
+        _heldReconstructRoutine = null;
     }
 
     void Update()
@@ -75,6 +147,18 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
     public void RequestTrapHitServerRpc(Vector3 worldForce, Vector3 worldForcePosition, float damageAmount, byte forceMode)
     {
+        // The damage and force here are client-supplied. The existing per-client cooldown in
+        // RequestTrapHitFromServer limits the *rate*, but a malicious client could still send arbitrary
+        // values; clamp them to safe bounds (well above any legitimate trap config) so a hit never deals
+        // more than a real trap could.
+        const float ServerMaxTrapDamage = 50f;
+        const float ServerMaxTrapForce = 50f;
+        if (damageAmount < 0f) damageAmount = 0f;
+        if (damageAmount > ServerMaxTrapDamage) damageAmount = ServerMaxTrapDamage;
+        float maxSqr = ServerMaxTrapForce * ServerMaxTrapForce;
+        if (worldForce.sqrMagnitude > maxSqr)
+            worldForce = worldForce.normalized * ServerMaxTrapForce;
+
         RequestTrapHitFromServer(worldForce, worldForcePosition, damageAmount, (ForceMode)forceMode);
     }
 
@@ -112,6 +196,14 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             return;
 
         _serverRagdollActive = true;
+        _heldByEnemy.Value = new HeldByEnemyState
+        {
+            Held = 1,
+            EnemyNetObjId = enemyNetworkObjectId,
+            GrabBoneIndex = grabBoneIndex,
+            LocalPos = localPos,
+            LocalEuler = localEuler,
+        };
         StartHeldRagdollClientRpc(enemyNetworkObjectId, grabBoneIndex, localPos, localEuler);
     }
 
@@ -130,6 +222,11 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             playerHealth.TakeDamage(damageAmount);
             survived = !playerHealth.IsDead;
         }
+
+        // The rigid held pose is over (it becomes a transient slam ragdoll handled by the Rpc path), so
+        // clear the late-join snapshot. A client joining after this sees the player standing/recovering,
+        // not pinned to the enemy.
+        _heldByEnemy.Value = default;
 
         // When the slam kills, the death flow owns recovery (stays down until respawn); don't auto-stand.
         ReleaseHeldRagdollClientRpc(worldForce, worldForcePosition, forceMode, survived);
@@ -197,6 +294,8 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             return;
 
         _serverRagdollActive = true;
+        // A full ragdoll (trap/death) supersedes any rigid held pose; clear the held snapshot.
+        _heldByEnemy.Value = default;
         StartRagdollClientRpc(worldForce, worldForcePosition, (byte)forceMode, allowAutoRecovery);
     }
 
@@ -212,6 +311,11 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
     public void ForceExitRagdollFromServer()
     {
+        // Clear the held snapshot even if no server ragdoll was active (e.g. respawn while held): a
+        // respawned player must never reconstruct as grabbed on a late joiner.
+        if (IsServer && _heldByEnemy.Value.Held != 0)
+            _heldByEnemy.Value = default;
+
         if (!IsServer || !_serverRagdollActive)
             return;
 

@@ -117,12 +117,11 @@ public class MultiplayerBootstrap : MonoBehaviour
     /// </summary>
     static void EnsureNestedPrefabHashOverrides(NetworkPrefabsList defaults)
     {
-        GameObject basketballGame = FindPrefabByBaseHash(defaults, baseHash: 4132048640u);
-        if (basketballGame == null)
-            return;
-
-        EnsureHashOverrideEntry(defaults, sourceHash: 2806273795u, targetPrefab: basketballGame);
-        EnsureHashOverrideEntry(defaults, sourceHash: 1843502869u, targetPrefab: basketballGame);
+        // Intentionally empty. The previous BasketballGame nested-override hashes (2806273795 /
+        // 1843502869) no longer exist anywhere in the project (verified by grepping every .prefab
+        // and .unity); leaving them in would only hide a real regression. If nested NetworkObject
+        // hashes ever need mapping again, add a new EnsureHashOverrideEntry call here. See
+        // [[ngo-prefab-hash-gotcha]] for why the runtime override is necessary in the first place.
     }
 
     static GameObject FindPrefabByBaseHash(NetworkPrefabsList list, uint baseHash)

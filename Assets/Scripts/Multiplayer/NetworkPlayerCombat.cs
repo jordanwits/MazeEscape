@@ -10,11 +10,16 @@ public class NetworkPlayerCombat : NetworkBehaviour
     static readonly List<ulong> s_MeleeSwooshObserverClientIds = new List<ulong>(16);
 
     [SerializeField] PlayerController playerController;
+    [SerializeField] PlayerHealth playerHealth;
+
+    float _serverNextMeleeTime;
 
     void Awake()
     {
         if (playerController == null)
             playerController = GetComponent<PlayerController>();
+        if (playerHealth == null)
+            playerHealth = GetComponent<PlayerHealth>();
     }
 
     public void RequestMeleeAttack()
@@ -39,6 +44,17 @@ public class NetworkPlayerCombat : NetworkBehaviour
     {
         if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
             return;
+
+        // Server-side cooldown + alive gate. The client's TryMelee already gates these for fairness, but
+        // those checks are bypassable; without enforcing them here, a client could spam melee or attack
+        // while dead. Cooldown uses the same value the client uses so legitimate attacks always pass.
+        if (playerHealth != null && playerHealth.IsDead)
+            return;
+        float now = Time.time;
+        if (now < _serverNextMeleeTime)
+            return;
+        float cooldown = playerController != null ? playerController.MeleeCooldown : 0.8f;
+        _serverNextMeleeTime = now + cooldown;
 
         ServerApplyMeleeWithObserverSwoosh();
     }

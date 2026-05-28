@@ -143,9 +143,25 @@ public class NetworkPlayerInventory : NetworkBehaviour
 
     void SetSlotFlashlightBatteryNormalized(int index, float value)
     {
-        if (index == 0) _slot0FlashlightBattery.Value = value;
-        else if (index == 1) _slot1FlashlightBattery.Value = value;
-        else if (index == 2) _slot2FlashlightBattery.Value = value;
+        // Quantize to 1% steps so a continuously-draining battery only replicates ~100 deltas over its
+        // whole life instead of one per FixedUpdate per slot per player. The HUD reads the same value
+        // and renders at integer-percent precision anyway, so this is invisible to the player.
+        float quantized = Mathf.Round(Mathf.Clamp01(value) * 100f) / 100f;
+        if (index == 0)
+        {
+            if (!Mathf.Approximately(_slot0FlashlightBattery.Value, quantized))
+                _slot0FlashlightBattery.Value = quantized;
+        }
+        else if (index == 1)
+        {
+            if (!Mathf.Approximately(_slot1FlashlightBattery.Value, quantized))
+                _slot1FlashlightBattery.Value = quantized;
+        }
+        else if (index == 2)
+        {
+            if (!Mathf.Approximately(_slot2FlashlightBattery.Value, quantized))
+                _slot2FlashlightBattery.Value = quantized;
+        }
     }
 
     int GetFirstEmptySlot()
@@ -349,6 +365,20 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
 
         if (item is HeavyThrowableHoldItem)
+            return;
+
+        // Server-side range gate. The pickup hint above is client-supplied (it's the item world position
+        // the client claims to be next to), so range must be validated against the server's known player
+        // transform vs the resolved item's transform, never the hint. Generous bounds cover any legitimate
+        // walk-up pickup; anything beyond is a desync or a cheat.
+        const float ServerMaxPickupHorizontal = 5f;
+        const float ServerMaxPickupVertical = 3f;
+        Vector3 playerPos = transform.position;
+        Vector3 itemPos = item.transform.position;
+        Vector3 flatDelta = new Vector3(itemPos.x - playerPos.x, 0f, itemPos.z - playerPos.z);
+        if (flatDelta.sqrMagnitude > ServerMaxPickupHorizontal * ServerMaxPickupHorizontal)
+            return;
+        if (Mathf.Abs(itemPos.y - playerPos.y) > ServerMaxPickupVertical)
             return;
 
         if (item is FlashlightItem f0)

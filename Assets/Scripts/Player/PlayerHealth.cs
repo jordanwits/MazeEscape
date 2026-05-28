@@ -44,6 +44,16 @@ public class PlayerHealth : MonoBehaviour
         UpdateHealthBar();
     }
 
+    void OnEnable()
+    {
+        PlayerHealthRegistry.Register(this);
+    }
+
+    void OnDisable()
+    {
+        PlayerHealthRegistry.Unregister(this);
+    }
+
     void Update()
     {
         if (IsDead)
