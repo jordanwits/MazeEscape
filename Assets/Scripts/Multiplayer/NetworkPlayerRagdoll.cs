@@ -15,8 +15,13 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
     // Owner samples its authoritative ragdoll pose at this cadence and broadcasts it; observers apply it as a
     // kinematic puppet. 20 Hz is fine-grained enough that the body looks continuous even during fast tumbles
-    // and keeps bandwidth at ~4 KB/s per ragdolling player (~200 B / snapshot for hips pose + 11 bone rotations).
+    // and keeps bandwidth at ~6 KB/s per ragdolling player (~300 B / snapshot for 11 bones × pos+rot).
     const float RagdollPoseSyncIntervalSeconds = 0.05f;
+    // Observers interpolate between received pose snapshots over this window so motion looks smooth at render
+    // rate (60+ fps) instead of stuttering at the 20 Hz send cadence. Matching the send interval means
+    // observers reach the latest sample just as the next one arrives; if a sample is delayed by jitter, the
+    // body holds at the last target briefly.
+    const float RagdollPoseInterpDuration = 0.05f;
 
     // Grab bone the enemy holds this player by, resolved by Mixamo bone name on every client so the hips
     // pin (see PlayerRagdollController.BeginHeldByPoint) tracks a transform all clients already agree on.
@@ -89,6 +94,15 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     Quaternion[] _ownerRotBuffer;
     float _nextPoseSyncTime;
 
+    Vector3[] _observerPrevPos;
+    Quaternion[] _observerPrevRot;
+    Vector3[] _observerTargetPos;
+    Quaternion[] _observerTargetRot;
+    Vector3[] _observerLerpPosBuffer;
+    Quaternion[] _observerLerpRotBuffer;
+    float _observerInterpStart;
+    bool _observerHasInterpData;
+
     void Awake()
     {
         if (ragdoll == null)
@@ -120,7 +134,10 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         // tick from the owner (within ~50 ms) populates the bones in the correct world pose. Owner is still
         // connected and runs recovery; the server fires StopRagdollClientRpc to clear everyone when it lands.
         if (!IsServer && !IsOwner && _transientRagdoll.Value.Active != 0 && ragdoll != null)
+        {
             ragdoll.BeginObserverRagdoll();
+            _observerHasInterpData = false;
+        }
     }
 
     public override void OnNetworkDespawn()
@@ -253,6 +270,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         else
         {
             ragdoll.BeginObserverRagdoll();
+            _observerHasInterpData = false;
         }
     }
 
@@ -359,6 +377,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         else
         {
             ragdoll.BeginObserverRagdoll();
+            _observerHasInterpData = false;
             // Snap observers off the old enemy-hand position right away. The next pose-stream tick (~RPC
             // latency, often <50ms) will follow with the owner's full physics-integrated pose, but this gets
             // the body to roughly the right place immediately so there's no visible "stuck on the Clown's hand"
@@ -470,9 +489,17 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
     void Update()
     {
-        if (!IsSpawned || !IsOwner || ragdoll == null)
+        if (!IsSpawned || ragdoll == null)
             return;
 
+        if (IsOwner)
+            OwnerSampleAndBroadcastPose();
+        else
+            ObserverInterpolatePose();
+    }
+
+    void OwnerSampleAndBroadcastPose()
+    {
         // Stream the authoritative ragdoll pose to observers while we're either flailing (full ragdoll) or
         // being swung around in the rigid Clown carry. The carry was already deterministic across clients
         // (everyone pins to the same enemy bone), but funneling it through the same stream avoids relying on
@@ -497,6 +524,31 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         BroadcastRagdollPoseServerRpc(_ownerPosBuffer, _ownerRotBuffer);
     }
 
+    void ObserverInterpolatePose()
+    {
+        // Render-rate interpolation between the last two received pose snapshots. Without this, observers see
+        // the body update only at the 20 Hz send rate, which looks stuttery against a 60+ fps render rate.
+        if (!_observerHasInterpData || !ragdoll.IsRagdolled)
+            return;
+        if (_observerTargetPos == null || _observerTargetPos.Length == 0)
+            return;
+
+        int count = _observerTargetPos.Length;
+        if (_observerLerpPosBuffer == null || _observerLerpPosBuffer.Length != count)
+            _observerLerpPosBuffer = new Vector3[count];
+        if (_observerLerpRotBuffer == null || _observerLerpRotBuffer.Length != count)
+            _observerLerpRotBuffer = new Quaternion[count];
+
+        float t = Mathf.Clamp01((Time.time - _observerInterpStart) / RagdollPoseInterpDuration);
+        for (int i = 0; i < count; i++)
+        {
+            _observerLerpPosBuffer[i] = Vector3.Lerp(_observerPrevPos[i], _observerTargetPos[i], t);
+            _observerLerpRotBuffer[i] = Quaternion.Slerp(_observerPrevRot[i], _observerTargetRot[i], t);
+        }
+
+        ragdoll.ApplyObserverRagdollPose(_observerLerpPosBuffer, _observerLerpRotBuffer);
+    }
+
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
     void BroadcastRagdollPoseServerRpc(Vector3[] bonePositions, Quaternion[] boneRotations)
     {
@@ -512,9 +564,50 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     [ClientRpc]
     void ApplyRagdollPoseClientRpc(Vector3[] bonePositions, Quaternion[] boneRotations)
     {
-        if (IsOwner || ragdoll == null)
+        if (IsOwner || ragdoll == null || bonePositions == null || boneRotations == null)
             return;
 
-        ragdoll.ApplyObserverRagdollPose(bonePositions, boneRotations);
+        int count = bonePositions.Length;
+        if (count == 0 || boneRotations.Length != count)
+            return;
+
+        bool needAlloc = !_observerHasInterpData
+                         || _observerPrevPos == null
+                         || _observerPrevPos.Length != count;
+
+        if (needAlloc)
+        {
+            _observerPrevPos = new Vector3[count];
+            _observerPrevRot = new Quaternion[count];
+            _observerTargetPos = new Vector3[count];
+            _observerTargetRot = new Quaternion[count];
+
+            // First snapshot for this ragdoll: prev == target, so the very next frame applies the sample with
+            // no interp lurch.
+            for (int i = 0; i < count; i++)
+            {
+                _observerPrevPos[i] = bonePositions[i];
+                _observerPrevRot[i] = boneRotations[i];
+                _observerTargetPos[i] = bonePositions[i];
+                _observerTargetRot[i] = boneRotations[i];
+            }
+        }
+        else
+        {
+            // Anchor prev at the pose we're rendering RIGHT NOW (the in-flight lerp value), then aim the next
+            // interp at the new sample. Without this, a sample arriving before the prior interp completed
+            // would discontinuously snap back to the old prev.
+            float t = Mathf.Clamp01((Time.time - _observerInterpStart) / RagdollPoseInterpDuration);
+            for (int i = 0; i < count; i++)
+            {
+                _observerPrevPos[i] = Vector3.Lerp(_observerPrevPos[i], _observerTargetPos[i], t);
+                _observerPrevRot[i] = Quaternion.Slerp(_observerPrevRot[i], _observerTargetRot[i], t);
+                _observerTargetPos[i] = bonePositions[i];
+                _observerTargetRot[i] = boneRotations[i];
+            }
+        }
+
+        _observerInterpStart = Time.time;
+        _observerHasInterpData = true;
     }
 }
