@@ -24,7 +24,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     [SerializeField] PlayerHealth playerHealth;
 
     bool _serverRagdollActive;
-    bool _lastOwnerWasRagdolled;
+    bool _subscribedToRecoveryStarted;
 
     /// <summary>
     /// Late-join snapshot of the persistent "held by an enemy" pose (the Clown grab). The grab is driven on
@@ -89,7 +89,11 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        _lastOwnerWasRagdolled = ragdoll != null && ragdoll.IsRagdolled;
+        if (ragdoll != null && !_subscribedToRecoveryStarted)
+        {
+            ragdoll.RecoveryStarted += OnLocalRagdollRecoveryStarted;
+            _subscribedToRecoveryStarted = true;
+        }
 
         // Spawn-time state rule: a client that joins while this player is mid-grab must rebuild the held
         // pose from the replicated snapshot (the one-shot grab Rpc already played for everyone who was
@@ -111,6 +115,12 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
     public override void OnNetworkDespawn()
     {
+        if (_subscribedToRecoveryStarted && ragdoll != null)
+        {
+            ragdoll.RecoveryStarted -= OnLocalRagdollRecoveryStarted;
+            _subscribedToRecoveryStarted = false;
+        }
+
         if (_heldReconstructRoutine != null)
         {
             StopCoroutine(_heldReconstructRoutine);
@@ -121,6 +131,17 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         // so a long-lived host doesn't leak one slot per join across a multi-hour session.
         if (IsServer)
             s_TrapRagdollNextAllowedTime.Remove(OwnerClientId);
+    }
+
+    void OnLocalRagdollRecoveryStarted(Vector3 rootPosition, Quaternion rootRotation, bool onBack)
+    {
+        // Owner-only: replicate the authoritative recovery pose to observers. Each observer's local ragdoll
+        // physics has settled in a slightly different spot, so without this they call DeactivateRagdoll using
+        // their own (drifted) hips and stand up off-position until OwnerNetworkTransform catches up — that's
+        // the visible "snap to correct position when they start moving again" symptom.
+        if (!IsSpawned || !IsOwner)
+            return;
+        NotifyRecoveryStartedServerRpc(rootPosition, rootRotation, onBack);
     }
 
     // The enemy NetworkObject and its rig may resolve a few frames after this player spawns on a late
@@ -148,18 +169,6 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             yield return null;
         }
         _heldReconstructRoutine = null;
-    }
-
-    void Update()
-    {
-        if (!IsSpawned || !IsOwner || ragdoll == null)
-            return;
-
-        bool isRagdolledNow = ragdoll.IsRagdolled;
-        if (_lastOwnerWasRagdolled && !isRagdolledNow)
-            NotifyRecoveryStartedServerRpc();
-
-        _lastOwnerWasRagdolled = isRagdolledNow;
     }
 
     /// <summary>
@@ -355,7 +364,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
-    void NotifyRecoveryStartedServerRpc()
+    void NotifyRecoveryStartedServerRpc(Vector3 rootPosition, Quaternion rootRotation, bool onBack)
     {
         if (!_serverRagdollActive)
             return;
@@ -365,7 +374,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         // already-finished trap/death pose.
         if (_transientRagdoll.Value.Active != 0)
             _transientRagdoll.Value = default;
-        StopRagdollClientRpc(playRecoveryAnimation: true);
+        StopRagdollClientRpc(playRecoveryAnimation: true, rootPosition, rootRotation, onBack);
     }
 
     public void ForceExitRagdollFromServer()
@@ -383,18 +392,28 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             return;
 
         _serverRagdollActive = false;
-        StopRagdollClientRpc(playRecoveryAnimation: false);
+        // Forced exit doesn't play a get-up animation, so the authoritative pose is irrelevant — observers
+        // just kill ragdoll and let OwnerNetworkTransform stream whatever new position the respawn applies.
+        StopRagdollClientRpc(playRecoveryAnimation: false, Vector3.zero, Quaternion.identity, false);
     }
 
     [ClientRpc]
-    void StopRagdollClientRpc(bool playRecoveryAnimation)
+    void StopRagdollClientRpc(bool playRecoveryAnimation, Vector3 rootPosition, Quaternion rootRotation, bool onBack)
     {
         if (ragdoll == null)
             return;
 
-        if (playRecoveryAnimation)
-            ragdoll.DeactivateRagdoll();
-        else
+        if (!playRecoveryAnimation)
+        {
             ragdoll.ForceExitRagdollWithoutGroundSnap();
+            return;
+        }
+
+        // Owner already ran DeactivateRagdoll locally — that's what produced this RPC. Don't re-run it; the
+        // get-up coroutine is already in flight and DeactivateRagdoll would no-op anyway (IsRagdolled false).
+        if (IsOwner)
+            return;
+
+        ragdoll.DeactivateRagdollAtAuthoritativeRoot(rootPosition, rootRotation, onBack);
     }
 }

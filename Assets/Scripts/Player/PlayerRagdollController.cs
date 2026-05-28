@@ -80,6 +80,16 @@ public class PlayerRagdollController : MonoBehaviour
     public bool IsRagdolled { get; private set; }
     public bool IsGettingUp { get; private set; }
 
+    /// <summary>
+    /// Fired by the local recovery path (auto land-up or auto-recover after delay) right after the root has
+    /// been snapped to the standing pose. The networking layer subscribes on the owner so it can replicate the
+    /// owner's authoritative recovery pose to observers — without it, each observer's local ragdoll physics
+    /// settles in a slightly different spot and the body stands up off-position until OwnerNetworkTransform
+    /// catches up and snaps them. NOT fired by <see cref="DeactivateRagdollAtAuthoritativeRoot"/> (that path is
+    /// the observer-side application of an already-replicated pose).
+    /// </summary>
+    public event System.Action<Vector3, Quaternion, bool> RecoveryStarted;
+
     // "Held by external point" mode: the hips Rigidbody is pinned kinematically to a target transform
     // (e.g. an enemy's hand) each FixedUpdate. During the hold the body is held RIGID (animator off,
     // bodies kinematic) so it doesn't flail while being swung; full ragdoll begins at ReleaseFromHeld.
@@ -482,6 +492,46 @@ public class PlayerRagdollController : MonoBehaviour
         if (useGetUpAnimation && animator != null)
         {
             SnapToGroundForGetUp();
+            RecoveryStarted?.Invoke(transform.position, transform.rotation, onBack);
+            _getUpRoutine = StartCoroutine(GetUpAnimationRoutine(onBack));
+            return;
+        }
+
+        SnapToStandingHeight();
+        RecoveryStarted?.Invoke(transform.position, transform.rotation, onBack);
+        FinishStandUp();
+    }
+
+    /// <summary>
+    /// Observer-side recovery: stand the body up at the owner's authoritative root pose and play the get-up
+    /// the owner chose. Bypasses the local-hips snap because each observer's ragdoll physics has drifted to a
+    /// different settle position. After this call the get-up animation drives bones relative to
+    /// <c>transform.position</c>, so forcing the root pose makes the visual recovery match the owner's.
+    /// </summary>
+    public void DeactivateRagdollAtAuthoritativeRoot(Vector3 rootPosition, Quaternion rootRotation, bool onBack)
+    {
+        if (!IsRagdolled)
+            return;
+
+        ClearHeldState();
+        StopRecoveryCoroutines();
+        ResolveHips();
+
+        SetRagdollPhysicsActive(false);
+
+        transform.SetPositionAndRotation(rootPosition, rootRotation);
+        // Move the hips RB to match the root so the snap raycast inside GetUpAnimationRoutine samples from the
+        // authoritative X/Z. Without this, the routine would still raycast from observer-local hips and place
+        // the stand-up at the wrong patch of floor. 0.9 is a rough hip height — exact value doesn't matter
+        // because the raycast just needs to start above ground at the right X/Z.
+        if (hipsRigidbody != null)
+        {
+            hipsRigidbody.position = rootPosition + Vector3.up * 0.9f;
+            hipsRigidbody.rotation = rootRotation;
+        }
+
+        if (useGetUpAnimation && animator != null)
+        {
             _getUpRoutine = StartCoroutine(GetUpAnimationRoutine(onBack));
             return;
         }
