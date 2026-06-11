@@ -18,6 +18,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     [SerializeField] Camera[] localOnlyCameras;
     [SerializeField] AudioListener[] localOnlyAudioListeners;
     [SerializeField] Renderer[] avatarRenderers;
+    [Tooltip("Hidden from the owner's first-person view via ShadowsOnly (e.g. the head, so the camera never shows its interior). Remote players still see these normally; shadows stay correct locally.")]
+    [SerializeField] Renderer[] localViewShadowOnlyRenderers;
     [SerializeField] NetworkPlayerInventory playerInventory;
 
     [Header("Flashlight replication")]
@@ -593,6 +595,17 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             {
                 if (audioListener != null)
                     audioListener.enabled = isLocalOwner;
+            }
+        }
+
+        if (localViewShadowOnlyRenderers != null)
+        {
+            foreach (Renderer rendererComponent in localViewShadowOnlyRenderers)
+            {
+                if (rendererComponent != null)
+                    rendererComponent.shadowCastingMode = isLocalOwner
+                        ? UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly
+                        : UnityEngine.Rendering.ShadowCastingMode.On;
             }
         }
     }

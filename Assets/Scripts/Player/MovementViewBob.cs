@@ -67,7 +67,14 @@ public class MovementViewBob : MonoBehaviour
         float amp = Mathf.Lerp(walkBobAmplitude, runBobAmplitude, runBlend);
 
         float bob = (1f - Mathf.Cos(angle)) * 0.5f * amp;
-        hips.localPosition += Vector3.up * bob;
+        // The bob must lift the hips along WORLD up. localPosition is expressed in the parent bone's space,
+        // which is not world-aligned on every rig (UE-style skeletons rotate the root -90° X), so adding a raw
+        // Vector3.up would shove the hips sideways/backward and slosh in phase with the step cadence. Converting
+        // world up into the parent's local space keeps the bob vertical on any rig (no-op when the parent is identity).
+        Vector3 worldUpInParentSpace = hips.parent != null
+            ? hips.parent.InverseTransformVector(Vector3.up)
+            : Vector3.up;
+        hips.localPosition += worldUpInParentSpace * bob;
     }
 
     bool IsPlayingUpperBodyMeleeState()
