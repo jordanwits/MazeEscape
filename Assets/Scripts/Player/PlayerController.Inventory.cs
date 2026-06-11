@@ -481,7 +481,7 @@ public partial class PlayerController
 
     void HandleInventoryScrollInUpdate()
     {
-        if (MultiplayerMenuOverlay.BlocksGameplayInput)
+        if (PauseMenuController.BlocksGameplayInput)
             return;
         if (IsUsingNetworkedInventory
             && _networkPlayerAvatar != null

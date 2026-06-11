@@ -16,16 +16,19 @@ public enum MultiplayerTransportMode
 
 public readonly struct LobbyPlayerState
 {
-    public LobbyPlayerState(ulong clientId, bool isReady, bool isHost)
+    public LobbyPlayerState(ulong clientId, bool isReady, bool isHost, int characterIndex)
     {
         ClientId = clientId;
         IsReady = isReady;
         IsHost = isHost;
+        CharacterIndex = characterIndex;
     }
 
     public ulong ClientId { get; }
     public bool IsReady { get; }
     public bool IsHost { get; }
+    /// <summary>Index into <see cref="MultiplayerProjectSettings"/> lobby characters; -1 = none.</summary>
+    public int CharacterIndex { get; }
 }
 
 [DisallowMultipleComponent]
@@ -36,7 +39,9 @@ public class MultiplayerSessionController : MonoBehaviour
     const string HostLoopbackAddress = "127.0.0.1";
     const string HostListenAddress = "0.0.0.0";
     const string LobbyReadyRequestMessageName = "lobby-ready-request";
+    const string LobbyCharacterRequestMessageName = "lobby-character-request";
     const string LobbyStateMessageName = "lobby-state";
+    const byte NoCharacterByte = 0xFF;
 
     [SerializeField] string defaultAddress = "127.0.0.1";
     [SerializeField] ushort defaultPort = 7777;
@@ -55,12 +60,14 @@ public class MultiplayerSessionController : MonoBehaviour
     bool _hasLevelStartSpawn;
     readonly Dictionary<ulong, Coroutine> _pendingSpawnMoves = new();
     readonly Dictionary<ulong, bool> _serverLobbyReadyByClient = new();
+    readonly Dictionary<ulong, int> _serverLobbyCharacterByClient = new();
     readonly List<LobbyPlayerState> _lobbyPlayers = new();
     bool _lobbyMessageHandlersRegistered;
     bool _lobbyReadyRequestHandlerRegistered;
     bool _localReady;
     bool _allLobbyPlayersReady;
     bool _gameStartRequested;
+    int _localCharacterIndex = -1;
 
     public event Action<string> StatusChanged;
     public event Action LobbyStateChanged;
@@ -81,6 +88,57 @@ public class MultiplayerSessionController : MonoBehaviour
     public bool AreAllLobbyPlayersReady => _allLobbyPlayersReady;
     public bool CanHostStartGame => IsLobbyHost && _lobbyPlayers.Count > 0 && _allLobbyPlayersReady && !_gameStartRequested;
     public IReadOnlyList<LobbyPlayerState> LobbyPlayers => _lobbyPlayers;
+    public bool IsGameStartRequested => _gameStartRequested;
+    public int LocalCharacterIndex => _localCharacterIndex;
+
+    public int LobbyCharacterCount
+    {
+        get
+        {
+            EnsureProjectSettings();
+            return _projectSettings != null ? _projectSettings.LobbyCharacterCount : 0;
+        }
+    }
+
+    /// <summary>Characters can only be picked in the menu lobby, before the host starts the game.</summary>
+    public bool CanSelectCharactersNow
+    {
+        get
+        {
+            if (!IsSessionActive || _gameStartRequested || LobbyCharacterCount == 0)
+                return false;
+            Scene active = SceneManager.GetActiveScene();
+            return active.IsValid() && active.name == MultiplayerSceneFlow.MenuSceneName;
+        }
+    }
+
+    public MultiplayerProjectSettings.LobbyCharacter GetLobbyCharacter(int index)
+    {
+        EnsureProjectSettings();
+        return _projectSettings != null ? _projectSettings.GetLobbyCharacter(index) : null;
+    }
+
+    public string GetLobbyCharacterName(int index)
+    {
+        MultiplayerProjectSettings.LobbyCharacter character = GetLobbyCharacter(index);
+        return character != null ? character.DisplayName : string.Empty;
+    }
+
+    /// <summary>The client that currently owns a character, if any (from the replicated lobby list).</summary>
+    public bool TryGetCharacterOwner(int characterIndex, out ulong ownerClientId)
+    {
+        for (int i = 0; i < _lobbyPlayers.Count; i++)
+        {
+            if (_lobbyPlayers[i].CharacterIndex == characterIndex)
+            {
+                ownerClientId = _lobbyPlayers[i].ClientId;
+                return true;
+            }
+        }
+
+        ownerClientId = 0;
+        return false;
+    }
 
     bool IsSteamTransportAvailable => _steamTransport != null;
 
@@ -327,6 +385,33 @@ public class MultiplayerSessionController : MonoBehaviour
         }
 
         SendReadyRequest(ready);
+    }
+
+    /// <summary>
+    /// Ask to own a lobby character. Server-validated: only in the menu lobby before game start,
+    /// and only if no other player currently owns that character.
+    /// </summary>
+    public void RequestSelectCharacter(int characterIndex)
+    {
+        if (_networkManager == null || !_networkManager.IsListening)
+        {
+            UpdateStatus("Join or host a lobby before picking a character.");
+            return;
+        }
+
+        if (!CanSelectCharactersNow)
+            return;
+
+        if (characterIndex < 0 || characterIndex >= LobbyCharacterCount || characterIndex == _localCharacterIndex)
+            return;
+
+        if (_networkManager.IsServer)
+        {
+            ServerTrySelectCharacter(_networkManager.LocalClientId, characterIndex);
+            return;
+        }
+
+        SendCharacterRequest(characterIndex);
     }
 
     public void StartGameFromLobby()
@@ -625,6 +710,7 @@ public class MultiplayerSessionController : MonoBehaviour
         if (_networkManager.IsServer)
         {
             _networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LobbyReadyRequestMessageName, HandleLobbyReadyRequest);
+            _networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LobbyCharacterRequestMessageName, HandleLobbyCharacterRequest);
             _lobbyReadyRequestHandlerRegistered = true;
         }
 
@@ -642,7 +728,10 @@ public class MultiplayerSessionController : MonoBehaviour
         }
 
         if (_lobbyReadyRequestHandlerRegistered)
+        {
             _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbyReadyRequestMessageName);
+            _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbyCharacterRequestMessageName);
+        }
         _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbyStateMessageName);
         _lobbyMessageHandlersRegistered = false;
         _lobbyReadyRequestHandlerRegistered = false;
@@ -657,6 +746,78 @@ public class MultiplayerSessionController : MonoBehaviour
         SetServerLobbyReady(senderClientId, readyByte != 0);
     }
 
+    void HandleLobbyCharacterRequest(ulong senderClientId, FastBufferReader reader)
+    {
+        if (_networkManager == null || !_networkManager.IsServer)
+            return;
+
+        reader.ReadValueSafe(out byte characterByte);
+        ServerTrySelectCharacter(senderClientId, characterByte == NoCharacterByte ? -1 : characterByte);
+    }
+
+    void ServerTrySelectCharacter(ulong clientId, int characterIndex)
+    {
+        if (_networkManager == null || !_networkManager.IsServer)
+            return;
+
+        // Selection is lobby-only: ignore requests after the host pressed start or outside the menu.
+        if (!CanSelectCharactersNow)
+            return;
+
+        if (characterIndex < 0 || characterIndex >= LobbyCharacterCount)
+            return;
+
+        // one owner per character
+        foreach (KeyValuePair<ulong, int> pair in _serverLobbyCharacterByClient)
+        {
+            if (pair.Value == characterIndex && pair.Key != clientId)
+            {
+                // refused — rebroadcast authoritative state so the requester's UI stays correct
+                PublishServerLobbyState();
+                return;
+            }
+        }
+
+        _serverLobbyCharacterByClient[clientId] = characterIndex;
+        PublishServerLobbyState();
+    }
+
+    int ServerFindFreeCharacterIndex()
+    {
+        int count = LobbyCharacterCount;
+        for (int index = 0; index < count; index++)
+        {
+            bool taken = false;
+            foreach (KeyValuePair<ulong, int> pair in _serverLobbyCharacterByClient)
+            {
+                if (pair.Value == index)
+                {
+                    taken = true;
+                    break;
+                }
+            }
+
+            if (!taken)
+                return index;
+        }
+
+        return -1;
+    }
+
+    void SendCharacterRequest(int characterIndex)
+    {
+        if (_networkManager == null || _networkManager.CustomMessagingManager == null)
+            return;
+
+        using FastBufferWriter writer = new(sizeof(byte), Allocator.Temp);
+        writer.WriteValueSafe(characterIndex >= 0 && characterIndex < NoCharacterByte ? (byte)characterIndex : NoCharacterByte);
+        _networkManager.CustomMessagingManager.SendNamedMessage(
+            LobbyCharacterRequestMessageName,
+            NetworkManager.ServerClientId,
+            writer,
+            NetworkDelivery.ReliableSequenced);
+    }
+
     void HandleLobbyStateMessage(ulong senderClientId, FastBufferReader reader)
     {
         if (_networkManager == null || _networkManager.IsServer)
@@ -666,19 +827,25 @@ public class MultiplayerSessionController : MonoBehaviour
         _lobbyPlayers.Clear();
         bool allReady = playerCount > 0;
         _localReady = false;
+        _localCharacterIndex = -1;
 
         for (int i = 0; i < playerCount; i++)
         {
             reader.ReadValueSafe(out ulong clientId);
             reader.ReadValueSafe(out byte readyByte);
             reader.ReadValueSafe(out byte hostByte);
+            reader.ReadValueSafe(out byte characterByte);
 
             bool isReady = readyByte != 0;
-            _lobbyPlayers.Add(new LobbyPlayerState(clientId, isReady, hostByte != 0));
+            int characterIndex = characterByte == NoCharacterByte ? -1 : characterByte;
+            _lobbyPlayers.Add(new LobbyPlayerState(clientId, isReady, hostByte != 0, characterIndex));
             allReady &= isReady;
 
             if (clientId == _networkManager.LocalClientId)
+            {
                 _localReady = isReady;
+                _localCharacterIndex = characterIndex;
+            }
         }
 
         _allLobbyPlayersReady = allReady;
@@ -705,8 +872,12 @@ public class MultiplayerSessionController : MonoBehaviour
             return;
 
         _serverLobbyReadyByClient.Clear();
+        _serverLobbyCharacterByClient.Clear();
         foreach (ulong clientId in _networkManager.ConnectedClientsIds)
+        {
             _serverLobbyReadyByClient[clientId] = false;
+            _serverLobbyCharacterByClient[clientId] = ServerFindFreeCharacterIndex();
+        }
 
         _localReady = false;
         _gameStartRequested = false;
@@ -721,6 +892,10 @@ public class MultiplayerSessionController : MonoBehaviour
         if (!_serverLobbyReadyByClient.ContainsKey(clientId))
             _serverLobbyReadyByClient[clientId] = false;
 
+        // every player always owns a character: hand the newcomer the lowest free one
+        if (!_serverLobbyCharacterByClient.ContainsKey(clientId))
+            _serverLobbyCharacterByClient[clientId] = ServerFindFreeCharacterIndex();
+
         PublishServerLobbyState();
     }
 
@@ -730,6 +905,7 @@ public class MultiplayerSessionController : MonoBehaviour
             return;
 
         _serverLobbyReadyByClient.Remove(clientId);
+        _serverLobbyCharacterByClient.Remove(clientId);
         PublishServerLobbyState();
     }
 
@@ -752,11 +928,13 @@ public class MultiplayerSessionController : MonoBehaviour
         foreach (KeyValuePair<ulong, bool> pair in _serverLobbyReadyByClient)
         {
             bool isHost = pair.Key == _networkManager.LocalClientId;
-            _lobbyPlayers.Add(new LobbyPlayerState(pair.Key, pair.Value, isHost));
+            int characterIndex = _serverLobbyCharacterByClient.TryGetValue(pair.Key, out int idx) ? idx : -1;
+            _lobbyPlayers.Add(new LobbyPlayerState(pair.Key, pair.Value, isHost, characterIndex));
             allReady &= pair.Value;
         }
 
         _localReady = _serverLobbyReadyByClient.TryGetValue(_networkManager.LocalClientId, out bool hostReady) && hostReady;
+        _localCharacterIndex = _serverLobbyCharacterByClient.TryGetValue(_networkManager.LocalClientId, out int localIdx) ? localIdx : -1;
         _allLobbyPlayersReady = allReady;
         LobbyStateChanged?.Invoke();
         SendLobbyStateToClients();
@@ -767,7 +945,7 @@ public class MultiplayerSessionController : MonoBehaviour
         if (_networkManager == null || _networkManager.CustomMessagingManager == null || !_networkManager.IsServer)
             return;
 
-        int payloadSize = sizeof(int) + _lobbyPlayers.Count * (sizeof(ulong) + sizeof(byte) + sizeof(byte));
+        int payloadSize = sizeof(int) + _lobbyPlayers.Count * (sizeof(ulong) + sizeof(byte) + sizeof(byte) + sizeof(byte));
         using FastBufferWriter writer = new(payloadSize, Allocator.Temp);
         writer.WriteValueSafe(_lobbyPlayers.Count);
         for (int i = 0; i < _lobbyPlayers.Count; i++)
@@ -776,6 +954,9 @@ public class MultiplayerSessionController : MonoBehaviour
             writer.WriteValueSafe(player.ClientId);
             writer.WriteValueSafe((byte)(player.IsReady ? 1 : 0));
             writer.WriteValueSafe((byte)(player.IsHost ? 1 : 0));
+            writer.WriteValueSafe(player.CharacterIndex >= 0 && player.CharacterIndex < NoCharacterByte
+                ? (byte)player.CharacterIndex
+                : NoCharacterByte);
         }
 
         foreach (ulong clientId in _networkManager.ConnectedClientsIds)
@@ -794,10 +975,12 @@ public class MultiplayerSessionController : MonoBehaviour
     void ClearLobbyState()
     {
         _serverLobbyReadyByClient.Clear();
+        _serverLobbyCharacterByClient.Clear();
         _lobbyPlayers.Clear();
         _localReady = false;
         _allLobbyPlayersReady = false;
         _gameStartRequested = false;
+        _localCharacterIndex = -1;
         LobbyStateChanged?.Invoke();
     }
 
@@ -869,10 +1052,11 @@ public class MultiplayerSessionController : MonoBehaviour
         NetworkObject playerObject = client.PlayerObject;
         if (playerObject == null)
         {
-            if (_playerPrefab == null)
+            GameObject prefabToSpawn = GetServerPlayerPrefabForClient(clientId);
+            if (prefabToSpawn == null)
                 return false;
 
-            GameObject playerInstance = Instantiate(_playerPrefab, spawnPosition, spawnRotation);
+            GameObject playerInstance = Instantiate(prefabToSpawn, spawnPosition, spawnRotation);
             playerObject = playerInstance.GetComponent<NetworkObject>();
             if (playerObject == null)
             {
@@ -895,6 +1079,19 @@ public class MultiplayerSessionController : MonoBehaviour
             playerObject.transform.SetPositionAndRotation(spawnPosition, spawnRotation);
 
         return true;
+    }
+
+    /// <summary>The lobby-selected character prefab for a client; falls back to the default player prefab.</summary>
+    GameObject GetServerPlayerPrefabForClient(ulong clientId)
+    {
+        if (_serverLobbyCharacterByClient.TryGetValue(clientId, out int characterIndex))
+        {
+            MultiplayerProjectSettings.LobbyCharacter character = GetLobbyCharacter(characterIndex);
+            if (character != null && character.PlayerPrefab != null)
+                return character.PlayerPrefab;
+        }
+
+        return _playerPrefab;
     }
 
     bool TryGetLevelStartSpawn(bool allowProjectSettingsFallback, out Vector3 position, out Quaternion rotation)

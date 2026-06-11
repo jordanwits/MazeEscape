@@ -1,12 +1,32 @@
+using System;
 using UnityEngine;
 
 [CreateAssetMenu(menuName = "Maze Escape/Multiplayer Project Settings", fileName = "MultiplayerProjectSettings")]
 public class MultiplayerProjectSettings : ScriptableObject
 {
+    /// <summary>One selectable lobby character. Exactly one player may own each at a time.</summary>
+    [Serializable]
+    public class LobbyCharacter
+    {
+        [SerializeField] string displayName = "Survivor";
+        [Tooltip("Networked player prefab spawned for the client that picked this character. Must be registered in Resources/DefaultNetworkPrefabs.")]
+        [SerializeField] GameObject playerPrefab;
+        [Tooltip("Lobby portrait shown on the character select card.")]
+        [SerializeField] Sprite portrait;
+
+        public string DisplayName => displayName;
+        public GameObject PlayerPrefab => playerPrefab;
+        public Sprite Portrait => portrait;
+    }
+
     [SerializeField] GameObject playerPrefab;
     [SerializeField] Vector3 levelStartPosition;
     [SerializeField] Vector3 levelStartEulerAngles;
     [SerializeField] float respawnDelaySeconds = 3f;
+
+    [Header("Lobby characters")]
+    [Tooltip("Selectable characters in the menu lobby (one owner each). When empty, every player spawns the default Player Prefab.")]
+    [SerializeField] LobbyCharacter[] lobbyCharacters = Array.Empty<LobbyCharacter>();
 
     [Header("Connection approval")]
     [Tooltip("If left empty, falls back to Application.version (the build version set in PlayerSettings). " +
@@ -21,4 +41,13 @@ public class MultiplayerProjectSettings : ScriptableObject
     public float RespawnDelaySeconds => respawnDelaySeconds;
     public string BuildVersion => string.IsNullOrWhiteSpace(buildVersionOverride) ? Application.version : buildVersionOverride;
     public int MaxPlayers => maxPlayers;
+
+    public int LobbyCharacterCount => lobbyCharacters != null ? lobbyCharacters.Length : 0;
+
+    public LobbyCharacter GetLobbyCharacter(int index)
+    {
+        if (lobbyCharacters == null || index < 0 || index >= lobbyCharacters.Length)
+            return null;
+        return lobbyCharacters[index];
+    }
 }

@@ -3,8 +3,8 @@ public static class OnlinePlaytestChecklist
     public static readonly string[] Steps =
     {
         "Two Windows machines use different Steam accounts and the same build.",
-        "Steam is running before the game starts; Steam status shows ready in F8.",
-        "Host starts a Steam lobby from Menu > F8 > Host Steam Lobby.",
+        "Steam is running before the game starts; the Play Online screen shows Steam as ready.",
+        "Host starts a Steam lobby from Menu > Play Online > Host Steam Lobby.",
         "Friend joins through Steam invite, lobby ID, or host SteamID64.",
         "Every player toggles Ready in the lobby, then only the host can press Start Game.",
         "All players load into Level01 together and spawn at valid start positions.",

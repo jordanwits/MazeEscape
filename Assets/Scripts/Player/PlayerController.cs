@@ -482,7 +482,7 @@ public partial class PlayerController : MonoBehaviour
         if (_ragdollController != null && (_ragdollController.IsRagdolled || _ragdollController.IsHeld))
         {
             CancelThrowCharge();
-            if (MultiplayerMenuOverlay.BlocksGameplayInput)
+            if (PauseMenuController.BlocksGameplayInput)
             {
                 _moveInput = Vector2.zero;
                 return;
@@ -512,7 +512,7 @@ public partial class PlayerController : MonoBehaviour
         if (_ragdollController != null && _ragdollController.IsGettingUp)
             return;
 
-        if (MultiplayerMenuOverlay.BlocksGameplayInput)
+        if (PauseMenuController.BlocksGameplayInput)
         {
             CancelThrowCharge();
             _moveInput = Vector2.zero;
@@ -985,7 +985,7 @@ public partial class PlayerController : MonoBehaviour
 
         EnsureCameraPitchParentedToHead();
 
-        if (MultiplayerMenuOverlay.BlocksGameplayInput)
+        if (PauseMenuController.BlocksGameplayInput)
             return;
 
         Vector2 lookInput = _lookAction != null && _lookAction.enabled
@@ -1052,7 +1052,7 @@ public partial class PlayerController : MonoBehaviour
 
     void ApplyCursorLock()
     {
-        if (!firstPersonLook || !lockCursor || MultiplayerMenuOverlay.BlocksGameplayInput)
+        if (!firstPersonLook || !lockCursor || PauseMenuController.BlocksGameplayInput)
             return;
 
         Cursor.lockState = CursorLockMode.Locked;
