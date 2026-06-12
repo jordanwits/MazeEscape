@@ -52,6 +52,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     bool _offlineSealedInJailCell;
     bool _isDormant;
     bool _isAlive = true;
+    SkinnedMeshRenderer[] _skinnedRenderers;
+    bool _skinnedRenderersOffscreenForced;
     NetworkManager _networkManager;
     OwnerNetworkAnimator _ownerNetworkAnimator;
     Light _remoteFlashlightProxyLight;
@@ -608,6 +610,32 @@ public class NetworkPlayerAvatar : NetworkBehaviour
                         : UnityEngine.Rendering.ShadowCastingMode.On;
             }
         }
+
+        ApplyFirstPersonOffscreenCulling(isLocalOwner);
+    }
+
+    /// <summary>
+    /// In first person the camera is embedded at the head, so a SkinnedMeshRenderer's precomputed bind-pose
+    /// bounds frequently sit partly behind/beside the camera. When an animation throws a limb outside those
+    /// stale bounds (e.g. the punch reaching the fist toward the camera), Unity frustum-culls the whole
+    /// renderer and the arm vanishes. Forcing <c>updateWhenOffscreen</c> on the local owner recomputes bounds
+    /// from the live pose each frame, so on-screen limbs are never culled. Remote avatars keep normal culling.
+    /// </summary>
+    void ApplyFirstPersonOffscreenCulling(bool isLocalOwner)
+    {
+        // Only the local owner needs forced bounds; once set true we never revert (ownership is fixed per avatar).
+        if (!isLocalOwner || _skinnedRenderersOffscreenForced)
+            return;
+
+        if (_skinnedRenderers == null)
+            _skinnedRenderers = GetComponentsInChildren<SkinnedMeshRenderer>(true);
+
+        foreach (SkinnedMeshRenderer skinned in _skinnedRenderers)
+        {
+            if (skinned != null)
+                skinned.updateWhenOffscreen = true;
+        }
+        _skinnedRenderersOffscreenForced = true;
     }
 
     void SetDormant(bool dormant)

@@ -14,7 +14,11 @@
       "mcp__UnityMCP__execute_code",
       "Bash(cd H:\\\\Unity\\\\Maze Escape *)",
       "Bash(grep -E \"\\\\.\\(prefab|cs\\)$\")",
-      "Bash(xargs grep -l \"Player\")"
+      "Bash(xargs grep -l \"Player\")",
+      "Bash(Get-ChildItem -Path \"H:\\\\Unity\\\\Maze Escape\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(python -)",
+      "PowerShell(Get-ChildItem \"H:\\\\Unity\\\\Maze Escape\\\\Assets\\\\Survivalist\" -Directory | Select-Object -ExpandProperty Name; Write-Output \"---\"; Get-ChildItem \"H:\\\\Unity\\\\Maze Escape\\\\Assets\\\\Survivalist\" -Directory -Recurse | ForEach-Object { $_.FullName.Replace\\(\"H:\\\\Unity\\\\Maze Escape\\\\Assets\\\\Survivalist\\\\\",\"\"\\) })"
     ]
   }
 }

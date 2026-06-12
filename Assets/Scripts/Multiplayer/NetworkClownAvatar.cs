@@ -25,28 +25,28 @@ public class NetworkClownAvatar : NetworkBehaviour
     ServerNetworkAnimator _serverNetworkAnimator;
 
     /// <summary>
-    /// Late-join snapshot of the Grab and Slam animation. NGO's <see cref="NetworkAnimator"/> replicates
-    /// parameter state but NOT one-shot triggers, so a client that joins mid-slam would see an idle Clown
-    /// while the held player snapshot rebuilds the pinned pose against nothing. This struct lets observers
-    /// jump the animator straight to the right state at the right normalized time on spawn.
+    /// Late-join snapshot of the Hammer Swing attack animation. NGO's <see cref="NetworkAnimator"/> replicates
+    /// parameter state but NOT one-shot triggers, so a client that joins mid-swing would see an idle Clown.
+    /// This struct lets observers jump the animator straight to the right state at the right normalized time
+    /// on spawn.
     /// </summary>
-    public struct SlamAnimationState : INetworkSerializeByMemcpy, System.IEquatable<SlamAnimationState>
+    public struct AttackAnimationState : INetworkSerializeByMemcpy, System.IEquatable<AttackAnimationState>
     {
-        public byte Active;                 // 0 = not slamming, 1 = slamming
-        public int StateNameHash;           // animator state hash to Play() (matches the grab/slam state name)
-        public float ServerTimeStarted;     // NetworkManager.ServerTime.TimeAsFloat at slam start
+        public byte Active;                 // 0 = not swinging, 1 = swinging
+        public int StateNameHash;           // animator state hash to Play() (matches the swing state name)
+        public float ServerTimeStarted;     // NetworkManager.ServerTime.TimeAsFloat at swing start
         public float ClipDurationSeconds;   // for normalizing elapsed → 0..1
 
-        public bool Equals(SlamAnimationState o) =>
+        public bool Equals(AttackAnimationState o) =>
             Active == o.Active && StateNameHash == o.StateNameHash
             && ServerTimeStarted == o.ServerTimeStarted
             && ClipDurationSeconds == o.ClipDurationSeconds;
-        public override bool Equals(object o) => o is SlamAnimationState s && Equals(s);
+        public override bool Equals(object o) => o is AttackAnimationState s && Equals(s);
         public override int GetHashCode() =>
             Active ^ StateNameHash ^ ServerTimeStarted.GetHashCode() ^ ClipDurationSeconds.GetHashCode();
     }
 
-    readonly NetworkVariable<SlamAnimationState> _slamAnimation = new NetworkVariable<SlamAnimationState>(
+    readonly NetworkVariable<AttackAnimationState> _attackAnimation = new NetworkVariable<AttackAnimationState>(
         default,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
@@ -69,14 +69,14 @@ public class NetworkClownAvatar : NetworkBehaviour
     {
         ApplyAuthorityState();
 
-        // Spawn-time state rule: rebuild the slam animation from the replicated snapshot for clients that
-        // joined mid-slam. The server is authoritative and the slam was started here, so it doesn't need
+        // Spawn-time state rule: rebuild the swing animation from the replicated snapshot for clients that
+        // joined mid-swing. The server is authoritative and the swing was started here, so it doesn't need
         // to reconstruct from itself.
-        if (!IsServer && _slamAnimation.Value.Active != 0)
-            ReconstructSlamAnimationFromSnapshot(_slamAnimation.Value);
+        if (!IsServer && _attackAnimation.Value.Active != 0)
+            ReconstructAttackAnimationFromSnapshot(_attackAnimation.Value);
     }
 
-    void ReconstructSlamAnimationFromSnapshot(SlamAnimationState state)
+    void ReconstructAttackAnimationFromSnapshot(AttackAnimationState state)
     {
         if (clownAnimator == null || state.Active == 0 || state.StateNameHash == 0)
             return;
@@ -96,16 +96,22 @@ public class NetworkClownAvatar : NetworkBehaviour
         if (normalized >= 1f)
             return;
 
-        clownAnimator.Play(state.StateNameHash, 0, normalized);
+        // The swing exists on the base layer AND (same state name) on the "Hammer Carry" upper-body
+        // layer; jump every layer that has it so a late joiner's arms aren't desynced from the body.
+        for (int layer = 0; layer < clownAnimator.layerCount; layer++)
+        {
+            if (clownAnimator.HasState(layer, state.StateNameHash))
+                clownAnimator.Play(state.StateNameHash, layer, normalized);
+        }
         clownAnimator.Update(0f);
     }
 
     /// <summary>
-    /// Server: record that the Grab and Slam animation is now playing so late joiners can reconstruct it.
+    /// Server: record that the Hammer Swing animation is now playing so late joiners can reconstruct it.
     /// Call alongside the existing <see cref="TryServerSetAnimatorTrigger"/> path (the trigger drives clients
-    /// already connected; this snapshot covers everyone who joins during the ~2.3s slam clip).
+    /// already connected; this snapshot covers everyone who joins during the swing clip).
     /// </summary>
-    public void ServerMarkSlamAnimationStarted(int stateNameHash, float clipDurationSeconds)
+    public void ServerMarkAttackAnimationStarted(int stateNameHash, float clipDurationSeconds)
     {
         if (!IsServer || !IsSpawned)
             return;
@@ -114,7 +120,7 @@ public class NetworkClownAvatar : NetworkBehaviour
             ? NetworkManager.Singleton.ServerTime.TimeAsFloat
             : 0f;
 
-        _slamAnimation.Value = new SlamAnimationState
+        _attackAnimation.Value = new AttackAnimationState
         {
             Active = 1,
             StateNameHash = stateNameHash,
@@ -123,15 +129,15 @@ public class NetworkClownAvatar : NetworkBehaviour
         };
     }
 
-    /// <summary>Server: the slam animation finished (recovery begins or the Clown is despawned mid-grab).</summary>
-    public void ServerMarkSlamAnimationEnded()
+    /// <summary>Server: the swing animation finished (recovery begins or the Clown is despawned mid-swing).</summary>
+    public void ServerMarkAttackAnimationEnded()
     {
         if (!IsServer || !IsSpawned)
             return;
-        if (_slamAnimation.Value.Active == 0)
+        if (_attackAnimation.Value.Active == 0)
             return;
 
-        _slamAnimation.Value = default;
+        _attackAnimation.Value = default;
     }
 
     void ApplyAuthorityState()

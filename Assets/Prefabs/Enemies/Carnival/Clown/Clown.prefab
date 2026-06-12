@@ -1569,6 +1569,11 @@ MonoBehaviour:
   enableWallSlide: 1
   wallSlideMemorySeconds: 0.15
   wallSlideMaxNormalY: 0.7
+  chaseCenterInCorridor: 1
+  chaseWallSideClearance: 0.9
+  chaseWallLookAhead: 1.4
+  chaseCenterSteerStrength: 0.65
+  chaseWallProbeHeight: 1
   pitStuckCheckInterval: 0.25
   pitStuckBelowNavMeshThreshold: 1.5
   pitStuckVerticalSearchHeight: 12
@@ -1611,25 +1616,30 @@ MonoBehaviour:
   clownMinFootstepMoveSpeed: 0.2
   clownWalkFootstepPhases: {x: 0.13, y: 0.63}
   clownRunFootstepPhases: {x: 0.1, y: 0.6}
-  grabBoneIndex: 0
-  grabTriggerParameter: Grab
-  grabStateName: Grab and Slam
-  grabClipDurationFallback: 2.27
-  grabRange: 1.7
-  grabHitRangePadding: 0.2
-  grabHitHalfAngle: 55
-  maxGrabVerticalDelta: 1.2
-  grabContactNormalizedTime: 0.31
-  slamImpactNormalizedTime: 0.7
-  grabContactFallbackDelay: 0.6
-  slamImpactFallbackDelay: 1.7
-  heldPlayerHipsLocalPosOffset: {x: 0, y: 0, z: 0}
-  heldPlayerHipsLocalEulerOffset: {x: 0, y: 0, z: 0}
-  slamForwardSpeed: 25
-  slamDownwardSpeed: 2
-  slamForceMode: 2
-  slamDamage: 22
-  postSlamCooldownSeconds: 5
+  swingTriggerParameter: Swing
+  swingStateName: Hammer Swing
+  swingClipDurationFallback: 3.9
+  attackRange: 1.7
+  attackRangePadding: 0.2
+  attackHalfAngle: 55
+  maxAttackVerticalDelta: 1.2
+  hammerHitReachMultiplier: 1.5
+  hammerHitNormalizedTime: 0.5
+  hammerHitFallbackDelay: 1.3
+  knockbackForwardSpeed: 25
+  knockbackUpwardSpeed: 5
+  knockbackAvoidWalls: 1
+  knockbackObstacleMask:
+    serializedVersion: 2
+    m_Bits: 0
+  knockbackProbeRange: 8
+  knockbackMinClearance: 3
+  knockbackProbeRadius: 0.4
+  knockbackProbeHeight: 0.5
+  knockbackForwardFullSpeedClearance: 4
+  knockbackForceMode: 2
+  hammerDamage: 50
+  postAttackCooldownSeconds: 5
 --- !u!114 &7755825303672424257
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1937,6 +1947,7 @@ Transform:
   m_Children:
   - {fileID: 1647900975155757885}
   - {fileID: 5256935358717084416}
+  - {fileID: 2406761252123420939}
   m_Father: {fileID: 6111813099096278606}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &8328595127217561886
@@ -2067,3 +2078,81 @@ Transform:
   - {fileID: 4175797062160801837}
   m_Father: {fileID: 9105985935169987731}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &7480997682553454247
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 606784731045578954}
+    m_Modifications:
+    - target: {fileID: 1559644905131413827, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalScale.x
+      value: 60.9472
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalScale.y
+      value: 60.9472
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalScale.z
+      value: 60.9472
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -0.0402
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.1122
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0.1122
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.045449775
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0.37786815
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0.8849757
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0.26826867
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8458495415725759704, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+      propertyPath: m_Name
+      value: ClownHammer
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+--- !u!4 &2406761252123420939 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 5095646347468724140, guid: 8d2c1f150fba7ef4e9f74f24a6f3ce53, type: 3}
+  m_PrefabInstance: {fileID: 7480997682553454247}
+  m_PrefabAsset: {fileID: 0}

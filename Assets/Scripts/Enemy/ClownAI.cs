@@ -9,7 +9,9 @@ using UnityEditor;
 /// <summary>
 /// Basic carnival Clown enemy AI: server-authoritative patrol + audio-driven investigation + chase.
 /// A trimmed sibling of <see cref="JailorAI"/> — it shares the patrol/detection/investigation/chase
-/// locomotion but intentionally has no grab, carry, jail delivery, off-mesh jump, key drop, or attack.
+/// locomotion but, instead of the Jailor's grab/carry/jail delivery, its only attack is a hammer swing:
+/// when it catches a player it plays the Hammer Swing clip and, at the swing's impact, launches the
+/// player into ragdoll (a knockback, like <see cref="RagdollTrap"/>) rather than pinning/carrying them.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Animator))]
@@ -23,7 +25,7 @@ public class ClownAI : MonoBehaviour
         Patrol,
         Investigating,
         Chase,
-        Grabbing,
+        Attacking,
         Recover
     }
 
@@ -162,58 +164,50 @@ public class ClownAI : MonoBehaviour
     [Tooltip("Normalized animation times where run footsteps should fire (x and y in 0-1).")]
     [SerializeField] Vector2 clownRunFootstepPhases = new Vector2(0.1f, 0.6f);
 
-    [Header("Grab & slam")]
-    [Tooltip("Clown bone the player is pinned to while held, by index into the shared grab-bone table " +
-        "(0=RightHand, 1=LeftHand, 2=Hips, 3=Spine1). The player's hips track this bone through the swing.")]
-    [SerializeField] int grabBoneIndex = 0;
-    [Tooltip("Animator Trigger that starts the Grab and Slam state.")]
-    [SerializeField] string grabTriggerParameter = "Grab";
-    [Tooltip("Name of the Grab and Slam state in the animator (used to detect when it finishes).")]
-    [SerializeField] string grabStateName = "Grab and Slam";
-    [Tooltip("Length (s) of the Grab and Slam clip; fallback if the exit can't be read from the animator.")]
-    [SerializeField, Min(0.1f)] float grabClipDurationFallback = 2.27f;
-    [Tooltip("Max horizontal distance (m, before scale) to the player to start a grab.")]
-    [SerializeField, Min(0.1f)] float grabRange = 1.7f;
-    [SerializeField, Min(0f)] float grabHitRangePadding = 0.2f;
-    [Tooltip("Forward cone half-angle (deg): only grabs a player roughly in front.")]
-    [SerializeField, Range(0f, 180f)] float grabHitHalfAngle = 55f;
-    [Tooltip("Max vertical offset (m) to the player to start a grab.")]
-    [SerializeField, Min(0.1f)] float maxGrabVerticalDelta = 1.2f;
-    [Tooltip("Primary trigger: normalized clip time (0-1) at which the hands close on the player. Driven off actual animation playback (frame-accurate).")]
-    [SerializeField, Range(0f, 1f)] float grabContactNormalizedTime = 0.31f;   // ~0.70s of the 2.27s clip
-    [Tooltip("Primary trigger: normalized clip time (0-1) at which the body hits the floor and the slam launches. Frame-accurate, so the propulsion lands exactly on the slam.")]
-    [SerializeField, Range(0f, 1f)] float slamImpactNormalizedTime = 0.735f;   // ~1.667s of the 2.27s clip
-    [Tooltip("Safety fallback (s) to attach the player if the animator never reaches the grab state. Should be after the normalized-time trigger.")]
-    [SerializeField, Min(0f)] float grabContactFallbackDelay = 0.95f;
-    [Tooltip("Safety fallback (s) to release the slam if the animator never reaches the grab state. Should be after the normalized-time trigger.")]
-    [SerializeField, Min(0f)] float slamImpactFallbackDelay = 1.9f;
-    [Tooltip("Player hips offset relative to the grab bone while held (local to the bone). Tune so the body dangles by its center mass.")]
-    [SerializeField] Vector3 heldPlayerHipsLocalPosOffset = Vector3.zero;
-    [SerializeField] Vector3 heldPlayerHipsLocalEulerOffset = Vector3.zero;
-    [Tooltip("Outward/forward launch speed at the slam, along the actual slam direction (the hand's travel). Capped by the player's ragdoll force cap (~16).")]
-    [SerializeField, Min(0f)] float slamForwardSpeed = 13f;
-    [Tooltip("Downward launch speed at the slam (drives the body into the floor; keep modest so the body skids forward rather than just pancaking).")]
-    [SerializeField, Min(0f)] float slamDownwardSpeed = 6f;
-    [Header("Slam direction (avoid walls / throw down hallways)")]
-    [Tooltip("If ON, the slam launch is redirected to the most open horizontal direction (e.g. down a hallway) so the player isn't thrown straight into a nearby wall.")]
-    [SerializeField] bool slamAvoidWalls = true;
+    [Header("Hammer swing attack")]
+    [Tooltip("Animator Trigger that starts the Hammer Swing state.")]
+    [SerializeField] string swingTriggerParameter = "Swing";
+    [Tooltip("Name of the Hammer Swing state in the animator (used to detect impact timing and when it finishes).")]
+    [SerializeField] string swingStateName = "Hammer Swing";
+    [Tooltip("Length (s) of the Hammer Swing clip; fallback if the exit can't be read from the animator.")]
+    [SerializeField, Min(0.1f)] float swingClipDurationFallback = 3.9f;
+    [Tooltip("Max horizontal distance (m, before scale) to the player to start a swing.")]
+    [SerializeField, Min(0.1f)] float attackRange = 1.7f;
+    [SerializeField, Min(0f)] float attackRangePadding = 0.2f;
+    [Tooltip("Forward cone half-angle (deg): only swings at a player roughly in front.")]
+    [SerializeField, Range(0f, 180f)] float attackHalfAngle = 55f;
+    [Tooltip("Max vertical offset (m) to the player to start a swing.")]
+    [SerializeField, Min(0.1f)] float maxAttackVerticalDelta = 1.2f;
+    [Tooltip("At the impact frame the hammer only connects if the player is still within (attack range + padding) × this multiplier — nothing catches them early, so a clean dodge during the wind-up whiffs. 1 = exactly the start reach; higher = more forgiving.")]
+    [SerializeField, Min(1f)] float hammerHitReachMultiplier = 1.5f;
+    [Tooltip("Primary trigger: normalized clip time (0-1) at which the hammer connects and the player is launched into ragdoll. Driven off actual animation playback (frame-accurate). TUNE THIS to the frame where the hammer visually contacts.")]
+    [SerializeField, Range(0f, 1f)] float hammerHitNormalizedTime = 0.5f;
+    [Tooltip("Safety fallback (s) to launch the player if the animator never reaches the swing state. Should be after the normalized-time trigger.")]
+    [SerializeField, Min(0f)] float hammerHitFallbackDelay = 2f;
+    [Tooltip("Horizontal launch speed of the hammer knockback, along the swing direction. Capped by the player's ragdoll force cap (~16).")]
+    [SerializeField, Min(0f)] float knockbackForwardSpeed = 13f;
+    [Tooltip("Upward launch speed of the hammer knockback (sends the body flying up and back rather than skidding flat).")]
+    [SerializeField, Min(0f)] float knockbackUpwardSpeed = 5f;
+    [Header("Knockback direction (avoid walls / throw down hallways)")]
+    [Tooltip("If ON, the knockback is redirected to the most open horizontal direction (e.g. down a hallway) so the player isn't launched straight into a nearby wall.")]
+    [SerializeField] bool knockbackAvoidWalls = true;
     [Tooltip("Obstacle layers used to probe for walls. Leave as Nothing to auto-use everything except actors (players/enemies).")]
-    [SerializeField] LayerMask slamObstacleMask;
+    [SerializeField] LayerMask knockbackObstacleMask;
     [Tooltip("How far to probe each candidate direction for clearance (m).")]
-    [SerializeField, Min(1f)] float slamClearanceProbeRange = 8f;
-    [Tooltip("A direction counts as 'open' if it has at least this much clearance (m). The most open direction nearest the slam intent is chosen.")]
-    [SerializeField, Min(0.5f)] float slamMinClearance = 3f;
+    [SerializeField, Min(1f)] float knockbackProbeRange = 8f;
+    [Tooltip("A direction counts as 'open' if it has at least this much clearance (m). The most open direction nearest the swing intent is chosen.")]
+    [SerializeField, Min(0.5f)] float knockbackMinClearance = 3f;
     [Tooltip("Probe sphere radius (≈ player width) so narrow gaps don't count as open.")]
-    [SerializeField, Min(0.05f)] float slamClearanceProbeRadius = 0.4f;
-    [Tooltip("Height above the slam point to probe from (≈ the skidding body's height).")]
-    [SerializeField, Min(0f)] float slamClearanceProbeHeight = 0.5f;
-    [Tooltip("Clearance (m) at/above which the slam uses full forward speed. Below it, the forward launch is scaled down so the ragdoll isn't flung into a nearby wall hard enough to tunnel through it.")]
-    [SerializeField, Min(0.5f)] float slamForwardFullSpeedClearance = 4f;
-    [SerializeField] ForceMode slamForceMode = ForceMode.VelocityChange;
-    [Tooltip("Damage dealt by the slam. Player auto-recovers unless this kills them.")]
-    [SerializeField, Min(0f)] float slamDamage = 22f;
-    [Tooltip("After a slam, the Clown won't grab again (or re-chase) for this long.")]
-    [SerializeField, Min(0f)] float postSlamCooldownSeconds = 2.5f;
+    [SerializeField, Min(0.05f)] float knockbackProbeRadius = 0.4f;
+    [Tooltip("Height above the impact point to probe from (≈ the launched body's height).")]
+    [SerializeField, Min(0f)] float knockbackProbeHeight = 0.5f;
+    [Tooltip("Clearance (m) at/above which the knockback uses full forward speed. Below it, the forward launch is scaled down so the ragdoll isn't flung into a nearby wall hard enough to tunnel through it.")]
+    [SerializeField, Min(0.5f)] float knockbackForwardFullSpeedClearance = 4f;
+    [SerializeField] ForceMode knockbackForceMode = ForceMode.VelocityChange;
+    [Tooltip("Damage dealt by the hammer hit. Player auto-recovers unless this kills them.")]
+    [SerializeField, Min(0f)] float hammerDamage = 22f;
+    [Tooltip("After a swing, the Clown won't attack again (or re-chase) for this long.")]
+    [SerializeField, Min(0f)] float postAttackCooldownSeconds = 2.5f;
 
     readonly Collider[] _detectionHits = new Collider[16];
     readonly RaycastHit[] _lineOfSightHits = new RaycastHit[16];
@@ -231,19 +225,16 @@ public class ClownAI : MonoBehaviour
     bool _hasGroundedParameter = true;
     bool _hasVerticalVelocityParameter = true;
     bool _loggedMissingAnimatorParams;
-    bool _hasGrabTriggerParameter;
-    int _grabStateHash;
+    bool _hasSwingTriggerParameter;
+    int _swingStateHash;
 
-    Transform _grabBone;
-    float _grabbingStartedTime;
-    bool _grabContactDone;
-    bool _slamDone;
-    Vector3 _grabContactHandWorldPos;
-    Vector3 _grabFrozenPosition;
-    PlayerHealth _grabbedHealth;
-    PlayerRagdollController _grabbedRagdoll;
-    NetworkPlayerRagdoll _grabbedNetRagdoll;
-    float _suppressGrabAndChaseUntil;
+    float _attackStartedTime;
+    bool _hammerHitDone;
+    Vector3 _attackFrozenPosition;
+    PlayerHealth _attackTargetHealth;
+    PlayerRagdollController _attackTargetRagdoll;
+    NetworkPlayerRagdoll _attackTargetNetRagdoll;
+    float _suppressAttackAndChaseUntil;
 
     const string EnemyLayerName = "Enemy";
     const string JailorLayerName = "Jailor";
@@ -373,10 +364,8 @@ public class ClownAI : MonoBehaviour
     {
         ServerProximityVoiceNotifications.Unregister(this);
 
-        // Safety: if disabled/despawned mid-hold (player grabbed but not yet slammed), release so the player
-        // isn't left ragdoll-pinned to a destroyed bone.
-        if (_state == ClownState.Grabbing && _grabContactDone && !_slamDone)
-            ServerReleaseSlam();
+        // The hammer swing never pins the player (it's a one-shot knockback), so there is nothing to release
+        // if the Clown is disabled/despawned mid-swing — the player was never attached to it.
     }
 
     void CacheReferences()
@@ -389,7 +378,6 @@ public class ClownAI : MonoBehaviour
             characterController = GetComponent<CharacterController>();
         _networkObject = GetComponent<NetworkObject>();
         _networkClownAvatar = GetComponent<NetworkClownAvatar>();
-        _grabBone = NetworkPlayerRagdoll.FindGrabBone(transform, grabBoneIndex);
         ConfigureClownFootstepAudioSource();
 
         if (animator != null)
@@ -495,8 +483,8 @@ public class ClownAI : MonoBehaviour
         _hasSpeedParameter = HasAnimatorParameter(speedParameter, AnimatorControllerParameterType.Float);
         _hasGroundedParameter = HasAnimatorParameter(groundedParameter, AnimatorControllerParameterType.Bool);
         _hasVerticalVelocityParameter = HasAnimatorParameter(verticalVelocityParameter, AnimatorControllerParameterType.Float);
-        _hasGrabTriggerParameter = HasAnimatorParameter(grabTriggerParameter, AnimatorControllerParameterType.Trigger);
-        _grabStateHash = Animator.StringToHash(grabStateName);
+        _hasSwingTriggerParameter = HasAnimatorParameter(swingTriggerParameter, AnimatorControllerParameterType.Trigger);
+        _swingStateHash = Animator.StringToHash(swingStateName);
     }
 
     bool HasAnimatorParameter(string parameterName, AnimatorControllerParameterType parameterType)
@@ -552,10 +540,10 @@ public class ClownAI : MonoBehaviour
         if (!ShouldRunSimulation())
             return;
 
-        // Grab/slam own the Clown fully while active — don't run chase/target logic that would interrupt them.
-        if (_state == ClownState.Grabbing)
+        // The hammer swing owns the Clown fully while active — don't run chase/target logic that would interrupt it.
+        if (_state == ClownState.Attacking)
         {
-            UpdateGrabbing();
+            UpdateAttacking();
             UpdateAnimatorParameters();
             return;
         }
@@ -604,9 +592,9 @@ public class ClownAI : MonoBehaviour
                     break;
                 case ClownState.Chase:
                     desiredHorizontal = UpdateChase();
-                    if (ShouldStartGrab())
+                    if (ShouldStartAttack())
                     {
-                        EnterGrabbing();
+                        EnterAttacking();
                         desiredHorizontal = Vector3.zero;
                     }
                     break;
@@ -636,7 +624,7 @@ public class ClownAI : MonoBehaviour
     {
         if (clownFootstepAudioSource == null || characterController == null || animator == null)
             return;
-        if (_state == ClownState.Grabbing || _state == ClownState.Recover)
+        if (_state == ClownState.Attacking || _state == ClownState.Recover)
             return;
         if (_state == ClownState.Idle)
         {
@@ -1200,7 +1188,7 @@ public class ClownAI : MonoBehaviour
     /// </summary>
     public bool TryGetChaseTargetPosition(out Vector3 position)
     {
-        if ((_state == ClownState.Chase || _state == ClownState.Grabbing)
+        if ((_state == ClownState.Chase || _state == ClownState.Attacking)
             && _target != null
             && _targetHealth != null
             && !_targetHealth.IsDead
@@ -1540,30 +1528,30 @@ public class ClownAI : MonoBehaviour
         _state = ClownState.Chase;
     }
 
-    // ---- Grab & slam ---------------------------------------------------------------------------------
+    // ---- Hammer swing attack -------------------------------------------------------------------------
 
-    bool ShouldStartGrab()
+    bool ShouldStartAttack()
     {
-        if (Time.time < _suppressGrabAndChaseUntil)
+        if (Time.time < _suppressAttackAndChaseUntil)
             return false;
         if (_state != ClownState.Chase || _target == null || _targetHealth == null || _targetHealth.IsDead)
             return false;
         if (ShouldIgnorePlayer(_targetHealth))
             return false;
 
-        // Don't grab a player who is already ragdolled / held (e.g. by another Clown or a trap).
+        // Don't swing at a player who is already ragdolled / held (e.g. by another Clown or a trap).
         PlayerRagdollController ragdoll = _targetHealth.GetComponent<PlayerRagdollController>();
         if (ragdoll != null && (ragdoll.IsRagdolled || ragdoll.IsHeld || ragdoll.IsGettingUp))
             return false;
 
         Vector3 to = _target.position - transform.position;
-        if (Mathf.Abs(to.y) > Mathf.Max(0.1f, maxGrabVerticalDelta))
+        if (Mathf.Abs(to.y) > Mathf.Max(0.1f, maxAttackVerticalDelta))
             return false;
 
         Vector3 flat = new Vector3(to.x, 0f, to.z);
         float dist = flat.magnitude;
-        // The grab reach grows with the Clown (ClownDynamicScale enlarges its arms).
-        float reach = (grabRange + Mathf.Max(0f, grabHitRangePadding)) * Mathf.Max(1f, transform.lossyScale.x);
+        // The swing reach grows with the Clown (ClownDynamicScale enlarges its arms / hammer).
+        float reach = (attackRange + Mathf.Max(0f, attackRangePadding)) * Mathf.Max(1f, transform.lossyScale.x);
         if (dist > reach)
             return false;
 
@@ -1572,24 +1560,21 @@ public class ClownAI : MonoBehaviour
             Vector3 fwd = new Vector3(transform.forward.x, 0f, transform.forward.z);
             if (fwd.sqrMagnitude < 1e-4f)
                 return false;
-            if (Vector3.Angle(fwd.normalized, flat / dist) > grabHitHalfAngle)
+            if (Vector3.Angle(fwd.normalized, flat / dist) > attackHalfAngle)
                 return false;
         }
 
         return true;
     }
 
-    void EnterGrabbing()
+    void EnterAttacking()
     {
-        _state = ClownState.Grabbing;
-        _grabContactDone = false;
-        _slamDone = false;
-        _grabbingStartedTime = Time.time;
-        _grabbedHealth = _targetHealth;
-        _grabbedRagdoll = _targetHealth != null ? _targetHealth.GetComponent<PlayerRagdollController>() : null;
-        _grabbedNetRagdoll = _targetHealth != null ? _targetHealth.GetComponent<NetworkPlayerRagdoll>() : null;
-        if (_grabBone == null)
-            _grabBone = NetworkPlayerRagdoll.FindGrabBone(transform, grabBoneIndex);
+        _state = ClownState.Attacking;
+        _hammerHitDone = false;
+        _attackStartedTime = Time.time;
+        _attackTargetHealth = _targetHealth;
+        _attackTargetRagdoll = _targetHealth != null ? _targetHealth.GetComponent<PlayerRagdollController>() : null;
+        _attackTargetNetRagdoll = _targetHealth != null ? _targetHealth.GetComponent<NetworkPlayerRagdoll>() : null;
 
         if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
         {
@@ -1599,11 +1584,11 @@ public class ClownAI : MonoBehaviour
         _horizontalVelocity = Vector3.zero;
         _verticalVelocity = Vector3.zero;
         _intendedMoveSpeed = 0f;
-        // Lock the Clown here for the whole grab/slam (see UpdateGrabbing) so its CharacterController can't be
+        // Lock the Clown here for the whole swing (see UpdateAttacking) so its CharacterController can't be
         // depenetrated/ejected through a nearby wall while it's scaled up in a corner.
-        _grabFrozenPosition = transform.position;
+        _attackFrozenPosition = transform.position;
 
-        // Face the player so the grab/slam reads forward.
+        // Face the player so the swing reads forward and the knockback throws them away from the Clown.
         if (_target != null)
         {
             Vector3 to = _target.position - transform.position;
@@ -1613,216 +1598,167 @@ public class ClownAI : MonoBehaviour
         }
 
         // Triggers must route through the NetworkAnimator to replicate; fall back to the local animator offline.
-        if (_hasGrabTriggerParameter && animator != null)
+        if (_hasSwingTriggerParameter && animator != null)
         {
             bool fired = _networkObject != null
                 && _networkObject.IsSpawned
                 && _networkClownAvatar != null
-                && _networkClownAvatar.TryServerSetAnimatorTrigger(grabTriggerParameter);
+                && _networkClownAvatar.TryServerSetAnimatorTrigger(swingTriggerParameter);
             if (!fired)
-                animator.SetTrigger(grabTriggerParameter);
+                animator.SetTrigger(swingTriggerParameter);
         }
 
         // NetworkAnimator replicates parameter state but NOT one-shot triggers, so a client that joins
-        // mid-slam sees an idle Clown while NetworkPlayerRagdoll's held snapshot pins the victim against
-        // a non-animating bone. Record the slam animation so the late-join path in NetworkClownAvatar
-        // can Play() the right state at the right normalized time.
+        // mid-swing would see an idle Clown. Record the swing animation so the late-join path in
+        // NetworkClownAvatar can Play() the right state at the right normalized time.
         if (_networkObject != null && _networkObject.IsSpawned && _networkClownAvatar != null)
-            _networkClownAvatar.ServerMarkSlamAnimationStarted(_grabStateHash, grabClipDurationFallback);
+            _networkClownAvatar.ServerMarkAttackAnimationStarted(_swingStateHash, swingClipDurationFallback);
     }
 
-    void UpdateGrabbing()
+    void UpdateAttacking()
     {
-        // PRIMARY trigger: drive the grab/slam off the actual animation playback (frame-accurate), so the
-        // launch lands exactly on the slam-down with no event-dispatch or wall-clock lag.
-        float clipNorm = GetGrabStateNormalizedTime();
-        if (clipNorm >= 0f)
-        {
-            if (!_grabContactDone && clipNorm >= grabContactNormalizedTime)
-                ServerBeginHeldRagdoll();
-            if (!_slamDone && clipNorm >= slamImpactNormalizedTime)
-                ServerReleaseSlam();
-        }
+        // PRIMARY trigger: drive the hammer hit off the actual animation playback (frame-accurate), so the
+        // launch lands exactly on the swing's impact with no event-dispatch or wall-clock lag.
+        float clipNorm = GetSwingStateNormalizedTime();
+        if (clipNorm >= 0f && !_hammerHitDone && clipNorm >= hammerHitNormalizedTime)
+            ServerHammerHit();
 
-        // SAFETY fallback (only if the animator never reaches the grab state, e.g. missing clip/param).
-        // The animation events OnClownGrabContact / OnClownSlamImpact also call these; all paths are idempotent.
-        if (!_grabContactDone && Time.time >= _grabbingStartedTime + grabContactFallbackDelay)
-            ServerBeginHeldRagdoll();
+        // SAFETY fallback (only if the animator never reaches the swing state, e.g. missing clip/param).
+        if (!_hammerHitDone && Time.time >= _attackStartedTime + hammerHitFallbackDelay)
+            ServerHammerHit();
 
-        if (!_slamDone && Time.time >= _grabbingStartedTime + slamImpactFallbackDelay)
-            ServerReleaseSlam();
-
-        if (_slamDone
-            && (ShouldLeaveGrabAnimation() || Time.time >= _grabbingStartedTime + grabClipDurationFallback + 0.3f))
+        if (_hammerHitDone
+            && (ShouldLeaveSwingAnimation() || Time.time >= _attackStartedTime + swingClipDurationFallback + 0.3f))
             EnterRecover();
 
-        // Hold the Clown rock-solid where it grabbed — do NOT call CharacterController.Move, so it can't be
-        // depenetrated/ejected through a nearby wall (which dragged the pinned player through the map too).
-        transform.position = _grabFrozenPosition;
+        // Hold the Clown rock-solid where it swung — do NOT call CharacterController.Move, so it can't be
+        // depenetrated/ejected through a nearby wall while it's scaled up in a corner.
+        transform.position = _attackFrozenPosition;
         if (navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh)
-            navMeshAgent.nextPosition = _grabFrozenPosition;
+            navMeshAgent.nextPosition = _attackFrozenPosition;
     }
 
-    /// <summary>Normalized time (0-1+) of the Grab and Slam state if it's currently playing (incl. during the
+    /// <summary>Normalized time (0-1+) of the Hammer Swing state if it's currently playing (incl. during the
     /// blend-in, where it's the "next" state); -1 if the animator isn't in that state.</summary>
-    float GetGrabStateNormalizedTime()
+    float GetSwingStateNormalizedTime()
     {
         if (animator == null)
             return -1f;
 
         AnimatorStateInfo cur = animator.GetCurrentAnimatorStateInfo(0);
-        if (cur.shortNameHash == _grabStateHash)
+        if (cur.shortNameHash == _swingStateHash)
             return cur.normalizedTime;
 
         if (animator.IsInTransition(0))
         {
             AnimatorStateInfo next = animator.GetNextAnimatorStateInfo(0);
-            if (next.shortNameHash == _grabStateHash)
+            if (next.shortNameHash == _swingStateHash)
                 return next.normalizedTime;
         }
 
         return -1f;
     }
 
-    bool ShouldLeaveGrabAnimation()
+    bool ShouldLeaveSwingAnimation()
     {
         if (animator == null)
-            return Time.time >= _grabbingStartedTime + grabClipDurationFallback;
+            return Time.time >= _attackStartedTime + swingClipDurationFallback;
 
         AnimatorStateInfo si = animator.GetCurrentAnimatorStateInfo(0);
-        if (si.shortNameHash == _grabStateHash)
+        if (si.shortNameHash == _swingStateHash)
             return si.normalizedTime >= 0.95f;
 
-        return Time.time >= _grabbingStartedTime + grabClipDurationFallback * 0.85f;
+        return Time.time >= _attackStartedTime + swingClipDurationFallback * 0.85f;
     }
 
     void UpdateRecover()
     {
-        if (Time.time >= _suppressGrabAndChaseUntil)
+        if (Time.time >= _suppressAttackAndChaseUntil)
         {
             EnterIdle();
             return;
         }
-        // Stay frozen through the brief post-slam cooldown (same wall-eject safety as the grab).
-        transform.position = _grabFrozenPosition;
+        // Stay frozen through the brief post-attack cooldown (same wall-eject safety as the swing).
+        transform.position = _attackFrozenPosition;
         if (navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh)
-            navMeshAgent.nextPosition = _grabFrozenPosition;
+            navMeshAgent.nextPosition = _attackFrozenPosition;
     }
 
-    /// <summary>Animation event from the Grab and Slam clip: the hands close on the player.</summary>
-    public void OnClownGrabContact() => ServerBeginHeldRagdoll();
-
-    /// <summary>Animation event from the Grab and Slam clip: the body strikes the floor.</summary>
-    public void OnClownSlamImpact() => ServerReleaseSlam();
-
-    void ServerBeginHeldRagdoll()
+    /// <summary>
+    /// The hammer connects: launch the target player into ragdoll (a knockback, like <see cref="RagdollTrap"/>)
+    /// — away from the Clown, redirected to an open direction so a hallway hit isn't flung into a side wall.
+    /// One-shot and idempotent; never pins/holds the player.
+    /// </summary>
+    void ServerHammerHit()
     {
-        if (!ShouldRunSimulation() || _grabContactDone)
-            return;
-        if (_grabbedHealth == null || _grabbedHealth.IsDead)
-            return;
-        if (_grabBone == null)
+        if (!ShouldRunSimulation() || _hammerHitDone)
             return;
 
-        _grabContactDone = true;
-        // Record where the grab point starts so the slam can launch along the hand's actual travel
-        // (the animation turns the body and slams to the side/behind — not the Clown's original facing).
-        _grabContactHandWorldPos = _grabBone.position;
+        _hammerHitDone = true;
 
-        bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
-        if (inNetSession)
-        {
-            if (_grabbedNetRagdoll != null && _networkObject != null && _networkObject.IsSpawned)
-                _grabbedNetRagdoll.BeginHeldByEnemyFromServer(
-                    _networkObject.NetworkObjectId,
-                    grabBoneIndex,
-                    heldPlayerHipsLocalPosOffset,
-                    heldPlayerHipsLocalEulerOffset);
-        }
-        else if (_grabbedRagdoll != null)
-        {
-            _grabbedRagdoll.BeginHeldByPoint(
-                _grabBone,
-                heldPlayerHipsLocalPosOffset,
-                Quaternion.Euler(heldPlayerHipsLocalEulerOffset));
-        }
-    }
-
-    void ServerReleaseSlam()
-    {
-        if (!ShouldRunSimulation() || _slamDone)
+        if (_attackTargetHealth == null || _attackTargetHealth.IsDead)
             return;
 
-        _slamDone = true;
+        // Nothing catches the player early (unlike the old grab), so they're free to run during the wind-up.
+        // Only connect if they're still within the hammer's reach at the impact frame — a clean dodge whiffs.
+        float reach = (attackRange + Mathf.Max(0f, attackRangePadding))
+            * Mathf.Max(1f, transform.lossyScale.x) * Mathf.Max(1f, hammerHitReachMultiplier);
+        Vector3 flatToTarget = _attackTargetHealth.transform.position - transform.position;
+        flatToTarget.y = 0f;
+        if (flatToTarget.magnitude > reach)
+            return; // player got out of the way
 
-        // Launch along the actual slam direction: the horizontal travel of the grab point from where it
-        // grabbed to where it slammed (the animation turns the body, so this is NOT the Clown's facing).
-        Vector3 slamDir = Vector3.zero;
-        if (_grabBone != null)
-        {
-            Vector3 travel = _grabBone.position - _grabContactHandWorldPos;
-            travel.y = 0f;
-            if (travel.sqrMagnitude > 0.0225f) // > ~0.15m of horizontal travel
-                slamDir = travel.normalized;
-            else
-            {
-                // Fallback: from the Clown toward where the hand ended up.
-                Vector3 toHand = _grabBone.position - transform.position;
-                toHand.y = 0f;
-                if (toHand.sqrMagnitude > 0.01f)
-                    slamDir = toHand.normalized;
-            }
-        }
-        if (slamDir.sqrMagnitude < 0.01f)
+        // Knock the player away from the Clown (flattened to horizontal) — the hammer sweeps in front, so this
+        // reads as being clubbed off their feet.
+        Vector3 knockDir = _attackTargetHealth.transform.position - transform.position;
+        knockDir.y = 0f;
+        if (knockDir.sqrMagnitude > 1e-4f)
+            knockDir.Normalize();
+        else
         {
             Vector3 fwd = transform.forward;
             fwd.y = 0f;
-            slamDir = fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.forward;
+            knockDir = fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.forward;
         }
 
-        Vector3 forcePos = _grabBone != null ? _grabBone.position : transform.position;
+        Vector3 hitPoint = _attackTargetHealth.transform.position + Vector3.up;
 
-        // In tight spaces (maze hallways) the raw slam direction can point into a wall, so redirect the
-        // launch to the most open direction (down the hallway) nearest the intended slam direction, and
-        // scale the forward speed down if even the best direction is tight (so the ragdoll can't tunnel
-        // through a nearby wall and fall out of the map).
+        // In tight maze hallways the straight-away direction can point into a wall, so redirect the knockback
+        // to the most open direction (down the hallway) nearest the intent, and scale the forward speed down
+        // if even the best direction is tight (so the ragdoll can't tunnel through a nearby wall).
         float forwardFactor = 1f;
-        if (slamAvoidWalls)
+        if (knockbackAvoidWalls)
         {
-            slamDir = ResolveOpenSlamDirection(forcePos, slamDir, out float clearance);
-            forwardFactor = Mathf.Clamp01(clearance / Mathf.Max(0.5f, slamForwardFullSpeedClearance));
+            knockDir = ResolveOpenKnockbackDirection(hitPoint, knockDir, out float clearance);
+            forwardFactor = Mathf.Clamp01(clearance / Mathf.Max(0.5f, knockbackForwardFullSpeedClearance));
         }
 
-        Vector3 slamForce = (slamDir * slamForwardSpeed * forwardFactor) + (Vector3.down * slamDownwardSpeed);
-
-        // Where the ragdoll will START: clamped to the Clown's side of any wall and onto valid floor, so a
-        // slam against a wall can never spawn the player outside the map.
-        Vector3 safeReleasePos = ComputeSafeReleasePosition(forcePos);
+        Vector3 force = (knockDir * knockbackForwardSpeed * forwardFactor) + (Vector3.up * knockbackUpwardSpeed);
 
         bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
         if (inNetSession)
         {
-            if (_grabbedNetRagdoll != null)
-                _grabbedNetRagdoll.ReleaseSlamFromServer(slamForce, safeReleasePos, slamDamage, (byte)slamForceMode);
+            if (_attackTargetNetRagdoll != null)
+                _attackTargetNetRagdoll.RequestTrapHitFromServer(force, hitPoint, hammerDamage, knockbackForceMode);
         }
-        else if (_grabbedRagdoll != null)
+        else if (_attackTargetRagdoll != null)
         {
             bool survived = true;
-            if (_grabbedHealth != null && slamDamage > 0f)
+            if (hammerDamage > 0f)
             {
-                _grabbedHealth.TakeDamage(slamDamage);
-                survived = !_grabbedHealth.IsDead;
+                _attackTargetHealth.TakeDamage(hammerDamage);
+                survived = !_attackTargetHealth.IsDead;
             }
-            _grabbedRagdoll.ReleaseFromHeld(slamForce, safeReleasePos, slamForceMode, allowAutoRecovery: survived);
+            _attackTargetRagdoll.ActivateRagdoll(force, hitPoint, knockbackForceMode, allowAutoRecovery: survived);
         }
     }
 
     /// <summary>
     /// Returns the horizontal launch direction nearest <paramref name="intendedDir"/> that is actually open
-    /// (so a hallway slam throws the player down the hall instead of into a side wall). If the intended
+    /// (so a hallway hit throws the player down the hall instead of into a side wall). If the intended
     /// direction is already clear it's kept unchanged (open rooms behave as before).
     /// </summary>
-    Vector3 ResolveOpenSlamDirection(Vector3 slamPoint, Vector3 intendedDir, out float chosenClearance)
+    Vector3 ResolveOpenKnockbackDirection(Vector3 hitPoint, Vector3 intendedDir, out float chosenClearance)
     {
         intendedDir.y = 0f;
         if (intendedDir.sqrMagnitude < 1e-4f)
@@ -1834,19 +1770,19 @@ public class ClownAI : MonoBehaviour
             intendedDir.Normalize();
 
         // Everything except actors blocks (auto) unless an explicit mask is set.
-        int mask = slamObstacleMask.value != 0 ? slamObstacleMask.value : ~_wallSlideIgnoreLayers;
-        Vector3 origin = new Vector3(slamPoint.x, slamPoint.y + slamClearanceProbeHeight, slamPoint.z);
+        int mask = knockbackObstacleMask.value != 0 ? knockbackObstacleMask.value : ~_wallSlideIgnoreLayers;
+        Vector3 origin = new Vector3(hitPoint.x, hitPoint.y + knockbackProbeHeight, hitPoint.z);
 
         // If the intended direction is already open, keep it (open room / aligned hallway).
         float intendedClear = MeasureClearance(origin, intendedDir, mask);
-        if (intendedClear >= slamMinClearance)
+        if (intendedClear >= knockbackMinClearance)
         {
             chosenClearance = intendedClear;
             return intendedDir;
         }
 
         // Otherwise sweep the circle: among directions that are open enough, take the one most aligned with
-        // the slam intent; if none are open enough, take the single most open direction (best escape).
+        // the knockback intent; if none are open enough, take the single most open direction (best escape).
         const int samples = 24;
         Vector3 bestOpenAligned = intendedDir;
         float bestOpenAlignedClear = intendedClear;
@@ -1864,7 +1800,7 @@ public class ClownAI : MonoBehaviour
                 mostOpenClear = clear;
                 mostOpenDir = dir;
             }
-            if (clear >= slamMinClearance)
+            if (clear >= knockbackMinClearance)
             {
                 anyOpen = true;
                 float align = Vector3.Dot(dir, intendedDir);
@@ -1888,61 +1824,19 @@ public class ClownAI : MonoBehaviour
 
     float MeasureClearance(Vector3 origin, Vector3 dir, int mask)
     {
-        if (Physics.SphereCast(origin, slamClearanceProbeRadius, dir, out RaycastHit hit,
-                slamClearanceProbeRange, mask, QueryTriggerInteraction.Ignore))
+        if (Physics.SphereCast(origin, knockbackProbeRadius, dir, out RaycastHit hit,
+                knockbackProbeRange, mask, QueryTriggerInteraction.Ignore))
             return hit.distance;
-        return slamClearanceProbeRange;
-    }
-
-    /// <summary>
-    /// A guaranteed-safe world position for the slammed ragdoll to START at: clamped to the Clown's side of
-    /// any wall between the Clown and <paramref name="candidate"/>, and snapped onto valid floor. Falls back
-    /// to the Clown's own grounded position (always valid — it's frozen on the NavMesh) if no floor is found.
-    /// Prevents a slam against a wall from spawning the player outside the map.
-    /// </summary>
-    Vector3 ComputeSafeReleasePosition(Vector3 candidate)
-    {
-        int mask = slamObstacleMask.value != 0 ? slamObstacleMask.value : ~_wallSlideIgnoreLayers;
-        Vector3 clownGround = _grabFrozenPosition; // frozen on the NavMesh during the grab → known good
-        Vector3 clownCenter = clownGround + Vector3.up * Mathf.Max(0.1f, slamClearanceProbeHeight);
-
-        Vector3 result = candidate;
-
-        // 1) Keep it on the Clown's side of any wall between the Clown and the candidate.
-        Vector3 to = candidate - clownCenter;
-        to.y = 0f;
-        float dist = to.magnitude;
-        if (dist > 0.01f)
-        {
-            Vector3 dir = to / dist;
-            if (Physics.SphereCast(clownCenter, slamClearanceProbeRadius, dir, out RaycastHit wallHit, dist,
-                    mask, QueryTriggerInteraction.Ignore))
-            {
-                float safe = Mathf.Max(0f, wallHit.distance - 0.3f);
-                Vector3 clamped = clownCenter + dir * safe;
-                result.x = clamped.x;
-                result.z = clamped.z;
-            }
-        }
-
-        // 2) Snap onto valid floor; if there's none below (e.g. over a gap or still beyond a wall), fall back
-        // to the Clown's grounded spot, which is guaranteed valid.
-        Vector3 rayStart = new Vector3(result.x, clownGround.y + 2f, result.z);
-        if (Physics.Raycast(rayStart, Vector3.down, out RaycastHit floorHit, 6f, mask, QueryTriggerInteraction.Ignore))
-            result.y = floorHit.point.y + 0.15f;
-        else
-            return clownGround;
-
-        return result;
+        return knockbackProbeRange;
     }
 
     void EnterRecover()
     {
         _state = ClownState.Recover;
-        _suppressGrabAndChaseUntil = Time.time + Mathf.Max(0.25f, postSlamCooldownSeconds);
-        _grabbedHealth = null;
-        _grabbedRagdoll = null;
-        _grabbedNetRagdoll = null;
+        _suppressAttackAndChaseUntil = Time.time + Mathf.Max(0.25f, postAttackCooldownSeconds);
+        _attackTargetHealth = null;
+        _attackTargetRagdoll = null;
+        _attackTargetNetRagdoll = null;
         ClearTarget();
 
         if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
@@ -1950,9 +1844,9 @@ public class ClownAI : MonoBehaviour
         _horizontalVelocity = Vector3.zero;
         _intendedMoveSpeed = 0f;
 
-        // Slam clip is finished; clear the late-join snapshot so any subsequent joiner sees the Clown idle.
+        // Swing clip is finished; clear the late-join snapshot so any subsequent joiner sees the Clown idle.
         if (_networkClownAvatar != null)
-            _networkClownAvatar.ServerMarkSlamAnimationEnded();
+            _networkClownAvatar.ServerMarkAttackAnimationEnded();
     }
 
     void SetInvestigationPoint(Vector3 worldPoint)
