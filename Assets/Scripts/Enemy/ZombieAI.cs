@@ -68,6 +68,12 @@ public class ZombieAI : MonoBehaviour
     [SerializeField] LayerMask detectionLineOfSightMask = Physics.DefaultRaycastLayers;
     [Tooltip("Height used for the detection obstruction check so the ray aims roughly at chest level.")]
     [SerializeField] float detectionLineOfSightHeight = 1.1f;
+    [Tooltip(
+        "Seconds between target-acquisition scans (the OverlapSphere + sight rays that only run while the "
+            + "Zombie has NO target). Movement and chasing stay per-frame, so this only adds up to this much "
+            + "latency to first spotting a player — imperceptible at <= 0.15s and a real CPU saver. Set 0 to "
+            + "scan every frame (original behaviour).")]
+    [SerializeField, Min(0f)] float sensingInterval = 0.1f;
 
     [Header("Movement")]
     [SerializeField] float walkSpeed = 1.5f;
@@ -129,6 +135,7 @@ public class ZombieAI : MonoBehaviour
 
     readonly Collider[] _detectionHits = new Collider[16];
     readonly RaycastHit[] _lineOfSightHits = new RaycastHit[16];
+    float _nextSenseTime = -1f;
 
     ZombieState _state;
     Transform _target;
@@ -249,7 +256,15 @@ public class ZombieAI : MonoBehaviour
             return;
 
         UpdatePeriodicGroan();
-        RefreshTarget();
+        // Throttle the acquisition scan. RefreshTarget() already no-ops once a target is held, so this only
+        // paces the expensive search-phase OverlapSphere/rays; chasing and attacking stay per-frame.
+        if (_nextSenseTime < 0f)
+            _nextSenseTime = Time.time + Random.Range(0f, Mathf.Max(0f, sensingInterval)); // stagger agents
+        if (sensingInterval <= 0f || Time.time >= _nextSenseTime)
+        {
+            _nextSenseTime = Time.time + Mathf.Max(0f, sensingInterval);
+            RefreshTarget();
+        }
         if (IsPlayerCarriedByJailor(_targetHealth))
         {
             ClearTarget();
