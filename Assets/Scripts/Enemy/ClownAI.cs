@@ -46,6 +46,12 @@ public class ClownAI : MonoBehaviour
     [SerializeField] bool requireDetectionLineOfSight = true;
     [SerializeField] LayerMask detectionLineOfSightMask = Physics.DefaultRaycastLayers;
     [SerializeField] float detectionLineOfSightHeight = 1.1f;
+    [Tooltip(
+        "Seconds between target-acquisition scans (the OverlapSphere + sight rays that only run while the "
+            + "Clown has NO target). Movement, chasing and losing a target stay per-frame, so this only adds "
+            + "up to this much latency to first spotting a player — imperceptible at <= 0.15s and a real CPU "
+            + "saver. Set 0 to scan every frame (original behaviour).")]
+    [SerializeField, Min(0f)] float sensingInterval = 0.1f;
 
     [Header("Movement")]
     [SerializeField] float walkSpeed = 2.6f;
@@ -211,6 +217,7 @@ public class ClownAI : MonoBehaviour
 
     readonly Collider[] _detectionHits = new Collider[16];
     readonly RaycastHit[] _lineOfSightHits = new RaycastHit[16];
+    float _nextSenseTime = -1f;
 
     ClownState _state;
     Transform _target;
@@ -558,7 +565,15 @@ public class ClownAI : MonoBehaviour
         RecoverNavMeshIfOffMesh();
         UpdatePitStuckWatchdog();
 
-        RefreshTargetFromSightAndHearing();
+        // Throttle the acquisition scan. RefreshTargetFromSightAndHearing() already no-ops once a target is
+        // held, so this only paces the expensive search-phase OverlapSphere/rays; chasing stays per-frame.
+        if (_nextSenseTime < 0f)
+            _nextSenseTime = Time.time + Random.Range(0f, Mathf.Max(0f, sensingInterval)); // stagger agents
+        if (sensingInterval <= 0f || Time.time >= _nextSenseTime)
+        {
+            _nextSenseTime = Time.time + Mathf.Max(0f, sensingInterval);
+            RefreshTargetFromSightAndHearing();
+        }
 
         float loseRadius = Mathf.Max(detectionRadius, hearingRadius, voiceHearRadius)
             * Mathf.Max(1f, loseTargetRadiusMultiplier);

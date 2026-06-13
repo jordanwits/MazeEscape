@@ -477,6 +477,92 @@ public static class MenuWidgets
         segmented.Build(options, height);
         return segmented;
     }
+
+    // ---------------------------------------------------------------- scroll view
+
+    /// <summary>
+    /// Vertical <see cref="ScrollRect"/> whose height hugs its content up to <paramref name="maxHeight"/>,
+    /// then scrolls (mouse wheel, drag, or the slim right-edge scrollbar). Returns the content transform to
+    /// build widgets into. Keeps tall settings panels from overflowing the card/screen.
+    /// </summary>
+    public static RectTransform CreateScrollView(Transform parent, float maxHeight)
+    {
+        RectTransform root = CreateRect("ScrollView", parent);
+        var rootLayout = root.gameObject.AddComponent<LayoutElement>();
+        rootLayout.preferredHeight = maxHeight;
+        rootLayout.flexibleWidth = 1f;
+        rootLayout.flexibleHeight = 0f;
+
+        var scroll = root.gameObject.AddComponent<ScrollRect>();
+        scroll.horizontal = false;
+        scroll.vertical = true;
+        scroll.movementType = ScrollRect.MovementType.Clamped;
+        scroll.scrollSensitivity = 26f;
+        scroll.inertia = false;
+
+        RectTransform viewport = CreateStretched("Viewport", root);
+        viewport.offsetMax = new Vector2(-10f, 0f); // leave room for the scrollbar
+        viewport.gameObject.AddComponent<RectMask2D>();
+        // Transparent raycast target so the wheel scrolls even over the gaps between widgets.
+        var catcher = viewport.gameObject.AddComponent<Image>();
+        catcher.color = Color.clear;
+        catcher.raycastTarget = true;
+
+        RectTransform content = CreateRect("Content", viewport);
+        content.anchorMin = new Vector2(0f, 1f);
+        content.anchorMax = new Vector2(1f, 1f);
+        content.pivot = new Vector2(0.5f, 1f);
+        content.offsetMin = Vector2.zero;
+        content.offsetMax = Vector2.zero;
+        AddVertical(content.gameObject, new RectOffset(0, 6, 0, 0), 10f);
+        var fitter = content.gameObject.AddComponent<ContentSizeFitter>();
+        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        scroll.viewport = viewport;
+        scroll.content = content;
+
+        RectTransform barRt = CreateRect("Scrollbar", root);
+        barRt.anchorMin = new Vector2(1f, 0f);
+        barRt.anchorMax = new Vector2(1f, 1f);
+        barRt.pivot = new Vector2(1f, 0.5f);
+        barRt.sizeDelta = new Vector2(5f, 0f);
+        barRt.anchoredPosition = Vector2.zero;
+        CreateImageStretched(barRt, "Track", MenuTheme.RoundedRect(3), MenuTheme.WithAlpha(Color.white, 0.05f));
+        var scrollbar = barRt.gameObject.AddComponent<Scrollbar>();
+        scrollbar.direction = Scrollbar.Direction.BottomToTop;
+        scrollbar.transition = Selectable.Transition.None;
+        scrollbar.navigation = new Navigation { mode = Navigation.Mode.None };
+
+        RectTransform slideArea = CreateStretched("Sliding Area", barRt);
+        RectTransform handle = CreateStretched("Handle", slideArea);
+        Image handleImg = handle.gameObject.AddComponent<Image>();
+        handleImg.sprite = MenuTheme.RoundedRect(3);
+        handleImg.type = Image.Type.Sliced;
+        handleImg.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.5f);
+        scrollbar.handleRect = handle;
+        scrollbar.targetGraphic = handleImg;
+
+        scroll.verticalScrollbar = scrollbar;
+        scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
+
+        var clamp = root.gameObject.AddComponent<ScrollViewHeightClamp>();
+        clamp.content = content;
+        clamp.target = rootLayout;
+        clamp.maxHeight = maxHeight;
+
+        return content;
+    }
+
+    // ---------------------------------------------------------------- stepper (◀ value ▶)
+
+    /// <summary>Prev/next selector for option lists too long for a segmented control (e.g. resolutions).</summary>
+    public static MenuStepper CreateStepper(Transform parent, float height = 44f)
+    {
+        RectTransform row = CreateRow(parent, "Stepper", height, 8f);
+        var stepper = row.gameObject.AddComponent<MenuStepper>();
+        stepper.Build(height);
+        return stepper;
+    }
 }
 
 /// <summary>Keeps a card root's height matched to its layout-driven content.</summary>
@@ -594,5 +680,95 @@ public sealed class MenuSegmented : MonoBehaviour
             _outlines[i].color = on ? MenuTheme.Amber : MenuTheme.Stroke;
             _labels[i].color = on ? new Color(0.10f, 0.08f, 0.04f, 1f) : MenuTheme.Mist;
         }
+    }
+}
+
+/// <summary>Clamps a scroll view's height to its content up to a maximum, then lets it scroll.</summary>
+[DisallowMultipleComponent]
+public sealed class ScrollViewHeightClamp : MonoBehaviour
+{
+    public RectTransform content;
+    public LayoutElement target;
+    public float maxHeight = 560f;
+
+    void LateUpdate()
+    {
+        if (content == null || target == null)
+            return;
+        float preferred = LayoutUtility.GetPreferredHeight(content);
+        float clamped = Mathf.Min(preferred, maxHeight);
+        if (!Mathf.Approximately(target.preferredHeight, clamped))
+            target.preferredHeight = clamped;
+    }
+}
+
+/// <summary>Prev/next option selector (e.g. screen resolution) — a labelled value flanked by ◀ ▶ buttons.</summary>
+[DisallowMultipleComponent]
+public sealed class MenuStepper : MonoBehaviour
+{
+    public event Action<int> Changed;
+
+    string[] _options = Array.Empty<string>();
+    int _index;
+    TMPro.TextMeshProUGUI _label;
+
+    public int Index => _index;
+
+    public void Build(float height)
+    {
+        Button prev = MenuWidgets.CreateGhostButton(transform, "<", () => Step(-1), false, height, 20f);
+        MenuWidgets.SetLayout(prev.transform, minWidth: 46f, preferredWidth: 46f, minHeight: height, preferredHeight: height);
+
+        RectTransform value = MenuWidgets.CreateRect("Value", transform);
+        MenuWidgets.SetLayout(value, flexibleWidth: 1f, minHeight: height, preferredHeight: height);
+        Image bg = MenuWidgets.CreateImage(value, "Bg", MenuTheme.RoundedRect(6), MenuTheme.WithAlpha(MenuTheme.PanelRaised, 0.6f), true);
+        RectTransform bgRt = bg.rectTransform;
+        bgRt.anchorMin = Vector2.zero;
+        bgRt.anchorMax = Vector2.one;
+        bgRt.offsetMin = Vector2.zero;
+        bgRt.offsetMax = Vector2.zero;
+
+        _label = MenuWidgets.CreateText(value, "Val", "—", 16f, MenuTheme.Mist,
+            MenuWidgets.FontKind.Body, TMPro.TextAlignmentOptions.Center, 1f);
+        RectTransform labelRt = _label.rectTransform;
+        labelRt.anchorMin = Vector2.zero;
+        labelRt.anchorMax = Vector2.one;
+        labelRt.offsetMin = Vector2.zero;
+        labelRt.offsetMax = Vector2.zero;
+
+        Button next = MenuWidgets.CreateGhostButton(transform, ">", () => Step(1), false, height, 20f);
+        MenuWidgets.SetLayout(next.transform, minWidth: 46f, preferredWidth: 46f, minHeight: height, preferredHeight: height);
+    }
+
+    public void SetOptions(string[] options, int index, bool notify)
+    {
+        _options = options ?? Array.Empty<string>();
+        Set(index, notify);
+    }
+
+    public void Set(int index, bool notify)
+    {
+        _index = _options.Length == 0 ? 0 : Mathf.Clamp(index, 0, _options.Length - 1);
+        Refresh();
+        if (notify)
+            Changed?.Invoke(_index);
+    }
+
+    void Step(int direction)
+    {
+        if (_options.Length == 0)
+            return;
+        int next = Mathf.Clamp(_index + direction, 0, _options.Length - 1);
+        if (next == _index)
+            return;
+        _index = next;
+        Refresh();
+        Changed?.Invoke(_index);
+    }
+
+    void Refresh()
+    {
+        if (_label != null)
+            _label.text = _options.Length > 0 ? _options[_index] : "—";
     }
 }
