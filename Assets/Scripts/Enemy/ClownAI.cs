@@ -1408,6 +1408,14 @@ public class ClownAI : MonoBehaviour
         if (flatToTarget.magnitude <= stopDistance)
         {
             _intendedMoveSpeed = 0f;
+            // Keep facing the player while looming. Root rotation in ApplyMovement is skipped at zero velocity,
+            // so without this a player who strafes to the Clown's side/back leaves the attack cone
+            // (ShouldStartAttack) and the stationary Clown would never realign or swing.
+            if (flatToTarget.sqrMagnitude > 1e-4f)
+                transform.rotation = Quaternion.RotateTowards(
+                    transform.rotation,
+                    Quaternion.LookRotation(flatToTarget.normalized),
+                    rotationSpeed * Time.deltaTime);
             return Vector3.zero;
         }
 
@@ -1429,6 +1437,24 @@ public class ClownAI : MonoBehaviour
 
             _lastPathDestination = destination;
             _nextDestinationRefreshTime = Time.time + Mathf.Max(0.02f, destinationRefreshInterval);
+        }
+
+        // The chase path may not actually reach the player — e.g. they slipped onto an unreachable island or
+        // ledge across a gap. The agent then builds a partial/invalid path, drives to its end short of the
+        // target and stops; desiredVelocity decays to ~0, and because it's gone the prop-stuck watchdog never
+        // fires, so the Clown freezes mid-corridor until the player happens to break line of sight. Detect
+        // "path doesn't complete AND the agent has nothing left to follow" and fall back to investigating the
+        // last-known position, exactly as losing line of sight does. desiredVelocity stays high while
+        // genuinely closing on a reachable target (even through a momentarily-partial path), so a normal chase
+        // is never abandoned.
+        if (!navMeshAgent.pathPending
+            && navMeshAgent.pathStatus != NavMeshPathStatus.PathComplete
+            && navMeshAgent.desiredVelocity.sqrMagnitude < 0.04f)
+        {
+            SetInvestigationPoint(_target.position);
+            ClearTarget();
+            EnterInvestigating();
+            return Vector3.zero;
         }
 
         Vector3 desiredVelocity = navMeshAgent.velocity.sqrMagnitude > 0.0001f
@@ -1751,11 +1777,12 @@ public class ClownAI : MonoBehaviour
         Vector3 force = (knockDir * knockbackForwardSpeed * forwardFactor) + (Vector3.up * knockbackUpwardSpeed);
 
         bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
-        if (inNetSession)
+        if (inNetSession && _attackTargetNetRagdoll != null)
         {
-            if (_attackTargetNetRagdoll != null)
-                _attackTargetNetRagdoll.RequestTrapHitFromServer(force, hitPoint, hammerDamage, knockbackForceMode);
+            _attackTargetNetRagdoll.RequestTrapHitFromServer(force, hitPoint, hammerDamage, knockbackForceMode);
         }
+        // No networked ragdoll on the target (misconfigured/non-networked player prefab): fall through to the
+        // local damage + ragdoll path instead of silently whiffing the swing — matches RagdollTrap's behavior.
         else if (_attackTargetRagdoll != null)
         {
             bool survived = true;
@@ -2204,6 +2231,15 @@ public class ClownAI : MonoBehaviour
     void UpdatePitStuckWatchdog()
     {
         if (navMeshAgent == null || !navMeshAgent.enabled)
+        {
+            _pitStuckAccumulatedTime = 0f;
+            return;
+        }
+
+        // Don't rescue-warp while legitimately looming at a cornered chase target: the near-zero NavMesh
+        // velocity there reads as "not progressing," and a warp would yank the Clown off the player. Mirrors
+        // the prop-stuck guard in ApplyMovement.
+        if (IsBlockedByChaseTarget())
         {
             _pitStuckAccumulatedTime = 0f;
             return;
