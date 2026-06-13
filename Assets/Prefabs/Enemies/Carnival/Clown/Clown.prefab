@@ -225,6 +225,135 @@ Transform:
   - {fileID: 4659377852971503931}
   m_Father: {fileID: 8884224566004177040}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &982936998790615495
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1637658871703205999}
+  - component: {fileID: 149746414673848062}
+  m_Layer: 0
+  m_Name: ClownVoiceAudio
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1637658871703205999
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 982936998790615495}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 6462454973257592310}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!82 &149746414673848062
+AudioSource:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 982936998790615495}
+  m_Enabled: 1
+  serializedVersion: 4
+  OutputAudioMixerGroup: {fileID: 0}
+  m_audioClip: {fileID: 0}
+  m_Resource: {fileID: 0}
+  m_PlayOnAwake: 1
+  m_Volume: 1
+  m_Pitch: 1
+  Loop: 0
+  Mute: 0
+  Spatialize: 0
+  SpatializePostEffects: 0
+  Priority: 128
+  DopplerLevel: 1
+  MinDistance: 1
+  MaxDistance: 500
+  Pan2D: 0
+  rolloffMode: 0
+  BypassEffects: 0
+  BypassListenerEffects: 0
+  BypassReverbZones: 0
+  rolloffCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  panLevelCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  spreadCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  reverbZoneMixCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
 --- !u!1 &1236703019492014740
 GameObject:
   m_ObjectHideFlags: 0
@@ -1449,6 +1578,7 @@ Transform:
   - {fileID: 2633196272140448116}
   - {fileID: 6726286622083563746}
   - {fileID: 6360105824694962454}
+  - {fileID: 1637658871703205999}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!95 &5248420488664443651
@@ -1610,12 +1740,22 @@ MonoBehaviour:
   verticalVelocityParameter: VerticalVelocity
   animatorSpeedLerp: 12
   idleSpeedDeadZone: 0.08
-  clownFootstepClip: {fileID: 8300000, guid: 4df5524c407766d41835b2691730694b, type: 3}
+  clownFootstepClips:
+  - {fileID: 8300000, guid: d4fe95c46c84d264dbe3b5812102d07c, type: 3}
+  - {fileID: 8300000, guid: afa6f1f3676825f4c89b1e412801f48a, type: 3}
+  - {fileID: 8300000, guid: 516e24bcb660013419d0366de9161b40, type: 3}
   clownFootstepVolume: 0.45
   clownFootstepAudioSource: {fileID: 2945385858802880822}
   clownMinFootstepMoveSpeed: 0.2
   clownWalkFootstepPhases: {x: 0.13, y: 0.63}
   clownRunFootstepPhases: {x: 0.1, y: 0.6}
+  clownPatrolLaughA: {fileID: 8300000, guid: 92a29750ad9de3649a2bef2e3d845a34, type: 3}
+  clownPatrolLaughB: {fileID: 8300000, guid: ca694aeb27597704d8a15455a1565050, type: 3}
+  clownChaseLaugh: {fileID: 8300000, guid: 814327c63a5ffe14c9dbb5422829e796, type: 3}
+  clownChaseBreathing: {fileID: 8300000, guid: 72b85fc241f57124b90ae7c58e50193b, type: 3}
+  clownVoiceVolume: 0.7
+  clownVoiceAudioSource: {fileID: 149746414673848062}
+  patrolLaughInterval: 4
   swingTriggerParameter: Swing
   swingStateName: Hammer Swing
   swingClipDurationFallback: 3.9
@@ -1652,7 +1792,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 2281878790
+  GlobalObjectIdHash: 824260250
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 1
@@ -1729,6 +1869,7 @@ MonoBehaviour:
   navMeshAgent: {fileID: 7829522732594108920}
   characterController: {fileID: 3180934254569780653}
   maxFootstepObserverDistance: 26
+  maxVoiceObserverDistance: 32
 --- !u!114 &229505518538271492
 MonoBehaviour:
   m_ObjectHideFlags: 0

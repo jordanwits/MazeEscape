@@ -14,6 +14,7 @@ using UnityEngine.AI;
 public class NetworkClownAvatar : NetworkBehaviour
 {
     static readonly List<ulong> s_FootstepObserverClientIds = new(16);
+    static readonly List<ulong> s_VoiceObserverClientIds = new(16);
 
     [SerializeField] Animator clownAnimator;
     [SerializeField] ClownAI clownAI;
@@ -22,6 +23,8 @@ public class NetworkClownAvatar : NetworkBehaviour
     [Header("Audio Networking")]
     [Tooltip("Only clients within this distance receive footstep RPCs. Set >= the footstep AudioSource max distance so everyone who can hear the 3D sound gets the same one-shot.")]
     [SerializeField] float maxFootstepObserverDistance = 26f;
+    [Tooltip("Only clients within this distance receive Clown voice (laugh/breathing) RPCs. Set >= the voice AudioSource max distance.")]
+    [SerializeField] float maxVoiceObserverDistance = 32f;
     ServerNetworkAnimator _serverNetworkAnimator;
 
     /// <summary>
@@ -221,5 +224,53 @@ public class NetworkClownAvatar : NetworkBehaviour
             return;
 
         clownAI.PlayFootstepSfxLocal();
+    }
+
+    /// <summary>
+    /// Server: replicate a Clown voice line (laugh/breathing) to every nearby client so observers hear the
+    /// same 3D one-shot the host's <see cref="ClownAI"/> decided to play. Mirrors the footstep RPC path.
+    /// </summary>
+    public void PlayVoiceSfxForObservers(byte clipId)
+    {
+        if (!IsServer)
+            return;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening)
+        {
+            PlayVoiceSfxClientRpc(clipId);
+            return;
+        }
+
+        float maxDistanceSqr = Mathf.Max(0.01f, maxVoiceObserverDistance) * Mathf.Max(0.01f, maxVoiceObserverDistance);
+        Vector3 clownPosition = transform.position;
+        s_VoiceObserverClientIds.Clear();
+
+        foreach (ulong clientId in nm.ConnectedClientsIds)
+        {
+            if (!nm.ConnectedClients.TryGetValue(clientId, out NetworkClient client) || client?.PlayerObject == null)
+                continue;
+
+            Vector3 listenerPosition = client.PlayerObject.transform.position;
+            if ((listenerPosition - clownPosition).sqrMagnitude <= maxDistanceSqr)
+                s_VoiceObserverClientIds.Add(clientId);
+        }
+
+        if (s_VoiceObserverClientIds.Count == 0)
+            return;
+
+        PlayVoiceSfxClientRpc(clipId, new ClientRpcParams
+        {
+            Send = new ClientRpcSendParams { TargetClientIds = s_VoiceObserverClientIds.ToArray() }
+        });
+    }
+
+    [ClientRpc]
+    void PlayVoiceSfxClientRpc(byte clipId, ClientRpcParams clientRpcParams = default)
+    {
+        if (clownAI == null)
+            return;
+
+        clownAI.PlayVoiceSfxLocal(clipId);
     }
 }

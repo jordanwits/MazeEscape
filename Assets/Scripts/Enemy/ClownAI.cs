@@ -154,8 +154,8 @@ public class ClownAI : MonoBehaviour
     [SerializeField] float idleSpeedDeadZone = 0.08f;
 
     [Header("Audio")]
-    [Tooltip("Single clown footstep clip. Trigger timing uses the walk/run animation phases.")]
-    [SerializeField] AudioClip clownFootstepClip;
+    [Tooltip("Clown footstep clips. One is picked at random per step (no immediate repeat). Trigger timing uses the walk/run animation phases.")]
+    [SerializeField] AudioClip[] clownFootstepClips;
     [SerializeField, Range(0f, 1f)] float clownFootstepVolume = 0.45f;
     [SerializeField] AudioSource clownFootstepAudioSource;
     [SerializeField] float clownMinFootstepMoveSpeed = 0.2f;
@@ -163,6 +163,21 @@ public class ClownAI : MonoBehaviour
     [SerializeField] Vector2 clownWalkFootstepPhases = new Vector2(0.13f, 0.63f);
     [Tooltip("Normalized animation times where run footsteps should fire (x and y in 0-1).")]
     [SerializeField] Vector2 clownRunFootstepPhases = new Vector2(0.1f, 0.6f);
+
+    /// <summary>Which Clown voice clip a (networked) observer should play — sent over the wire as a byte.</summary>
+    public enum ClownVoice : byte { PatrolLaughA, PatrolLaughB, ChaseLaugh, ChaseBreathing }
+
+    [Header("Voice (laughs / breathing)")]
+    [Tooltip("While NOT chasing, these two alternate every patrolLaughInterval seconds (the 'patrol' ambience). Maps to ClownLaugh2 / ClownLaugh3.")]
+    [SerializeField] AudioClip clownPatrolLaughA;
+    [SerializeField] AudioClip clownPatrolLaughB;
+    [Tooltip("While chasing, ClownLaugh1 plays, then ClownBreathing, looping back-to-back until pursuit ends.")]
+    [SerializeField] AudioClip clownChaseLaugh;
+    [SerializeField] AudioClip clownChaseBreathing;
+    [SerializeField, Range(0f, 1f)] float clownVoiceVolume = 0.7f;
+    [SerializeField] AudioSource clownVoiceAudioSource;
+    [Tooltip("Seconds between patrol laughs (alternating ClownLaugh2/ClownLaugh3) while not chasing.")]
+    [SerializeField, Min(0.1f)] float patrolLaughInterval = 4f;
 
     [Header("Hammer swing attack")]
     [Tooltip("Animator Trigger that starts the Hammer Swing state.")]
@@ -282,6 +297,13 @@ public class ClownAI : MonoBehaviour
     int _lastFootstepAnimStateHash;
     float _lastFootstepAnimNormalizedTime;
     bool _hasFootstepAnimSample;
+    int _lastFootstepClipIndex = -1;
+    bool _voiceInitialized;
+    bool _wasVoiceChasing;
+    float _voiceClipEndTime;
+    float _nextPatrolVoiceTime;
+    bool _patrolLaughUseB;
+    bool _chaseNextIsBreathing;
     Vector3 _positionBeforeCharacterMove;
     float _propStuckAccumulatedTime;
     float _nextPropStuckRecoveryTime;
@@ -379,6 +401,7 @@ public class ClownAI : MonoBehaviour
         _networkObject = GetComponent<NetworkObject>();
         _networkClownAvatar = GetComponent<NetworkClownAvatar>();
         ConfigureClownFootstepAudioSource();
+        ConfigureClownVoiceAudioSource();
 
         if (animator != null)
         {
@@ -410,6 +433,24 @@ public class ClownAI : MonoBehaviour
         GameAudioManager.RouteSfxSource(clownFootstepAudioSource);
     }
 
+    void ConfigureClownVoiceAudioSource()
+    {
+        if (clownVoiceAudioSource == null)
+            clownVoiceAudioSource = EnsureNamedChildAudioSource("ClownVoiceAudio");
+        if (clownVoiceAudioSource == null)
+            return;
+
+        clownVoiceAudioSource.playOnAwake = false;
+        clownVoiceAudioSource.loop = false;
+        clownVoiceAudioSource.spatialBlend = 1f;
+        clownVoiceAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
+        clownVoiceAudioSource.minDistance = 2f;
+        clownVoiceAudioSource.maxDistance = 30f;
+        clownVoiceAudioSource.dopplerLevel = 0f;
+        clownVoiceAudioSource.volume = Mathf.Clamp01(clownVoiceVolume);
+        GameAudioManager.RouteSfxSource(clownVoiceAudioSource);
+    }
+
     AudioSource EnsureNamedChildAudioSource(string childName)
     {
         if (string.IsNullOrWhiteSpace(childName))
@@ -436,26 +477,44 @@ public class ClownAI : MonoBehaviour
         if (clownFootstepAudioSource == null)
             clownFootstepAudioSource = EnsureNamedChildAudioSource("ClownFootstepAudio");
 
-        if (clownFootstepClip == null)
+        if (clownFootstepClips == null || clownFootstepClips.Length == 0)
         {
             string[] expected =
             {
-                "JailorFootstep1",
-                "Jailorfootstep2",
-                "Jailorfootstep3",
-                "Jailorfootstep4"
+                "ClownFootstep1",
+                "ClownFootstep2",
+                "ClownFootstep3"
             };
 
+            var resolved = new System.Collections.Generic.List<AudioClip>();
             for (int i = 0; i < expected.Length; i++)
             {
-                AudioClip resolved = FindFirstAudioClipByName(expected[i]);
-                if (resolved == null)
-                    continue;
-
-                clownFootstepClip = resolved;
-                break;
+                AudioClip clip = FindFirstAudioClipByName(expected[i]);
+                if (clip != null)
+                    resolved.Add(clip);
             }
+
+            if (resolved.Count > 0)
+                clownFootstepClips = resolved.ToArray();
         }
+
+        // Only resolve an EXISTING child here — creating/reparenting a GameObject during OnValidate is
+        // disallowed for prefab assets. The runtime ConfigureClownVoiceAudioSource creates it if missing.
+        if (clownVoiceAudioSource == null)
+        {
+            Transform existingVoice = transform.Find("ClownVoiceAudio");
+            if (existingVoice != null)
+                clownVoiceAudioSource = existingVoice.GetComponent<AudioSource>();
+        }
+
+        if (clownPatrolLaughA == null)
+            clownPatrolLaughA = FindFirstAudioClipByName("ClownLaugh2");
+        if (clownPatrolLaughB == null)
+            clownPatrolLaughB = FindFirstAudioClipByName("ClownLaugh3");
+        if (clownChaseLaugh == null)
+            clownChaseLaugh = FindFirstAudioClipByName("ClownLaugh1");
+        if (clownChaseBreathing == null)
+            clownChaseBreathing = FindFirstAudioClipByName("ClownBreathing");
 #endif
     }
 
@@ -539,6 +598,10 @@ public class ClownAI : MonoBehaviour
     {
         if (!ShouldRunSimulation())
             return;
+
+        // Laughs/breathing ambience is independent of the locomotion state machine, so drive it before the
+        // Attacking/Recover early-returns below (otherwise the chase loop would stall mid-swing).
+        HandleClownVoice();
 
         // The hammer swing owns the Clown fully while active — don't run chase/target logic that would interrupt it.
         if (_state == ClownState.Attacking)
@@ -704,10 +767,137 @@ public class ClownAI : MonoBehaviour
 
     public void PlayFootstepSfxLocal()
     {
-        if (clownFootstepAudioSource == null || clownFootstepClip == null)
+        if (clownFootstepAudioSource == null || clownFootstepClips == null || clownFootstepClips.Length == 0)
             return;
 
-        clownFootstepAudioSource.PlayOneShot(clownFootstepClip, Mathf.Clamp01(clownFootstepVolume));
+        // Pick a random clip, avoiding an immediate repeat so consecutive steps don't sound identical.
+        int index;
+        if (clownFootstepClips.Length == 1)
+            index = 0;
+        else
+        {
+            index = Random.Range(0, clownFootstepClips.Length);
+            if (index == _lastFootstepClipIndex)
+                index = (index + 1) % clownFootstepClips.Length;
+        }
+        _lastFootstepClipIndex = index;
+
+        AudioClip clip = clownFootstepClips[index];
+        if (clip != null)
+            clownFootstepAudioSource.PlayOneShot(clip, Mathf.Clamp01(clownFootstepVolume));
+    }
+
+    // ---- Voice (laughs / breathing) -----------------------------------------------------------------
+
+    /// <summary>
+    /// Server-side ambience driver (Update is server-gated). While NOT chasing, alternates ClownLaugh2 /
+    /// ClownLaugh3 every <see cref="patrolLaughInterval"/> seconds. While chasing, chains ClownLaugh1 →
+    /// ClownBreathing → ClownLaugh1 … back-to-back until pursuit ends, then falls back to the patrol laughs.
+    /// Each chosen clip is replicated to nearby observers (mirrors the footstep RPC path).
+    /// </summary>
+    void HandleClownVoice()
+    {
+        if (clownVoiceAudioSource == null)
+            return;
+
+        bool chasing = _state == ClownState.Chase || _state == ClownState.Attacking;
+
+        // First run, or a pursuit<->patrol transition: restart the relevant cadence.
+        if (!_voiceInitialized || chasing != _wasVoiceChasing)
+        {
+            _voiceInitialized = true;
+            _wasVoiceChasing = chasing;
+            if (chasing)
+            {
+                // Pursuit always opens with the chase laugh, then breathing, looping.
+                _chaseNextIsBreathing = false;
+                PlayNextChaseVoice();
+            }
+            else
+            {
+                // Fall back to patrol ambience; first laugh after the interval (no instant bark on losing chase).
+                _nextPatrolVoiceTime = Time.time + Mathf.Max(0.1f, patrolLaughInterval);
+            }
+            return;
+        }
+
+        if (chasing)
+        {
+            if (Time.time >= _voiceClipEndTime)
+                PlayNextChaseVoice();
+        }
+        else if (Time.time >= _nextPatrolVoiceTime)
+        {
+            PlayNextPatrolVoice();
+            _nextPatrolVoiceTime = Time.time + Mathf.Max(0.1f, patrolLaughInterval);
+        }
+    }
+
+    void PlayNextChaseVoice()
+    {
+        bool breathing = _chaseNextIsBreathing;
+        _chaseNextIsBreathing = !_chaseNextIsBreathing;
+
+        AudioClip clip = breathing ? clownChaseBreathing : clownChaseLaugh;
+        ClownVoice which = breathing ? ClownVoice.ChaseBreathing : ClownVoice.ChaseLaugh;
+
+        // Schedule the next link off this clip's length so they play back-to-back; if a clip is missing,
+        // use a short fallback so the loop still advances instead of stalling.
+        float length = clip != null ? clip.length : 0f;
+        _voiceClipEndTime = Time.time + Mathf.Max(0.15f, length);
+        NotifyVoiceSfx(which);
+    }
+
+    void PlayNextPatrolVoice()
+    {
+        bool useB = _patrolLaughUseB;
+        _patrolLaughUseB = !_patrolLaughUseB;
+        NotifyVoiceSfx(useB ? ClownVoice.PatrolLaughB : ClownVoice.PatrolLaughA);
+    }
+
+    void NotifyVoiceSfx(ClownVoice clip)
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (_networkClownAvatar != null
+            && nm != null
+            && nm.IsListening
+            && _networkObject != null
+            && _networkObject.IsSpawned)
+        {
+            _networkClownAvatar.PlayVoiceSfxForObservers((byte)clip);
+            return;
+        }
+
+        PlayVoiceSfxLocal((byte)clip);
+    }
+
+    public void PlayVoiceSfxLocal(byte clipId)
+    {
+        if (clownVoiceAudioSource == null)
+            return;
+
+        AudioClip clip = GetVoiceClip((ClownVoice)clipId);
+        if (clip == null)
+            return;
+
+        // clip + Play (not PlayOneShot) so a new line cleanly interrupts the previous one — e.g. the chase
+        // laugh cutting off a patrol laugh the instant pursuit starts.
+        clownVoiceAudioSource.Stop();
+        clownVoiceAudioSource.clip = clip;
+        clownVoiceAudioSource.volume = Mathf.Clamp01(clownVoiceVolume);
+        clownVoiceAudioSource.Play();
+    }
+
+    AudioClip GetVoiceClip(ClownVoice clip)
+    {
+        switch (clip)
+        {
+            case ClownVoice.PatrolLaughA: return clownPatrolLaughA;
+            case ClownVoice.PatrolLaughB: return clownPatrolLaughB;
+            case ClownVoice.ChaseLaugh: return clownChaseLaugh;
+            case ClownVoice.ChaseBreathing: return clownChaseBreathing;
+            default: return null;
+        }
     }
 
     /// <summary>Moves the CharacterController root and syncs <see cref="NavMeshAgent"/> to a NavMesh-safe point.</summary>
