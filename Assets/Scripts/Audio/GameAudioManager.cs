@@ -19,6 +19,7 @@ public sealed class GameAudioManager : MonoBehaviour
     const string PrefsMusic = "GameAudio.MusicLinear";
     const string PrefsSfx = "GameAudio.SfxLinear";
     const string PrefsVoice = "GameAudio.VoiceLinear";
+    const string PrefsClownBreathing = "GameAudio.ClownBreathingLinear";
 
     public static GameAudioManager Instance { get; private set; }
 
@@ -34,6 +35,7 @@ public sealed class GameAudioManager : MonoBehaviour
     float _musicLinear = 1f;
     float _sfxLinear = 1f;
     float _voiceLinear = 1f;
+    float _clownBreathingLinear = 1f;
 
     public AudioMixer MainMixer => _mixer;
     public AudioMixerGroup MusicGroup => _musicGroup;
@@ -44,6 +46,7 @@ public sealed class GameAudioManager : MonoBehaviour
     public float MusicVolumeLinear => _musicLinear;
     public float SfxVolumeLinear => _sfxLinear;
     public float VoiceVolumeLinear => _voiceLinear;
+    public float ClownBreathingVolumeLinear => _clownBreathingLinear;
 
     void Awake()
     {
@@ -97,6 +100,7 @@ public sealed class GameAudioManager : MonoBehaviour
         _musicLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsMusic, 1f));
         _sfxLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsSfx, 1f));
         _voiceLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsVoice, 1f));
+        _clownBreathingLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsClownBreathing, 1f));
     }
 
     void SavePrefs()
@@ -105,6 +109,7 @@ public sealed class GameAudioManager : MonoBehaviour
         PlayerPrefs.SetFloat(PrefsMusic, _musicLinear);
         PlayerPrefs.SetFloat(PrefsSfx, _sfxLinear);
         PlayerPrefs.SetFloat(PrefsVoice, _voiceLinear);
+        PlayerPrefs.SetFloat(PrefsClownBreathing, _clownBreathingLinear);
         PlayerPrefs.Save();
     }
 
@@ -134,6 +139,12 @@ public sealed class GameAudioManager : MonoBehaviour
         _voiceLinear = Mathf.Clamp01(linear01);
         SavePrefs();
         ApplyBus(ExposedVoiceVolume, _voiceLinear);
+    }
+
+    public void SetClownBreathingVolumeLinear(float linear01)
+    {
+        _clownBreathingLinear = Mathf.Clamp01(linear01);
+        SavePrefs();
     }
 
     void ApplyAllToMixer()

@@ -87,6 +87,14 @@ public class PlayerRagdollController : MonoBehaviour
     public int RagdollBodyCount => _ragdollBodies.Count;
 
     /// <summary>
+    /// The cached ragdoll bone colliders (enabled only while ragdolled). Exposed so an enemy that knocks the
+    /// player down can tell its own CharacterController to <see cref="Physics.IgnoreCollision(Collider,Collider)"/>
+    /// them: a freshly-ragdolled body sits at the enemy's feet with these colliders live, and a large enemy
+    /// capsule depenetrating against them on a non-convex (maze) floor can be ejected straight down through it.
+    /// </summary>
+    public IReadOnlyList<Collider> RagdollColliders => _ragdollColliders;
+
+    /// <summary>
     /// Fired by the local recovery path (auto land-up or auto-recover after delay) right after the root has
     /// been snapped to the standing pose. The networking layer subscribes on the owner so it can replicate the
     /// owner's authoritative recovery pose to observers — without it, each observer's local ragdoll physics

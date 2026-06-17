@@ -25,8 +25,7 @@ public class ClownAI : MonoBehaviour
         Patrol,
         Investigating,
         Chase,
-        Attacking,
-        Recover
+        Attacking
     }
 
     [Header("References")]
@@ -127,6 +126,13 @@ public class ClownAI : MonoBehaviour
     [SerializeField, Min(0.25f)] float pitStuckRescueCooldown = 1.5f;
     [Tooltip("Vertical lift applied after pit-stuck warp so the agent does not immediately re-sample pit-floor NavMesh.")]
     [SerializeField, Min(0f)] float pitStuckRescueLift = 0.1f;
+    [Tooltip(
+        "Floor-tunnel guard (ApplyMovement): the most the Clown may descend in ONE frame BEYOND its gravity "
+            + "step before that drop is treated as a CharacterController depenetration shoving it through the "
+            + "non-convex floor (e.g. against the player ragdoll it just clubbed) and is cancelled. Must sit "
+            + "above any legitimate single-frame fall (gravity / ramp / step ~= stepOffset) and below an eject "
+            + "(which punches the capsule down by a large fraction of its height).")]
+    [SerializeField, Min(0.05f)] float floorTunnelMaxExtraDrop = 0.3f;
 
     [Header("Patrol")]
     [SerializeField] float patrolSpeed = 2.2f;
@@ -607,21 +613,15 @@ public class ClownAI : MonoBehaviour
             return;
 
         // Laughs/breathing ambience is independent of the locomotion state machine, so drive it before the
-        // Attacking/Recover early-returns below (otherwise the chase loop would stall mid-swing).
+        // Attacking early-return below (otherwise the chase loop would stall mid-swing).
         HandleClownVoice();
 
-        // The hammer swing owns the Clown fully while active — don't run chase/target logic that would interrupt it.
+        // The hammer swing no longer freezes the Clown — it keeps chasing while the swing plays so it can
+        // attack on the run and land the hit on a fleeing player instead of stopping dead and whiffing.
+        // UpdateAttacking drives the movement, the impact poll and the end-of-swing handoff itself.
         if (_state == ClownState.Attacking)
         {
             UpdateAttacking();
-            UpdateAnimatorParameters();
-            return;
-        }
-
-        if (_state == ClownState.Recover)
-        {
-            UpdateRecover();
-            UpdateAnimatorParameters();
             return;
         }
 
@@ -670,11 +670,10 @@ public class ClownAI : MonoBehaviour
                     break;
                 case ClownState.Chase:
                     desiredHorizontal = UpdateChase();
+                    // Begin the swing the instant it's in range, but keep the chase velocity — the Clown
+                    // swings on the run and lunges into the player instead of stopping to wind up.
                     if (ShouldStartAttack())
-                    {
                         EnterAttacking();
-                        desiredHorizontal = Vector3.zero;
-                    }
                     break;
             }
         }
@@ -702,7 +701,7 @@ public class ClownAI : MonoBehaviour
     {
         if (clownFootstepAudioSource == null || characterController == null || animator == null)
             return;
-        if (_state == ClownState.Attacking || _state == ClownState.Recover)
+        if (_state == ClownState.Attacking)
             return;
         if (_state == ClownState.Idle)
         {
@@ -897,9 +896,12 @@ public class ClownAI : MonoBehaviour
 
         // clip + Play (not PlayOneShot) so a new line cleanly interrupts the previous one — e.g. the chase
         // laugh cutting off a patrol laugh the instant pursuit starts.
+        float breathingMult = (ClownVoice)clipId == ClownVoice.ChaseBreathing && GameAudioManager.Instance != null
+            ? GameAudioManager.Instance.ClownBreathingVolumeLinear
+            : 1f;
         clownVoiceAudioSource.Stop();
         clownVoiceAudioSource.clip = clip;
-        clownVoiceAudioSource.volume = Mathf.Clamp01(clownVoiceVolume);
+        clownVoiceAudioSource.volume = Mathf.Clamp01(clownVoiceVolume * breathingMult);
         clownVoiceAudioSource.Play();
     }
 
@@ -1564,7 +1566,7 @@ public class ClownAI : MonoBehaviour
     /// </summary>
     bool IsBlockedByChaseTarget()
     {
-        if (_state != ClownState.Chase || _target == null)
+        if ((_state != ClownState.Chase && _state != ClownState.Attacking) || _target == null)
             return false;
 
         Vector3 flat = _target.position - transform.position;
@@ -1807,19 +1809,17 @@ public class ClownAI : MonoBehaviour
         _attackTargetRagdoll = _targetHealth != null ? _targetHealth.GetComponent<PlayerRagdollController>() : null;
         _attackTargetNetRagdoll = _targetHealth != null ? _targetHealth.GetComponent<NetworkPlayerRagdoll>() : null;
 
-        if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
-        {
-            navMeshAgent.isStopped = true;
-            navMeshAgent.ResetPath();
-        }
-        _horizontalVelocity = Vector3.zero;
-        _verticalVelocity = Vector3.zero;
-        _intendedMoveSpeed = 0f;
-        // Lock the Clown here for the whole swing (see UpdateAttacking) so its CharacterController can't be
-        // depenetrated/ejected through a nearby wall while it's scaled up in a corner.
-        _attackFrozenPosition = transform.position;
+        // Stop the Clown's capsule colliding with this player's ragdoll bone colliders. The hit ragdolls them
+        // right at the Clown's feet; depenetrating the scaled-up capsule against them on the non-convex maze
+        // floor is what punched the Clown down through it — worst over a DEAD body, which never gets up and
+        // which the Clown then walks over while patrolling away. Set here, BEFORE the hit, so it's in place the
+        // instant the colliders go live (it persists across their enable/disable in Unity 6). The player's MAIN
+        // CharacterController is left colliding, so a standing player is still body-blocked, and the hit is
+        // distance-based (no grab), so nothing needs the capsule to touch the limp body.
+        IgnorePlayerRagdollCollisions(_attackTargetRagdoll);
 
-        // Face the player so the swing reads forward and the knockback throws them away from the Clown.
+        // Face the player so the swing reads forward and the knockback throws them away from the Clown. The
+        // Clown is NOT frozen — UpdateAttacking keeps it chasing so it swings on the run.
         if (_target != null)
         {
             Vector3 to = _target.position - transform.position;
@@ -1848,6 +1848,9 @@ public class ClownAI : MonoBehaviour
 
     void UpdateAttacking()
     {
+        RecoverNavMeshIfOffMesh();
+        UpdatePitStuckWatchdog();
+
         // PRIMARY trigger: drive the hammer hit off the actual animation playback (frame-accurate), so the
         // launch lands exactly on the swing's impact with no event-dispatch or wall-clock lag.
         float clipNorm = GetSwingStateNormalizedTime();
@@ -1858,15 +1861,49 @@ public class ClownAI : MonoBehaviour
         if (!_hammerHitDone && Time.time >= _attackStartedTime + hammerHitFallbackDelay)
             ServerHammerHit();
 
-        if (_hammerHitDone
-            && (ShouldLeaveSwingAnimation() || Time.time >= _attackStartedTime + swingClipDurationFallback + 0.3f))
-            EnterRecover();
+        // AFTER the hit connects: anchor the Clown in place (no CharacterController.Move) for the rest of the
+        // swing. The freshly-spawned player ragdoll has its bone colliders enabled right at the Clown's feet,
+        // and the scaled-up capsule would otherwise depenetrate against them (or a corner wall) and eject the
+        // CLOWN down through the non-convex maze floor — the same wall/floor-eject safety the old frozen swing
+        // had, now scoped to just the brief follow-through so the pre-impact lunge stays mobile (swing on run).
+        if (_hammerHitDone)
+        {
+            transform.position = _attackFrozenPosition;
+            if (navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh)
+                navMeshAgent.nextPosition = _attackFrozenPosition;
+            _horizontalVelocity = Vector3.zero;
+            _verticalVelocity = Vector3.zero;
+            _intendedMoveSpeed = 0f;
+            UpdateAnimatorParameters();
 
-        // Hold the Clown rock-solid where it swung — do NOT call CharacterController.Move, so it can't be
-        // depenetrated/ejected through a nearby wall while it's scaled up in a corner.
-        transform.position = _attackFrozenPosition;
-        if (navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh)
-            navMeshAgent.nextPosition = _attackFrozenPosition;
+            // Swing clip essentially done → resume chasing (a short cooldown gates the next swing; the ragdoll
+            // check in ShouldStartAttack already stops it clubbing a downed player).
+            if (ShouldLeaveSwingAnimation() || Time.time >= _attackStartedTime + swingClipDurationFallback + 0.3f)
+                EndSwing();
+            return;
+        }
+
+        // BEFORE the hit: keep chasing the player so the Clown lunges in and lands the hit on a fleeing target
+        // instead of freezing and whiffing. UpdateChase's loom-stop holds it at contact once it arrives, so it
+        // presses into the player and faces them through the wind-up rather than overrunning.
+        Vector3 desired = Vector3.zero;
+        bool targetValid = _target != null && _targetHealth != null && !_targetHealth.IsDead
+            && !ShouldIgnorePlayer(_targetHealth);
+        if (targetValid)
+            desired = UpdateChase();
+
+        // UpdateChase can hand the Clown off to Investigating/Idle if the player became unreachable mid-swing;
+        // if so, let the animator finish the swing on its own and just arm the cooldown.
+        if (_state != ClownState.Attacking)
+        {
+            if (_networkClownAvatar != null)
+                _networkClownAvatar.ServerMarkAttackAnimationEnded();
+            _suppressAttackAndChaseUntil = Time.time + Mathf.Max(0.25f, postAttackCooldownSeconds);
+            return;
+        }
+
+        ApplyMovement(desired);
+        UpdateAnimatorParameters();
     }
 
     /// <summary>Normalized time (0-1+) of the Hammer Swing state if it's currently playing (incl. during the
@@ -1902,19 +1939,6 @@ public class ClownAI : MonoBehaviour
         return Time.time >= _attackStartedTime + swingClipDurationFallback * 0.85f;
     }
 
-    void UpdateRecover()
-    {
-        if (Time.time >= _suppressAttackAndChaseUntil)
-        {
-            EnterIdle();
-            return;
-        }
-        // Stay frozen through the brief post-attack cooldown (same wall-eject safety as the swing).
-        transform.position = _attackFrozenPosition;
-        if (navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh)
-            navMeshAgent.nextPosition = _attackFrozenPosition;
-    }
-
     /// <summary>
     /// The hammer connects: launch the target player into ragdoll (a knockback, like <see cref="RagdollTrap"/>)
     /// — away from the Clown, redirected to an open direction so a hallway hit isn't flung into a side wall.
@@ -1926,6 +1950,12 @@ public class ClownAI : MonoBehaviour
             return;
 
         _hammerHitDone = true;
+
+        // Anchor the Clown where it connected for the rest of the swing (see UpdateAttacking). The hit spawns
+        // the player ragdoll (bone colliders enabled) right at the Clown's feet; without this, the scaled-up
+        // CharacterController's next Move() depenetrates against those colliders and ejects the CLOWN down
+        // through the non-convex maze floor.
+        _attackFrozenPosition = transform.position;
 
         if (_attackTargetHealth == null || _attackTargetHealth.IsDead)
             return;
@@ -1965,6 +1995,9 @@ public class ClownAI : MonoBehaviour
         }
 
         Vector3 force = (knockDir * knockbackForwardSpeed * forwardFactor) + (Vector3.up * knockbackUpwardSpeed);
+
+        // Re-affirm the ragdoll-collider ignore at the exact moment the bone colliders go live (idempotent).
+        IgnorePlayerRagdollCollisions(_attackTargetRagdoll);
 
         bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
         if (inNetSession && _attackTargetNetRagdoll != null)
@@ -2062,19 +2095,54 @@ public class ClownAI : MonoBehaviour
         return knockbackProbeRange;
     }
 
-    void EnterRecover()
+    /// <summary>
+    /// Tells the Clown's CharacterController to pass through the given player's ragdoll bone colliders — the
+    /// limbs that go live the instant the hammer ragdolls them, right at the Clown's feet. Without this the
+    /// scaled-up capsule depenetrates against them on the non-convex maze floor and can be ejected straight
+    /// DOWN through it — most reliably over a DEAD body, which never gets up and which the Clown walks over as
+    /// it patrols away. The hit is distance-based (no grab) and the player's MAIN CharacterController is left
+    /// colliding, so a standing player is still body-blocked; only the limp ragdoll limbs are ignored. The
+    /// ignore persists across the colliders' enable/disable (Unity 6) and is harmless to set repeatedly.
+    /// </summary>
+    void IgnorePlayerRagdollCollisions(PlayerRagdollController ragdoll)
     {
-        _state = ClownState.Recover;
+        if (ragdoll == null || characterController == null)
+            return;
+
+        IReadOnlyList<Collider> cols = ragdoll.RagdollColliders;
+        if (cols == null)
+            return;
+
+        for (int i = 0; i < cols.Count; i++)
+        {
+            Collider col = cols[i];
+            if (col != null)
+                Physics.IgnoreCollision(characterController, col, true);
+        }
+    }
+
+    /// <summary>
+    /// Ends the swing and hands control straight back to the chase (no frozen recover state). A short
+    /// <see cref="postAttackCooldownSeconds"/> cooldown gates the next swing, but the Clown keeps pursuing in
+    /// the meantime — so it stays on the player and clubs them again the moment they recover, instead of
+    /// standing still or running in place.
+    /// </summary>
+    void EndSwing()
+    {
         _suppressAttackAndChaseUntil = Time.time + Mathf.Max(0.25f, postAttackCooldownSeconds);
         _attackTargetHealth = null;
         _attackTargetRagdoll = null;
         _attackTargetNetRagdoll = null;
-        ClearTarget();
+
+        // Keep chasing the same live target; only drop it if it died / became unreachable so we don't loiter
+        // on a stale target (the normal chase flow re-acquires or falls back to patrol next frame).
+        if (_targetHealth == null || _targetHealth.IsDead || ShouldIgnorePlayer(_targetHealth))
+            ClearTarget();
+
+        _state = ClownState.Chase;
 
         if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
             navMeshAgent.isStopped = false;
-        _horizontalVelocity = Vector3.zero;
-        _intendedMoveSpeed = 0f;
 
         // Swing clip is finished; clear the late-join snapshot so any subsequent joiner sees the Clown idle.
         if (_networkClownAvatar != null)
@@ -2256,6 +2324,26 @@ public class ClownAI : MonoBehaviour
         motion.y = _verticalVelocity.y * Time.deltaTime;
         characterController.Move(motion);
 
+        // Floor-tunnel guard. CharacterController.Move() depenetrates the capsule against every collider it
+        // overlaps. Right after a hammer hit the just-clubbed player's ragdoll has its bone colliders enabled
+        // at the Clown's feet (and a hard lunge can leave the scaled-up capsule pressed into a corner); on the
+        // maze's non-convex MeshCollider floor that depenetration can shove the capsule straight DOWN through
+        // the floor — the "Clown falls through the floor when he hits me" bug. Gravity is the only thing that
+        // should ever lower the body, so any descent this frame BEYOND the intended gravity step is a
+        // depenetration shove: cancel just that vertical excess (the horizontal pop-out of the wall/ragdoll is
+        // kept) and pin the body back on the floor. A real gravity fall descends by exactly the intended step,
+        // so it stays under the threshold and is never blocked — the pit watchdog still handles genuine pits.
+        float intendedDrop = Mathf.Max(0f, -motion.y);
+        float actualDrop = _positionBeforeCharacterMove.y - transform.position.y;
+        if (actualDrop > intendedDrop + Mathf.Max(0.05f, floorTunnelMaxExtraDrop) + characterController.skinWidth)
+        {
+            Vector3 corrected = transform.position;
+            corrected.y = _positionBeforeCharacterMove.y - intendedDrop;
+            transform.position = corrected;
+            if (_verticalVelocity.y < 0f)
+                _verticalVelocity.y = -groundedStickDown;
+        }
+
         if (navMeshAgent != null && navMeshAgent.enabled)
             navMeshAgent.nextPosition = transform.position;
 
@@ -2426,15 +2514,12 @@ public class ClownAI : MonoBehaviour
             return;
         }
 
-        // Don't rescue-warp while legitimately looming at a cornered chase target: the near-zero NavMesh
-        // velocity there reads as "not progressing," and a warp would yank the Clown off the player. Mirrors
-        // the prop-stuck guard in ApplyMovement.
-        if (IsBlockedByChaseTarget())
-        {
-            _pitStuckAccumulatedTime = 0f;
-            return;
-        }
-
+        // Do NOT skip this while IsBlockedByChaseTarget() (looming at the player). The rescue only fires when
+        // the Clown sits >= pitStuckBelowNavMeshThreshold BELOW the nearest NavMesh, which never happens during
+        // a normal loom on solid floor (drop ~= 0) — but DOES happen if a hammer-hit depenetration punched him
+        // through the floor while looming over the player he just clubbed. Gating this on the loom (as it used
+        // to) disabled the exact rescue that case needs, so the Clown stayed under the floor; the drop
+        // threshold below already keeps a legitimate loom from being warped off its target.
         if (Time.time < _nextPitStuckCheckTime)
             return;
         _nextPitStuckCheckTime = Time.time + Mathf.Max(0.05f, pitStuckCheckInterval);
