@@ -154,7 +154,7 @@ public sealed class PauseMenuController : MonoBehaviour
         block.anchoredPosition = new Vector2(150f, -150f);
         block.sizeDelta = new Vector2(620f, 240f);
 
-        TextMeshProUGUI overline = MenuWidgets.CreateText(block, "Overline", "MAZE ESCAPE", 15f,
+        TextMeshProUGUI overline = MenuWidgets.CreateText(block, "Overline", "DETOUR", 15f,
             MenuTheme.WithAlpha(MenuTheme.Amber, 0.85f), MenuWidgets.FontKind.Body, TextAlignmentOptions.Left, 12f);
         SetTop(overline.rectTransform, 0f, 24f);
 

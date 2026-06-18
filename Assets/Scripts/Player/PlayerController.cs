@@ -190,6 +190,13 @@ public partial class PlayerController : MonoBehaviour
     Vector2 _moveInput;
     Vector3 _groundMoveThisFrame;
     float _currentHorizontalSpeed;
+
+    // External knockback (e.g. a swinging axe trap). Non-ragdoll: integrated into the CharacterController
+    // move and briefly suppresses movement input so the external force takes priority over the player.
+    Vector3 _externalPushVelocity;          // horizontal world velocity; bleeds off over time
+    float _externalPushControlLockTimer;    // seconds remaining where movement input is ignored
+    const float ExternalPushDecayPerSecond = 40f;
+
     readonly Collider[] _upperBodyWallHits = new Collider[16];
     bool _pickupPromptVisible;
 
@@ -316,6 +323,22 @@ public partial class PlayerController : MonoBehaviour
         animator.SetFloat(animSpeedParameter, 1f);
 
         _ragdollRecoverAnimatorSuppressUntil = Time.time + Mathf.Max(0f, ragdollRecoverAnimatorSuppressSeconds);
+    }
+
+    /// <summary>
+    /// Apply a non-ragdoll knockback that moves the CharacterController and briefly overrides movement input
+    /// (so an external force such as a swinging trap "wins" over the player's own walking). World space.
+    /// Call this on the player that owns this controller (movement is owner-authoritative).
+    /// </summary>
+    public void ApplyExternalPush(Vector3 horizontalVelocity, float upwardVelocity, float controlLockSeconds)
+    {
+        horizontalVelocity.y = 0f;
+        _externalPushVelocity = horizontalVelocity;
+        _externalPushControlLockTimer = Mathf.Max(_externalPushControlLockTimer, Mathf.Max(0f, controlLockSeconds));
+        // Cancel current input momentum so the shove starts clean and isn't fought by leftover walk velocity.
+        _horizontalVelocity = Vector3.zero;
+        if (upwardVelocity > 0f)
+            _verticalVelocity.y = Mathf.Max(_verticalVelocity.y, upwardVelocity);
     }
 
     void Awake()
@@ -604,6 +627,16 @@ public partial class PlayerController : MonoBehaviour
         Vector3 move = BuildGroundMoveDirection(_moveInput);
         float inputMagnitude = Mathf.Clamp01(_moveInput.magnitude);
 
+        // While an external push is asserting movement priority (e.g. a trap shove), ignore walk/sprint/jump
+        // input so the push wins instead of the player walking out of it.
+        if (_externalPushControlLockTimer > 0f)
+        {
+            _externalPushControlLockTimer -= Time.deltaTime;
+            inputMagnitude = 0f;
+            sprintHeld = false;
+            jumpPressed = false;
+        }
+
         _isSprinting = sprintHeld && _currentStamina > 0f && inputMagnitude > 0.01f;
         UpdateStamina(sprintHeld, _isSprinting);
 
@@ -630,6 +663,16 @@ public partial class PlayerController : MonoBehaviour
         _currentHorizontalSpeed = horizontal.magnitude;
         Vector3 motion = horizontal * Time.deltaTime;
         motion.y = _verticalVelocity.y * Time.deltaTime;
+
+        // External knockback (trap push): add its displacement on top of normal movement and bleed it off.
+        // Combined with the input lock above, this lets the axe shove the player without ragdolling them.
+        if (_externalPushVelocity.sqrMagnitude > 0.0001f)
+        {
+            motion += _externalPushVelocity * Time.deltaTime;
+            _externalPushVelocity = Vector3.MoveTowards(
+                _externalPushVelocity, Vector3.zero, ExternalPushDecayPerSecond * Time.deltaTime);
+        }
+
         bool wasGroundedBeforeMove = characterController.isGrounded;
         characterController.Move(motion);
 

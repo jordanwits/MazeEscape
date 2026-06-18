@@ -167,7 +167,7 @@ public sealed class MainMenuController : MonoBehaviour
         block.anchorMin = new Vector2(0f, 1f);
         block.anchorMax = new Vector2(0f, 1f);
         block.pivot = new Vector2(0f, 1f);
-        block.anchoredPosition = new Vector2(150f, -110f);
+        block.anchoredPosition = new Vector2(150f, -145f);
         block.sizeDelta = new Vector2(620f, 420f);
 
         Image glow = MenuWidgets.CreateImage(block, "TitleGlow", MenuTheme.SoftGlow(), MenuTheme.WithAlpha(MenuTheme.Amber, 0.10f));
@@ -183,18 +183,9 @@ public sealed class MainMenuController : MonoBehaviour
         glowFlicker.amplitude = 0.045f;
         glowFlicker.speed = 0.9f;
 
-        TextMeshProUGUI overline = MenuWidgets.CreateText(block, "Overline", "A  CO-OP  NIGHTMARE", 16f,
-            MenuTheme.WithAlpha(MenuTheme.Amber, 0.85f), MenuWidgets.FontKind.Body, TextAlignmentOptions.Left, 14f);
-        SetTop(overline.rectTransform, 0f, 26f);
-
-        TextMeshProUGUI titleA = MenuWidgets.CreateText(block, "TitleMaze", "MAZE", 108f, MenuTheme.Bone,
+        TextMeshProUGUI titleB = MenuWidgets.CreateText(block, "Title", "DETOUR", 108f, MenuTheme.Amber,
             MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 9f, FontStyles.Bold);
-        SetTop(titleA.rectTransform, -34f, 120f);
-        AddTitleUnderlay(titleA);
-
-        TextMeshProUGUI titleB = MenuWidgets.CreateText(block, "TitleEscape", "ESCAPE", 108f, MenuTheme.Amber,
-            MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 9f, FontStyles.Bold);
-        SetTop(titleB.rectTransform, -136f, 120f);
+        SetTop(titleB.rectTransform, -34f, 120f);
         AddTitleUnderlay(titleB);
         var titleFlicker = titleB.gameObject.AddComponent<UiFlicker>();
         titleFlicker.target = titleB;
@@ -210,10 +201,6 @@ public sealed class MainMenuController : MonoBehaviour
         ruleRt.anchoredPosition = new Vector2(4f, -286f);
         ruleRt.sizeDelta = new Vector2(440f, 1f);
 
-        TextMeshProUGUI tagline = MenuWidgets.CreateText(block, "Tagline",
-            "Find the way down. Keep each other alive.", 16f, MenuTheme.Mist,
-            MenuWidgets.FontKind.Body, TextAlignmentOptions.Left, 1.5f, FontStyles.Italic);
-        SetTop(tagline.rectTransform, -300f, 26f);
     }
 
     static void AddTitleUnderlay(TextMeshProUGUI text)
@@ -285,7 +272,7 @@ public sealed class MainMenuController : MonoBehaviour
         _statusLabel.overflowMode = TextOverflowModes.Ellipsis;
 
         TextMeshProUGUI version = MenuWidgets.CreateText(footer, "Version",
-            $"MAZE ESCAPE — PRE-ALPHA {Application.version}", 12.5f, MenuTheme.Faint,
+            $"DETOUR — PRE-ALPHA {Application.version}", 12.5f, MenuTheme.Faint,
             MenuWidgets.FontKind.Body, TextAlignmentOptions.BottomLeft, 3f);
         RectTransform versionRt = version.rectTransform;
         versionRt.anchorMin = Vector2.zero;
