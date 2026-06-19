@@ -198,7 +198,9 @@ public class ClownAI : MonoBehaviour
     [SerializeField] string swingStateName = "Hammer Swing";
     [Tooltip("Length (s) of the Hammer Swing clip; fallback if the exit can't be read from the animator.")]
     [SerializeField, Min(0.1f)] float swingClipDurationFallback = 3.9f;
-    [Tooltip("Max horizontal distance (m, before scale) to the player to start a swing.")]
+    [Tooltip("Hammer reach (m, before scale) to the player to start a swing. Scaled by the Clown's size (the "
+        + "arms/hammer grow with it), so the giant commits its swing from where its big hammer can actually "
+        + "reach — well before it has physically closed the last few metres.")]
     [SerializeField, Min(0.1f)] float attackRange = 1.7f;
     [SerializeField, Min(0f)] float attackRangePadding = 0.2f;
     [Tooltip("Forward cone half-angle (deg): only swings at a player roughly in front.")]
@@ -1783,7 +1785,11 @@ public class ClownAI : MonoBehaviour
 
         Vector3 flat = new Vector3(to.x, 0f, to.z);
         float dist = flat.magnitude;
-        // The swing reach grows with the Clown (ClownDynamicScale enlarges its arms / hammer).
+        // The swing reach grows with the Clown (ClownDynamicScale enlarges its arms / hammer), so the giant
+        // commits its swing from where the hammer can actually reach — typically a few metres out, BEFORE it has
+        // had to physically close the last stretch (which the scaled-up body can struggle to do in a tight
+        // hallway). The wind-up is now planted (no lunge), so triggering at hammer range no longer drags the
+        // planted swing's feet across the floor the way the old "swing on the run" did.
         float reach = (attackRange + Mathf.Max(0f, attackRangePadding)) * Mathf.Max(1f, transform.lossyScale.x);
         if (dist > reach)
             return false;
@@ -1818,15 +1824,9 @@ public class ClownAI : MonoBehaviour
         // distance-based (no grab), so nothing needs the capsule to touch the limp body.
         IgnorePlayerRagdollCollisions(_attackTargetRagdoll);
 
-        // Face the player so the swing reads forward and the knockback throws them away from the Clown. The
-        // Clown is NOT frozen — UpdateAttacking keeps it chasing so it swings on the run.
-        if (_target != null)
-        {
-            Vector3 to = _target.position - transform.position;
-            to.y = 0f;
-            if (to.sqrMagnitude > 1e-4f)
-                transform.rotation = Quaternion.LookRotation(to.normalized);
-        }
+        // Face the player smoothly during the planted wind-up (see UpdateAttacking) rather than SNAPPING here:
+        // the instant LookRotation was a visible pop on the frame the swing began (the "glitch"). The Clown was
+        // already facing the player from the chase, so it only needs to track them from its current heading.
 
         // Triggers must route through the NetworkAnimator to replicate; fall back to the local animator offline.
         if (_hasSwingTriggerParameter && animator != null)
@@ -1883,26 +1883,28 @@ public class ClownAI : MonoBehaviour
             return;
         }
 
-        // BEFORE the hit: keep chasing the player so the Clown lunges in and lands the hit on a fleeing target
-        // instead of freezing and whiffing. UpdateChase's loom-stop holds it at contact once it arrives, so it
-        // presses into the player and faces them through the wind-up rather than overrunning.
-        Vector3 desired = Vector3.zero;
+        // BEFORE the hit: PLANT the Clown and only track the player's facing. The Hammer Swing clip is a
+        // stationary stance with NO root motion (verified by sampling the clip), so translating the body during
+        // the wind-up dragged its planted feet across the floor — the "runs in place / glitch" feel. Holding
+        // position and only rotating keeps the feet planted (matching the clip) while still aiming the swing at a
+        // player who circles or backs off; the wide hammerHitReachMultiplier re-check at impact still lets the
+        // giant's hammer connect with someone who gave a little ground. Gravity/grounding still run via
+        // ApplyMovement(zero) so the capsule stays on the floor (and the post-hit anchor below is then seamless,
+        // since there is no lunge velocity left to kill).
         bool targetValid = _target != null && _targetHealth != null && !_targetHealth.IsDead
             && !ShouldIgnorePlayer(_targetHealth);
         if (targetValid)
-            desired = UpdateChase();
-
-        // UpdateChase can hand the Clown off to Investigating/Idle if the player became unreachable mid-swing;
-        // if so, let the animator finish the swing on its own and just arm the cooldown.
-        if (_state != ClownState.Attacking)
         {
-            if (_networkClownAvatar != null)
-                _networkClownAvatar.ServerMarkAttackAnimationEnded();
-            _suppressAttackAndChaseUntil = Time.time + Mathf.Max(0.25f, postAttackCooldownSeconds);
-            return;
+            Vector3 face = _target.position - transform.position;
+            face.y = 0f;
+            if (face.sqrMagnitude > 1e-4f)
+                transform.rotation = Quaternion.RotateTowards(
+                    transform.rotation,
+                    Quaternion.LookRotation(face.normalized),
+                    rotationSpeed * Time.deltaTime);
         }
 
-        ApplyMovement(desired);
+        ApplyMovement(Vector3.zero);
         UpdateAnimatorParameters();
     }
 

@@ -54,6 +54,14 @@ public class ClownDynamicScale : NetworkBehaviour
     [SerializeField] bool capCollisionRadius = true;
     [Tooltip("Max effective (world) collision radius regardless of scale. The base CharacterController radius is ~0.5.")]
     [SerializeField, Min(0.1f)] float maxCollisionRadius = 0.6f;
+    [Tooltip("Cap the EFFECTIVE collision capsule HEIGHT so the full-height physics capsule never rams the "
+        + "ceiling as the Clown scales up. The hunch only ducks the VISUAL bones — the physics capsule stays "
+        + "full height (~6.7m at 2.8x) — so without this the giant's capsule pokes up THROUGH a normal ceiling "
+        + "and CharacterController depenetration cancels its forward motion (it 'runs in place' and can't close "
+        + "on the player). The visual mesh still scales fully; only the physics capsule is shortened, and only "
+        + "from the TOP so the feet stay planted. Caps only when a ceiling is actually close — full height in "
+        + "the open.")]
+    [SerializeField] bool capCollisionHeight = true;
 
     [Header("Ceiling fit")]
     [Tooltip("Layers treated as solid ceiling/walls. Defaults to 'Default' if left as Nothing.")]
@@ -195,6 +203,44 @@ public class ClownDynamicScale : NetworkBehaviour
             ? Mathf.Min(_ccRadius, maxCollisionRadius / Mathf.Max(0.01f, _scale))
             : _ccRadius;
         characterController.radius = Mathf.Max(0.05f, localRadius);
+    }
+
+    /// <summary>
+    /// Shortens the CharacterController capsule from the TOP so it never pokes through a nearby ceiling once
+    /// the Clown is scaled up. The visual mesh scales fully and the hunch ducks the visual head, but the
+    /// physics capsule (height = ccHeight * scale, ~6.7m at 2.8x) is NOT ducked — left full it jams into the
+    /// ceiling and CharacterController.Move's depenetration eats the Clown's horizontal motion, so the giant
+    /// "runs in place" several metres short of the player. We cast up to the ceiling and clamp the capsule's
+    /// world height to that clearance (minus the head margin), keeping the bottom pinned at the feet so foot
+    /// planting and the capped radius are untouched. With no ceiling overhead the capsule stays full height.
+    /// </summary>
+    void ApplyCollisionHeight()
+    {
+        if (characterController == null || !capCollisionHeight)
+            return;
+
+        float scale = Mathf.Max(0.01f, _scale);
+        float floorY = transform.position.y + _feetLocalY * scale;
+        float fullWorldHeight = _ccHeight * scale;
+        float targetWorldHeight = fullWorldHeight;
+
+        // Nearest ceiling above the body; keep the capsule top a margin below it.
+        Vector3 rayOrigin = new Vector3(transform.position.x, floorY + 0.2f, transform.position.z);
+        float scan = fullWorldHeight + ceilingScanExtra;
+        if (Physics.Raycast(rayOrigin, Vector3.up, out RaycastHit hit, scan, environmentMask, QueryTriggerInteraction.Ignore))
+        {
+            float clearance = (hit.point.y - floorY) - headClearanceMargin;
+            targetWorldHeight = Mathf.Min(targetWorldHeight, clearance);
+        }
+
+        // Never degenerate (must still comfortably enclose the capped radius) and never taller than natural.
+        float minWorldHeight = characterController.radius * scale * 2.2f;
+        targetWorldHeight = Mathf.Clamp(targetWorldHeight, Mathf.Max(0.3f, minWorldHeight), fullWorldHeight);
+
+        float localHeight = Mathf.Min(_ccHeight, targetWorldHeight / scale);
+        characterController.height = localHeight;
+        Vector3 c = characterController.center;
+        characterController.center = new Vector3(c.x, _feetLocalY + localHeight * 0.5f, c.z);
     }
 
     void EnsureBones()
@@ -432,6 +478,7 @@ public class ClownDynamicScale : NetworkBehaviour
         // Scale is independent of the Animator; bone deltas must layer on top of the freshly animated pose.
         transform.localScale = Vector3.one * _scale;
         ApplyCollisionRadius();
+        ApplyCollisionHeight();
 
         if (enableHunch && _bend > 0.0001f)
         {
