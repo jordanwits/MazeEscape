@@ -58,6 +58,11 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Spawned exactly once per maze on a random dead-end cell (not start, not exit, not an interior room). "
         + "Same topology as other dead ends (MazePieceDefinition DeadEnd + matching open faces). Do not add this to Dead End Prefabs. Leave empty to skip.")]
     [SerializeField] GameObject jailDeadEndPrefab;
+    [Tooltip("Leave OFF (default) so the generator never places the same corridor prefab in two orthogonally adjacent cells "
+        + "(e.g. two CarnivalStraight2 side by side) when another variant of that topology fits the same openings. "
+        + "It falls back to a duplicate only when no other variant matches that cell, so a single-variant pool still builds. "
+        + "Tick this to allow duplicates again (old behavior).")]
+    [SerializeField] bool allowAdjacentDuplicatePieces;
 
     [Header("Interior rooms (throughout maze)")]
     [Tooltip("Prefabs with MazePieceDefinition: open faces must match the **outer** openings of the room block (see Interior Room Grid Footprint). Placed on non-start, non-exit cells only.")]
@@ -197,6 +202,8 @@ public class ProceduralMazeConfig : ScriptableObject
     public GameObject[] TeePrefabs => teePrefabs ?? EmptyPrefabs;
     public GameObject[] CrossPrefabs => crossPrefabs ?? EmptyPrefabs;
     public GameObject[] SpecialPrefabs => specialPrefabs ?? EmptyPrefabs;
+    /// <summary>When true, the generator avoids placing the same corridor prefab in two orthogonally adjacent cells (defaults on; inspector exposes the opt-out).</summary>
+    public bool AvoidAdjacentDuplicatePieces => !allowAdjacentDuplicatePieces;
     public GameObject[] InteriorRoomPrefabs => interiorRoomPrefabs ?? EmptyPrefabs;
     public Vector2Int InteriorRoomGridFootprint => new(
         Mathf.Max(1, interiorRoomGridFootprint.x),

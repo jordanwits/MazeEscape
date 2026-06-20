@@ -141,6 +141,9 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     int _currentSeed;
     Coroutine _sceneRoutine;
     readonly HashSet<string> _loggedMazeWarnings = new();
+    // Prefab actually placed at each built cell this build, so BuildCell can steer a cell away from
+    // repeating an orthogonal neighbor's piece (see AvoidAdjacentDuplicatePieces). Cleared per build.
+    readonly Dictionary<Vector2Int, GameObject> _placedCellPrefabs = new();
     string _lastServerMazeBuildSceneName;
     int _lastServerMazeBuildSeed = int.MinValue;
     Dictionary<string, ProceduralMazeConfig> _sectionConfigsByTargetScene;
@@ -483,6 +486,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         _loggedMazeWarnings.Clear();
+        _placedCellPrefabs.Clear();
         ValidateConfiguredPieceSetup();
 
         DespawnAllSpawnedZombieEnemies();
@@ -2115,6 +2119,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         {
             MazePieceMatch forcedMatch = interiorRoomEntry.Match;
             GameObject forcedPiece = Instantiate(forcedMatch.Prefab, parent.position, forcedMatch.Rotation, parent);
+            _placedCellPrefabs[cellCoordinates] = forcedMatch.Prefab;
             TrySpawnElevatorFinishSyncIfPresent(forcedPiece);
             TrySpawnUseKeyHingeNetworkObjectsIfPresent(forcedPiece);
             TrySpawnMazeNetworkRigidbodyPropsIfPresent(forcedPiece);
@@ -2151,6 +2156,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                     out MazePieceMatch jailMatch))
             {
                 GameObject jailPiece = Instantiate(jailMatch.Prefab, parent.position, jailMatch.Rotation, parent);
+                _placedCellPrefabs[cellCoordinates] = jailMatch.Prefab;
                 TrySpawnElevatorFinishSyncIfPresent(jailPiece);
                 TrySpawnUseKeyHingeNetworkObjectsIfPresent(jailPiece);
                 TrySpawnMazeNetworkRigidbodyPropsIfPresent(jailPiece);
@@ -2178,7 +2184,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 this);
         }
 
-        if (!MazePieceResolver.TryResolve(_config, gridCellOpenings, isStart, isExit, seed, cellCoordinates, out MazePieceMatch match, out string failureReason))
+        HashSet<GameObject> neighborPrefabsToAvoid = _config.AvoidAdjacentDuplicatePieces
+            ? CollectAdjacentPlacedPrefabs(cellCoordinates)
+            : null;
+
+        if (!MazePieceResolver.TryResolve(_config, gridCellOpenings, isStart, isExit, seed, cellCoordinates, out MazePieceMatch match, out string failureReason, neighborPrefabsToAvoid))
         {
             LogMazeWarningOnce(
                 $"resolve:{gridCellOpenings}",
@@ -2188,6 +2198,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         GameObject matchPiece = Instantiate(match.Prefab, parent.position, match.Rotation, parent);
+        _placedCellPrefabs[cellCoordinates] = match.Prefab;
         TrySpawnElevatorFinishSyncIfPresent(matchPiece);
         TrySpawnUseKeyHingeNetworkObjectsIfPresent(matchPiece);
         TrySpawnMazeNetworkRigidbodyPropsIfPresent(matchPiece);
@@ -2205,6 +2216,32 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 * Quaternion.Euler(0f, _config.EndCapYawOffset, 0f);
             Instantiate(_config.EndCapPrefab, parent.position + localOffset, endCapRotation, parent);
         }
+    }
+
+    /// <summary>
+    /// Gathers the prefabs already placed in the four orthogonal neighbors of <paramref name="cell"/>.
+    /// The build loop runs in a fixed (y, x) order, so only the west/south neighbors are populated when a
+    /// cell resolves — but adjacency is symmetric, so steering each cell away from its already-built
+    /// neighbors is enough to guarantee no two identical pieces ever end up side by side. Returns null when
+    /// nothing is built yet so <see cref="MazePieceResolver.TryResolve"/> treats it as no constraint.
+    /// </summary>
+    HashSet<GameObject> CollectAdjacentPlacedPrefabs(Vector2Int cell)
+    {
+        if (_placedCellPrefabs.Count == 0)
+            return null;
+
+        HashSet<GameObject> result = null;
+        for (int i = 0; i < Steps.Length; i++)
+        {
+            Vector2Int neighbor = new(cell.x + Steps[i].Dx, cell.y + Steps[i].Dy);
+            if (_placedCellPrefabs.TryGetValue(neighbor, out GameObject prefab) && prefab != null)
+            {
+                result ??= new HashSet<GameObject>();
+                result.Add(prefab);
+            }
+        }
+
+        return result;
     }
 
     void TrySpawnElevatorFinishSyncIfPresent(GameObject pieceRoot)

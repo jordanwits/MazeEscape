@@ -46,7 +46,8 @@ public static class MazePieceResolver
         int seed,
         Vector2Int cellCoordinates,
         out MazePieceMatch match,
-        out string failureReason)
+        out string failureReason,
+        HashSet<GameObject> neighborPrefabsToAvoid = null)
     {
         List<Candidate> candidates = new();
 
@@ -69,6 +70,7 @@ public static class MazePieceResolver
 
         if (candidates.Count > 0)
         {
+            FilterNeighborDuplicates(candidates, neighborPrefabsToAvoid);
             match = CreateMatch(ChooseCandidate(candidates, seed, cellCoordinates, requiredOpenFaces, 53u), requiredOpenFaces);
             failureReason = null;
             return true;
@@ -284,6 +286,31 @@ public static class MazePieceResolver
         }
 
         return candidates.Count > initialCount;
+    }
+
+    /// <summary>
+    /// Removes candidates whose prefab is already used by an orthogonally adjacent cell so the same
+    /// piece is never placed side by side. No-op when avoidance would leave nothing (the cell's openings
+    /// only fit the repeated prefab) so a single-variant pool still resolves and generation never fails.
+    /// Runs before <see cref="ChooseCandidate"/>, which keeps the deterministic, seed-driven weighted pick
+    /// over whatever survives — so host and clients still build identical mazes.
+    /// </summary>
+    static void FilterNeighborDuplicates(List<Candidate> candidates, HashSet<GameObject> neighborPrefabsToAvoid)
+    {
+        if (neighborPrefabsToAvoid == null || neighborPrefabsToAvoid.Count == 0 || candidates.Count <= 1)
+            return;
+
+        int survivors = 0;
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            if (!neighborPrefabsToAvoid.Contains(candidates[i].Prefab))
+                survivors++;
+        }
+
+        if (survivors == 0 || survivors == candidates.Count)
+            return;
+
+        candidates.RemoveAll(c => neighborPrefabsToAvoid.Contains(c.Prefab));
     }
 
     static Candidate ChooseCandidate(List<Candidate> candidates, int seed, Vector2Int cellCoordinates, MazeFaceMask faces, uint salt)
