@@ -535,12 +535,20 @@ public partial class PlayerController : MonoBehaviour
         if (_ragdollController != null && _ragdollController.IsGettingUp)
             return;
 
-        if (PauseMenuController.BlocksGameplayInput)
+        if (PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive)
         {
             CancelThrowCharge();
             _moveInput = Vector2.zero;
             _horizontalVelocity = Vector3.zero;
             SetPickupPromptVisible(false);
+            // While seated at blackjack the game keeps running (time isn't paused), so the locomotion
+            // animator would otherwise loop the last walk pose ("walking in place"). Force idle.
+            if (BlackjackOverlayController.IsInteractive && driveAnimator && animator != null)
+            {
+                animator.SetFloat(speedParameter, 0f);
+                animator.SetBool(groundedParameter, true);
+                animator.SetFloat(verticalVelocityParameter, 0f);
+            }
             return;
         }
 
@@ -1095,7 +1103,7 @@ public partial class PlayerController : MonoBehaviour
 
     void ApplyCursorLock()
     {
-        if (!firstPersonLook || !lockCursor || PauseMenuController.BlocksGameplayInput)
+        if (!firstPersonLook || !lockCursor || PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive)
             return;
 
         Cursor.lockState = CursorLockMode.Locked;
@@ -1937,7 +1945,7 @@ public partial class PlayerController : MonoBehaviour
         return chest != null && chest.IsOpened;
     }
 
-    int TryInteractCastNonAlloc(Transform cam, int mask)
+    int TryInteractCastNonAlloc(Transform cam, int mask, QueryTriggerInteraction triggerInteraction = QueryTriggerInteraction.Ignore)
     {
         Vector3 origin = cam.position;
         Vector3 direction = cam.forward;
@@ -1956,7 +1964,7 @@ public partial class PlayerController : MonoBehaviour
                 _interactCastHitBuffer,
                 distance,
                 mask,
-                QueryTriggerInteraction.Ignore);
+                triggerInteraction);
         }
 
         return Physics.RaycastNonAlloc(
@@ -1965,7 +1973,7 @@ public partial class PlayerController : MonoBehaviour
             _interactCastHitBuffer,
             distance,
             mask,
-            QueryTriggerInteraction.Ignore);
+            triggerInteraction);
     }
 
     void SortInteractHitsByDistance(int count)

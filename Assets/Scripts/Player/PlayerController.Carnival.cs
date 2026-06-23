@@ -144,6 +144,33 @@ public partial class PlayerController
         return false;
     }
 
+    bool TryFindInteractableBlackjackSeat(Transform cam, out BlackjackSeat seat)
+    {
+        seat = null;
+        if (cam == null)
+            return false;
+
+        // Seat colliders are TRIGGERS (so they don't physically block the player walking up to the table),
+        // so this cast must include triggers — unlike the start-button / ticket-bundle casts.
+        int mask = interactMask.value == 0 ? Physics.DefaultRaycastLayers : interactMask.value;
+        int count = TryInteractCastNonAlloc(cam, mask, QueryTriggerInteraction.Collide);
+        if (count <= 0)
+            return false;
+
+        SortInteractHitsByDistance(count);
+        for (int i = 0; i < count; i++)
+        {
+            RaycastHit h = _interactCastHitBuffer[i];
+            BlackjackSeat found = h.collider.GetComponentInParent<BlackjackSeat>();
+            if (found != null)
+            {
+                seat = found;
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool TryFindInteractableTicketBundle(Transform cam, out CarnivalTicketBundle bundle)
     {
         bundle = null;
@@ -182,6 +209,13 @@ public partial class PlayerController
             return true;
         }
 
+        if (TryFindInteractableBlackjackSeat(cam, out BlackjackSeat seat) && seat != null)
+        {
+            seat.RequestSitOrLeave(this);
+            BlackjackOverlayController.NotifySeatInteract(this, seat);
+            return true;
+        }
+
         if (TryFindInteractableCarnivalStartButton(cam, out CarnivalGameStartButton button)
             && button != null)
         {
@@ -206,6 +240,13 @@ public partial class PlayerController
         if (TryFindInteractableTicketBundle(cam, out CarnivalTicketBundle bundle) && bundle != null)
         {
             message = string.Format(ticketBundlePromptFormat, bundle.Value);
+            return true;
+        }
+
+        if (TryFindInteractableBlackjackSeat(cam, out BlackjackSeat seat) && seat != null
+            && seat.TryGetPrompt(this, out string seatMessage))
+        {
+            message = seatMessage;
             return true;
         }
 

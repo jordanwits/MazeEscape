@@ -40,6 +40,21 @@ public sealed class NetworkPlayerCarnivalTickets : NetworkBehaviour
         _ticketCount.Value += delta;
     }
 
+    /// <summary>
+    /// Server-only. Deducts <paramref name="amount"/> tickets if the balance can cover it. Returns true on
+    /// success (balance reduced), false if the spend was rejected (non-positive amount or insufficient funds).
+    /// Used by the blackjack table to stake a bet before dealing.
+    /// </summary>
+    public bool ServerTrySpend(int amount)
+    {
+        if (!IsServer || amount <= 0)
+            return false;
+        if (_ticketCount.Value < amount)
+            return false;
+        _ticketCount.Value -= amount;
+        return true;
+    }
+
     void HandleTicketCountChanged(int previous, int current)
     {
         Changed?.Invoke(previous, current);
