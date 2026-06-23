@@ -5,11 +5,12 @@ using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 
 /// <summary>
-/// Local-player, runtime-built control overlay for the blackjack table. Shown only while the local player
-/// occupies a seat; provides Bet +/- , Ready, Hit, Stand and Leave buttons that route to the table's
-/// <see cref="BlackjackGameController"/> ServerRpcs. A single instance is created on demand. While shown it
-/// raises <see cref="IsInteractive"/> so <see cref="PlayerController"/> freezes movement and frees the cursor;
-/// it yields raycasts to the pause menu when that is open.
+/// Local-player blackjack table view + control overlay. Shown only while the local player occupies a seat. While
+/// seated it (a) switches the view to a per-seat zoomed-in table camera, (b) frees the cursor + freezes movement
+/// via <see cref="IsInteractive"/>, and (c) shows a casino-style control panel (bet / deal / hit / stand / leave)
+/// that routes to the table's <see cref="BlackjackGameController"/> ServerRpcs. Hand totals are deliberately NOT
+/// shown — the player reads the cards on the felt and does their own math. A single instance is created on demand
+/// and persists (DontDestroyOnLoad) so its canvas/camera can't be torn down by other HUD/scene churn.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class BlackjackOverlayController : MonoBehaviour
@@ -19,6 +20,16 @@ public sealed class BlackjackOverlayController : MonoBehaviour
 
     static BlackjackOverlayController _instance;
 
+    // Palette
+    static readonly Color PanelBg = new(0.05f, 0.08f, 0.07f, 0.93f);
+    static readonly Color Gold = new(0.93f, 0.78f, 0.38f, 1f);
+    static readonly Color TextLight = new(0.93f, 0.96f, 0.95f, 1f);
+    static readonly Color TextDim = new(0.66f, 0.72f, 0.70f, 1f);
+    static readonly Color BtnGreen = new(0.18f, 0.55f, 0.28f, 1f);
+    static readonly Color BtnAmber = new(0.80f, 0.52f, 0.16f, 1f);
+    static readonly Color BtnGold = new(0.74f, 0.58f, 0.20f, 1f);
+    static readonly Color BtnGray = new(0.26f, 0.29f, 0.31f, 1f);
+
     PlayerController _player;
     NetworkObject _playerNet;
     NetworkPlayerCarnivalTickets _wallet;
@@ -26,15 +37,16 @@ public sealed class BlackjackOverlayController : MonoBehaviour
 
     GameObject _root;
     CanvasGroup _canvasGroup;
-    Text _messageText;
-    Text _infoText;
-    Text _betText;
-    Button _betMinus, _betPlus, _readyBtn, _hitBtn, _standBtn, _leaveBtn;
-    Text _readyLabel;
+    Text _bannerText, _balanceValue, _betValue, _message;
+    Button _betMinus, _betPlus, _dealBtn, _hitBtn, _standBtn, _leaveBtn;
+    Text _dealLabel;
+
+    Camera _bjCamera;
+    Camera _fpCamera;
+    int _currentSeatIndex = -1;
     bool _shown;
     bool _subscribed;
 
-    /// <summary>Bind/refresh the overlay to the table the local player just interacted with.</summary>
     public static void NotifySeatInteract(PlayerController player, BlackjackSeat seat)
     {
         if (player == null || seat == null)
@@ -49,7 +61,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
     {
         if (_instance == null)
         {
-            GameObject go = new GameObject("BlackjackOverlay");
+            GameObject go = new("BlackjackOverlay");
             UnityEngine.Object.DontDestroyOnLoad(go);
             _instance = go.AddComponent<BlackjackOverlayController>();
         }
@@ -61,25 +73,21 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         _player = player;
         _playerNet = player.GetComponent<NetworkObject>();
         _wallet = player.GetComponent<NetworkPlayerCarnivalTickets>();
+        _fpCamera = player.GetComponentInChildren<Camera>(true);
 
         if (_table != table)
         {
             Unsubscribe();
             _table = table;
-            Subscribe();
+            if (_table != null)
+            {
+                _table.StateChanged += Refresh;
+                _subscribed = true;
+            }
         }
 
         EnsureUiBuilt();
         Refresh();
-    }
-
-    void Subscribe()
-    {
-        if (_table != null && !_subscribed)
-        {
-            _table.StateChanged += Refresh;
-            _subscribed = true;
-        }
     }
 
     void Unsubscribe()
@@ -114,11 +122,15 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         }
 
         if (_root == null)
-            EnsureUiBuilt();   // rebuild if our panel/canvas was torn down for any reason
+            EnsureUiBuilt();
 
+        _currentSeatIndex = seatIndex;
         SetShown(true);
 
-        // Keep the cursor free + assert raycast state every frame so the pause menu can take over cleanly.
+        // Keep the table camera glued to the local seat's anchor + cursor free; yield raycasts to the pause menu if open.
+        Transform camAnchor = _table.GetSeatCameraAnchor(seatIndex);
+        if (_bjCamera != null && camAnchor != null)
+            _bjCamera.transform.SetPositionAndRotation(camAnchor.position, camAnchor.rotation);
         if (!PauseMenuController.BlocksGameplayInput)
         {
             Cursor.lockState = CursorLockMode.None;
@@ -134,25 +146,96 @@ public sealed class BlackjackOverlayController : MonoBehaviour
     {
         if (_root != null)
             _root.SetActive(show);
+        // The result banner is a child of the canvas (a sibling of _root, so it can float above the panel), so
+        // toggling _root doesn't hide it. Clear it explicitly when hiding, or a "YOU WIN/LOSE" banner shown at the
+        // moment you leave the table stays stuck on screen (nothing calls RefreshFor again once the seat is freed).
+        if (!show && _bannerText != null)
+            _bannerText.gameObject.SetActive(false);
         if (show == _shown)
             return;
         _shown = show;
         IsInteractive = show;
+
         if (show)
         {
+            ActivateCamera();
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
         }
-        else if (!PauseMenuController.BlocksGameplayInput)
+        else
         {
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
+            DeactivateCamera();
+            if (!PauseMenuController.BlocksGameplayInput)
+            {
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
         }
     }
 
+    // =========================================================================================
+    // Camera
+    // =========================================================================================
+
+    void ActivateCamera()
+    {
+        if (_bjCamera == null)
+            CreateCamera();
+        if (_fpCamera == null && _player != null)
+            _fpCamera = _player.GetComponentInChildren<Camera>(true);
+
+        if (_fpCamera != null)
+        {
+            // Match look so the world renders the same (layers, skybox, clip planes) from the table angle.
+            _bjCamera.clearFlags = _fpCamera.clearFlags;
+            _bjCamera.backgroundColor = _fpCamera.backgroundColor;
+            _bjCamera.cullingMask = _fpCamera.cullingMask;
+            _bjCamera.nearClipPlane = Mathf.Min(_fpCamera.nearClipPlane, 0.1f);
+            _bjCamera.farClipPlane = _fpCamera.farClipPlane;
+        }
+        // Hide player avatars so a seated body never blocks the cards on the felt.
+        int playerLayer = LayerMask.NameToLayer("Player");
+        if (playerLayer >= 0)
+            _bjCamera.cullingMask &= ~(1 << playerLayer);
+        _bjCamera.fieldOfView = 46f; // zoomed in on the felt
+
+        Transform camAnchor = _table != null ? _table.GetSeatCameraAnchor(_currentSeatIndex) : null;
+        if (camAnchor != null)
+            _bjCamera.transform.SetPositionAndRotation(camAnchor.position, camAnchor.rotation);
+
+        _bjCamera.gameObject.SetActive(true);
+        _bjCamera.enabled = true;
+        if (_fpCamera != null)
+            _fpCamera.enabled = false;
+    }
+
+    void DeactivateCamera()
+    {
+        if (_bjCamera != null)
+        {
+            _bjCamera.enabled = false;
+            _bjCamera.gameObject.SetActive(false);
+        }
+        if (_fpCamera != null)
+            _fpCamera.enabled = true;
+    }
+
+    void CreateCamera()
+    {
+        GameObject camGo = new("BlackjackTableCamera");
+        camGo.transform.SetParent(transform, false);
+        _bjCamera = camGo.AddComponent<Camera>();
+        _bjCamera.depth = 50f; // above the FP camera
+        camGo.SetActive(false);
+    }
+
+    // =========================================================================================
+    // Refresh
+    // =========================================================================================
+
     void Refresh()
     {
-        if (_table == null || _playerNet == null)
+        if (_table == null || _playerNet == null || _root == null)
             return;
         int seatIndex = _table.SeatIndexOfOccupant(_playerNet.NetworkObjectId);
         if (seatIndex >= 0)
@@ -167,89 +250,93 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         SeatState s = _table.GetSeat(seatIndex);
         BlackjackPhase phase = _table.Phase;
         int balance = _wallet != null ? _wallet.TicketCount : 0;
-        bool isMyTurn = phase == BlackjackPhase.PlayerTurns
-            && _table.ActingSeatIndex == seatIndex
+        bool inRound = s.InRound == 1;
+        bool ready = s.IsReady == 1;
+        bool betting = phase == BlackjackPhase.Betting && !inRound;
+        bool myTurn = phase == BlackjackPhase.PlayerTurns && _table.ActingSeatIndex == seatIndex
             && s.Status == (byte)BlackjackHandStatus.Playing;
 
-        // --- Info line: your hand / dealer up / balance ---
-        string hand;
-        if (s.Cards.Length > 0)
+        // Hand totals are intentionally NOT shown - the player reads the cards and does their own math.
+        _balanceValue.text = balance.ToString();
+        _betValue.text = s.Bet.ToString();
+
+        _message.text = BuildMessage(phase, s, seatIndex, myTurn);
+
+        // Result banner (only when a resolved round is showing and we were dealt in).
+        bool showBanner = (phase == BlackjackPhase.Resolve || phase == BlackjackPhase.Payout) && inRound
+            && (BlackjackSeatResult)s.LastResult != BlackjackSeatResult.None;
+        if (showBanner)
         {
-            int total = _table.SeatTotal(seatIndex, out bool soft, out _);
-            hand = soft ? $"{total} (soft)" : total.ToString();
+            _bannerText.text = BuildBanner(s, out Color c);
+            _bannerText.color = c;
         }
-        else
+        _bannerText.gameObject.SetActive(showBanner);
+
+        // Buttons
+        _betMinus.gameObject.SetActive(betting && !ready);
+        _betPlus.gameObject.SetActive(betting && !ready);
+
+        bool showDeal = phase == BlackjackPhase.Betting && inRound == false;
+        _dealBtn.gameObject.SetActive(showDeal);
+        if (showDeal)
         {
-            hand = "-";
+            _dealLabel.text = ready ? "CANCEL" : "DEAL";
+            _dealBtn.interactable = ready || balance >= BlackjackConfig.MinBet;
+            SetButtonColor(_dealBtn, ready ? BtnGray : BtnGold);
         }
 
-        int dealerVisible = _table.DealerVisibleTotal();
-        string dealer = _table.Dealer.Cards.Length > 0 ? dealerVisible.ToString() : "-";
-        _infoText.text = $"Hand: {hand}    Dealer: {dealer}    Tickets: {balance}";
-        _betText.text = $"Bet: {s.Bet}";
-
-        // --- Message line ---
-        _messageText.text = BuildMessage(phase, s, seatIndex, isMyTurn);
-
-        // --- Button enable/labels per phase ---
-        bool betting = phase == BlackjackPhase.Betting && s.InRound == 0;
-        bool ready = s.IsReady == 1;
-        _betMinus.interactable = betting && !ready;
-        _betPlus.interactable = betting && !ready;
-        _readyBtn.interactable = betting && balance >= BlackjackConfig.MinBet;
-        _readyLabel.text = ready ? "Cancel" : "Ready";
-        _hitBtn.interactable = isMyTurn;
-        _standBtn.interactable = isMyTurn;
-        _leaveBtn.interactable = true;
+        _hitBtn.gameObject.SetActive(myTurn);
+        _standBtn.gameObject.SetActive(myTurn);
+        _leaveBtn.gameObject.SetActive(true);
     }
 
-    string BuildMessage(BlackjackPhase phase, SeatState s, int seatIndex, bool isMyTurn)
+    string BuildMessage(BlackjackPhase phase, SeatState s, int seatIndex, bool myTurn)
     {
         switch (phase)
         {
             case BlackjackPhase.Idle:
             case BlackjackPhase.Betting:
                 if (s.IsReady == 1)
-                    return $"Ready — waiting for deal ({Mathf.CeilToInt(_table.PhaseTimer)}s)";
-                return "Set your bet and press Ready";
+                    return $"Bet placed - dealing in {Mathf.CeilToInt(_table.PhaseTimer)}s";
+                return "Set your bet, then DEAL";
             case BlackjackPhase.Dealing:
                 return "Dealing...";
             case BlackjackPhase.PlayerTurns:
                 if (s.InRound == 0)
-                    return "Waiting for the next round";
+                    return "Sitting out - next round soon";
                 if (s.Status == (byte)BlackjackHandStatus.Bust)
-                    return "Bust!";
+                    return "Busted!";
                 if (s.Status == (byte)BlackjackHandStatus.Blackjack)
                     return "Blackjack!";
-                if (isMyTurn)
-                    return $"Your turn — Hit or Stand ({Mathf.CeilToInt(_table.PhaseTimer)}s)";
+                if (myTurn)
+                    return $"Your move - Hit or Stand  ({Mathf.CeilToInt(_table.PhaseTimer)}s)";
                 if (_table.ActingSeatIndex < 0)
-                    return "Dealer's turn";
+                    return "Dealer's turn...";
                 return $"Seat {_table.ActingSeatIndex + 1} is playing...";
             case BlackjackPhase.DealerTurn:
-                return "Dealer is drawing...";
+                return "Dealer draws...";
             case BlackjackPhase.Resolve:
             case BlackjackPhase.Payout:
                 if (s.InRound == 0)
-                    return "Sat out — next round soon";
-                return BuildResultMessage(s);
+                    return "Sat out - next round soon";
+                return "Round over";
             default:
                 return string.Empty;
         }
     }
 
-    static string BuildResultMessage(SeatState s)
+    static string BuildBanner(SeatState s, out Color color)
     {
         string delta = s.LastPayout > 0 ? $"+{s.LastPayout}" : s.LastPayout.ToString();
         switch ((BlackjackSeatResult)s.LastResult)
         {
-            case BlackjackSeatResult.Blackjack: return $"BLACKJACK!  {delta} tickets";
-            case BlackjackSeatResult.Win: return $"You win!  {delta} tickets";
-            case BlackjackSeatResult.Push: return "Push — bet returned";
-            case BlackjackSeatResult.Bust: return $"Bust!  {delta} tickets";
-            case BlackjackSeatResult.Lose: return $"You lose  {delta} tickets";
-            case BlackjackSeatResult.Forfeit: return "Forfeited";
-            default: return "Round over";
+            case BlackjackSeatResult.Blackjack: color = Gold; return $"BLACKJACK!  {delta}";
+            case BlackjackSeatResult.Win: color = new Color(0.45f, 0.9f, 0.5f); return $"YOU WIN  {delta}";
+            case BlackjackSeatResult.Push: color = TextDim; return "PUSH";
+            case BlackjackSeatResult.Bust: color = new Color(0.95f, 0.4f, 0.4f); return $"BUST  {delta}";
+            case BlackjackSeatResult.Lose: color = new Color(0.95f, 0.4f, 0.4f); return $"DEALER WINS  {delta}";
+            case BlackjackSeatResult.Forfeit: color = new Color(0.95f, 0.4f, 0.4f); return "FORFEIT";
+            default: color = TextLight; return string.Empty;
         }
     }
 
@@ -259,7 +346,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
 
     void OnBetMinus() => _table?.RequestAdjustBet(_player, -BlackjackConfig.BetStep);
     void OnBetPlus() => _table?.RequestAdjustBet(_player, BlackjackConfig.BetStep);
-    void OnReady()
+    void OnDeal()
     {
         if (_table == null || _playerNet == null)
             return;
@@ -271,7 +358,12 @@ public sealed class BlackjackOverlayController : MonoBehaviour
     }
     void OnHit() => _table?.RequestHit(_player);
     void OnStand() => _table?.RequestStand(_player);
-    void OnLeave() => _table?.RequestLeave(_player);
+    void OnLeave()
+    {
+        // Optimistically release locally so the player is never stuck even if the server is a beat behind.
+        SetShown(false);
+        _table?.RequestLeave(_player);
+    }
 
     // =========================================================================================
     // UI construction
@@ -283,71 +375,54 @@ public sealed class BlackjackOverlayController : MonoBehaviour
             return;
 
         EnsureEventSystem();
-
         Canvas canvas = CreateOwnedCanvas();
 
-        _root = new GameObject("BlackjackPanel");
-        _root.transform.SetParent(canvas.transform, false);
-        RectTransform rect = _root.AddComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0.5f, 0f);
-        rect.anchorMax = new Vector2(0.5f, 0f);
-        rect.pivot = new Vector2(0.5f, 0f);
-        rect.anchoredPosition = new Vector2(0f, 28f);
-        rect.sizeDelta = new Vector2(760f, 168f);
+        const float W = 940f;
+        const float H = 232f;
 
+        _root = MakePanel(canvas.transform, "BlackjackPanel", PanelBg, new Vector2(0.5f, 0f), new Vector2(0f, 28f), new Vector2(W, H));
         _canvasGroup = _root.AddComponent<CanvasGroup>();
 
-        Image bg = _root.AddComponent<Image>();
-        bg.color = new Color(0f, 0f, 0f, 0.72f);
+        // Gold accent strip along the top of the panel.
+        GameObject strip = MakePanel(_root.transform, "Accent", Gold, new Vector2(0.5f, 1f), new Vector2(0f, 0f), new Vector2(W, 4f));
+        strip.GetComponent<RectTransform>().anchorMin = new Vector2(0f, 1f);
+        strip.GetComponent<RectTransform>().anchorMax = new Vector2(1f, 1f);
+        strip.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 4f);
 
-        _messageText = CreateText(_root.transform, "Message", new Vector2(16f, -10f), new Vector2(-16f, -44f),
-            26, TextAnchor.MiddleCenter, new Color(1f, 0.95f, 0.7f, 1f));
-        _messageText.rectTransform.anchorMin = new Vector2(0f, 1f);
-        _messageText.rectTransform.anchorMax = new Vector2(1f, 1f);
-        _messageText.rectTransform.pivot = new Vector2(0.5f, 1f);
-        _messageText.rectTransform.offsetMin = new Vector2(12f, -46f);
-        _messageText.rectTransform.offsetMax = new Vector2(-12f, -8f);
+        MakeLabel(_root.transform, "BLACKJACK", 22, FontStyle.Bold, Gold, TextAnchor.MiddleLeft,
+            new Vector2(0f, 1f), new Vector2(24f, -12f), new Vector2(280f, 32f));
 
-        _infoText = CreateText(_root.transform, "Info", Vector2.zero, Vector2.zero,
-            20, TextAnchor.MiddleCenter, new Color(0.85f, 0.92f, 1f, 1f));
-        _infoText.rectTransform.anchorMin = new Vector2(0f, 1f);
-        _infoText.rectTransform.anchorMax = new Vector2(1f, 1f);
-        _infoText.rectTransform.pivot = new Vector2(0.5f, 1f);
-        _infoText.rectTransform.offsetMin = new Vector2(12f, -84f);
-        _infoText.rectTransform.offsetMax = new Vector2(-12f, -50f);
+        // Result banner - big, anchored near the TOP-center of the screen (above the dealer's cards, in the
+        // empty felt/background area) so it never overlaps the hands. ~170px down from the top in 1080-ref space.
+        _bannerText = MakeLabel(canvas.transform, "", 56, FontStyle.Bold, Gold, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 1f), new Vector2(0f, -170f), new Vector2(900f, 80f));
+        AddShadow(_bannerText, 3f);
+        _bannerText.gameObject.SetActive(false);
 
-        // Button row (manual horizontal placement).
-        float x = 14f;
-        const float y = 12f;
-        const float h = 54f;
-        _betMinus = CreateButton(_root.transform, "-", new Vector2(x, y), new Vector2(48f, h), OnBetMinus, out _);
-        x += 54f;
-        _betText = CreateText(_root.transform, "BetText", new Vector2(x, y), new Vector2(120f, h),
-            22, TextAnchor.MiddleCenter, Color.white);
-        _betText.rectTransform.anchorMin = new Vector2(0f, 0f);
-        _betText.rectTransform.anchorMax = new Vector2(0f, 0f);
-        _betText.rectTransform.pivot = new Vector2(0f, 0f);
-        _betText.rectTransform.anchoredPosition = new Vector2(x, y);
-        _betText.rectTransform.sizeDelta = new Vector2(120f, h);
-        x += 126f;
-        _betPlus = CreateButton(_root.transform, "+", new Vector2(x, y), new Vector2(48f, h), OnBetPlus, out _);
-        x += 60f;
-        _readyBtn = CreateButton(_root.transform, "Ready", new Vector2(x, y), new Vector2(120f, h), OnReady, out _readyLabel);
-        x += 130f;
-        _hitBtn = CreateButton(_root.transform, "Hit", new Vector2(x, y), new Vector2(96f, h), OnHit, out _);
-        x += 106f;
-        _standBtn = CreateButton(_root.transform, "Stand", new Vector2(x, y), new Vector2(96f, h), OnStand, out _);
-        x += 106f;
-        _leaveBtn = CreateButton(_root.transform, "Leave", new Vector2(x, y), new Vector2(96f, h), OnLeave, out _);
+        // Tickets + Bet (right cluster) with +/- buttons.
+        MakeLabel(_root.transform, "TICKETS", 18, FontStyle.Bold, TextDim, TextAnchor.MiddleRight, new Vector2(1f, 1f), new Vector2(-40f, -16f), new Vector2(220f, 22f));
+        _balanceValue = MakeLabel(_root.transform, "0", 40, FontStyle.Bold, Gold, TextAnchor.MiddleRight, new Vector2(1f, 1f), new Vector2(-40f, -52f), new Vector2(220f, 44f));
+
+        MakeLabel(_root.transform, "BET", 18, FontStyle.Bold, TextDim, TextAnchor.MiddleCenter, new Vector2(1f, 1f), new Vector2(-345f, -16f), new Vector2(120f, 22f));
+        _betValue = MakeLabel(_root.transform, "5", 40, FontStyle.Bold, TextLight, TextAnchor.MiddleCenter, new Vector2(1f, 1f), new Vector2(-345f, -54f), new Vector2(120f, 44f));
+        _betMinus = MakeButton(_root.transform, "-", BtnGray, OnBetMinus, out _, new Vector2(1f, 1f), new Vector2(-470f, -58f), new Vector2(52f, 52f), 30);
+        _betPlus = MakeButton(_root.transform, "+", BtnGray, OnBetPlus, out _, new Vector2(1f, 1f), new Vector2(-228f, -58f), new Vector2(52f, 52f), 30);
+
+        // Status message (center, prominent - no totals shown).
+        _message = MakeLabel(_root.transform, "", 28, FontStyle.Bold, TextLight, TextAnchor.MiddleLeft, new Vector2(0f, 1f), new Vector2(28f, -64f), new Vector2(560f, 40f));
+
+        // Action buttons (bottom).
+        _hitBtn = MakeButton(_root.transform, "HIT", BtnGreen, OnHit, out _, new Vector2(0f, 0f), new Vector2(40f, 24f), new Vector2(250f, 66f), 30);
+        _standBtn = MakeButton(_root.transform, "STAND", BtnAmber, OnStand, out _, new Vector2(0f, 0f), new Vector2(304f, 24f), new Vector2(250f, 66f), 30);
+        _dealBtn = MakeButton(_root.transform, "DEAL", BtnGold, OnDeal, out _dealLabel, new Vector2(0f, 0f), new Vector2(40f, 24f), new Vector2(514f, 66f), 32);
+        _leaveBtn = MakeButton(_root.transform, "LEAVE TABLE", BtnGray, OnLeave, out _, new Vector2(1f, 0f), new Vector2(-40f, 24f), new Vector2(300f, 66f), 26);
 
         _root.SetActive(false);
     }
 
     Canvas CreateOwnedCanvas()
     {
-        // A dedicated canvas parented to this (DontDestroyOnLoad) overlay, so a HUD/scene teardown
-        // elsewhere can never destroy our panel out from under us (the earlier disappearing-overlay bug).
-        GameObject canvasGo = new GameObject("BlackjackCanvas");
+        GameObject canvasGo = new("BlackjackCanvas");
         canvasGo.transform.SetParent(transform, false);
         Canvas canvas = canvasGo.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -363,62 +438,97 @@ public sealed class BlackjackOverlayController : MonoBehaviour
     {
         if (EventSystem.current != null || FindAnyObjectByType<EventSystem>() != null)
             return;
-        GameObject es = new GameObject("EventSystem (Blackjack)");
+        GameObject es = new("EventSystem (Blackjack)");
         es.AddComponent<EventSystem>();
         es.AddComponent<InputSystemUIInputModule>();
     }
 
-    static Text CreateText(Transform parent, string name, Vector2 pos, Vector2 size,
-        int fontSize, TextAnchor anchor, Color color)
+    // --- uGUI builders ---
+
+    static GameObject MakePanel(Transform parent, string name, Color color, Vector2 pivotAnchor, Vector2 anchoredPos, Vector2 size)
     {
-        GameObject go = new GameObject(name);
+        GameObject go = new(name);
+        go.transform.SetParent(parent, false);
+        RectTransform r = go.AddComponent<RectTransform>();
+        r.anchorMin = pivotAnchor;
+        r.anchorMax = pivotAnchor;
+        r.pivot = pivotAnchor;
+        r.anchoredPosition = anchoredPos;
+        r.sizeDelta = size;
+        Image img = go.AddComponent<Image>();
+        img.color = color;
+        return go;
+    }
+
+    static Text MakeLabel(Transform parent, string text, int fontSize, FontStyle style, Color color, TextAnchor anchor,
+        Vector2 pivotAnchor, Vector2 anchoredPos, Vector2 size)
+    {
+        GameObject go = new("Label");
         go.transform.SetParent(parent, false);
         Text t = go.AddComponent<Text>();
         t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         t.fontSize = fontSize;
+        t.fontStyle = style;
         t.alignment = anchor;
         t.color = color;
+        t.text = text;
         t.raycastTarget = false;
+        t.horizontalOverflow = HorizontalWrapMode.Overflow;
+        t.verticalOverflow = VerticalWrapMode.Overflow;
         RectTransform r = t.rectTransform;
-        r.anchorMin = new Vector2(0f, 0f);
-        r.anchorMax = new Vector2(0f, 0f);
-        r.pivot = new Vector2(0f, 0f);
-        r.anchoredPosition = pos;
+        r.anchorMin = pivotAnchor;
+        r.anchorMax = pivotAnchor;
+        r.pivot = pivotAnchor;
+        r.anchoredPosition = anchoredPos;
         r.sizeDelta = size;
         return t;
     }
 
-    static Button CreateButton(Transform parent, string label, Vector2 pos, Vector2 size,
-        UnityEngine.Events.UnityAction onClick, out Text labelText)
+    static void AddShadow(Text t, float dist)
     {
-        GameObject go = new GameObject($"Btn_{label}");
+        Shadow sh = t.gameObject.AddComponent<Shadow>();
+        sh.effectColor = new Color(0f, 0f, 0f, 0.6f);
+        sh.effectDistance = new Vector2(dist, -dist);
+    }
+
+    static Button MakeButton(Transform parent, string label, Color bg, UnityEngine.Events.UnityAction onClick, out Text labelText,
+        Vector2 pivotAnchor, Vector2 anchoredPos, Vector2 size, int fontSize)
+    {
+        GameObject go = new($"Btn_{label}");
         go.transform.SetParent(parent, false);
-        Image img = go.AddComponent<Image>();
-        img.color = new Color(0.18f, 0.22f, 0.3f, 0.95f);
-        RectTransform r = img.rectTransform;
-        r.anchorMin = new Vector2(0f, 0f);
-        r.anchorMax = new Vector2(0f, 0f);
-        r.pivot = new Vector2(0f, 0f);
-        r.anchoredPosition = pos;
+        RectTransform r = go.AddComponent<RectTransform>();
+        r.anchorMin = pivotAnchor;
+        r.anchorMax = pivotAnchor;
+        r.pivot = pivotAnchor;
+        r.anchoredPosition = anchoredPos;
         r.sizeDelta = size;
+        Image img = go.AddComponent<Image>();
+        img.color = bg;
 
         Button btn = go.AddComponent<Button>();
         btn.targetGraphic = img;
-        ColorBlock cb = btn.colors;
-        cb.normalColor = new Color(0.18f, 0.22f, 0.3f, 0.95f);
-        cb.highlightedColor = new Color(0.28f, 0.34f, 0.46f, 1f);
-        cb.pressedColor = new Color(0.12f, 0.16f, 0.22f, 1f);
-        cb.disabledColor = new Color(0.12f, 0.12f, 0.12f, 0.5f);
-        btn.colors = cb;
+        SetButtonColor(btn, bg);
         btn.onClick.AddListener(onClick);
 
-        labelText = CreateText(go.transform, "Label", Vector2.zero, size, 22, TextAnchor.MiddleCenter, Color.white);
-        RectTransform lr = labelText.rectTransform;
-        lr.anchorMin = Vector2.zero;
-        lr.anchorMax = Vector2.one;
-        lr.offsetMin = Vector2.zero;
-        lr.offsetMax = Vector2.zero;
-
+        labelText = MakeLabel(go.transform, label, fontSize, FontStyle.Bold, TextLight, TextAnchor.MiddleCenter,
+            new Vector2(0.5f, 0.5f), Vector2.zero, size);
+        labelText.rectTransform.anchorMin = Vector2.zero;
+        labelText.rectTransform.anchorMax = Vector2.one;
+        labelText.rectTransform.offsetMin = Vector2.zero;
+        labelText.rectTransform.offsetMax = Vector2.zero;
         return btn;
+    }
+
+    static void SetButtonColor(Button btn, Color bg)
+    {
+        if (btn.targetGraphic is Image img)
+            img.color = bg;
+        ColorBlock cb = btn.colors;
+        cb.normalColor = Color.white;
+        cb.highlightedColor = new Color(1.15f, 1.15f, 1.15f, 1f);
+        cb.pressedColor = new Color(0.8f, 0.8f, 0.8f, 1f);
+        cb.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.6f);
+        cb.colorMultiplier = 1f;
+        btn.colors = cb;
     }
 }

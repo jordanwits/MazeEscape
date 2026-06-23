@@ -65,27 +65,28 @@ public static class BlackjackCard
         return total;
     }
 
-    // --- Sprite-name helpers (match the Kenney pack file names: card_<suit>_<rank>). ---
+    // --- Sprite-name helpers (match the Bridge playing-card pack file names: <suit>-<rank>, e.g. "H-1", "S-13"). ---
 
-    public static string SuitName(int suit) => suit switch
+    /// <summary>Suit letter used in the sprite file name: C, D, H, S (clubs, diamonds, hearts, spades).</summary>
+    public static string SuitLetter(int suit) => suit switch
     {
-        0 => "clubs",
-        1 => "diamonds",
-        2 => "hearts",
-        3 => "spades",
-        _ => "clubs",
+        0 => "C",
+        1 => "D",
+        2 => "H",
+        3 => "S",
+        _ => "C",
     };
 
-    /// <summary>Rank token used in the sprite file name: "02".."10", "J", "Q", "K", "A".</summary>
-    public static string RankToken(int rankIndex) => rankIndex switch
+    /// <summary>Rank number used in the sprite file name: Ace = "1", pips "2".."10", J = "11", Q = "12", K = "13".</summary>
+    public static string RankNumber(int rankIndex) => rankIndex switch
     {
-        9 => "J",
-        10 => "Q",
-        11 => "K",
-        12 => "A",
-        _ => (rankIndex + 2).ToString("00"), // 0 -> "02" ... 8 -> "10"
+        9 => "11",  // Jack
+        10 => "12", // Queen
+        11 => "13", // King
+        12 => "1",  // Ace
+        _ => (rankIndex + 2).ToString(), // 0 -> "2" ... 8 -> "10"
     };
 
-    /// <summary>The Kenney sprite name for a card byte, e.g. <c>card_hearts_A</c>, <c>card_spades_10</c>.</summary>
-    public static string SpriteName(byte card) => $"card_{SuitName(Suit(card))}_{RankToken(RankIndex(card))}";
+    /// <summary>The sprite name for a card byte, e.g. <c>H-1</c> (ace of hearts), <c>S-10</c> (ten of spades).</summary>
+    public static string SpriteName(byte card) => $"{SuitLetter(Suit(card))}-{RankNumber(RankIndex(card))}";
 }

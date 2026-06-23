@@ -1,7 +1,7 @@
 using UnityEngine;
 
 /// <summary>
-/// Maps blackjack card bytes (see <see cref="BlackjackCard"/>) to Kenney card sprites. The sprites aren't in a
+/// Maps blackjack card bytes (see <see cref="BlackjackCard"/>) to card sprites. The sprites aren't in a
 /// Resources folder, so this asset holds direct references; populate it via the editor tool
 /// (Tools ▸ Blackjack ▸ Populate Card Sprites). Assigned to the table's <see cref="BlackjackTableView"/>.
 /// </summary>

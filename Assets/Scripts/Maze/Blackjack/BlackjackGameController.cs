@@ -27,6 +27,21 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
     [SerializeField, Range(1, BlackjackConfig.SeatCount)]
     int activeSeatCount = BlackjackConfig.SeatCount;
 
+    [Header("View")]
+    [Tooltip("Fallback camera pose while seated (angled top-down over the felt) if no per-seat anchor is set.")]
+    [SerializeField] Transform tableCameraAnchor;
+    [Tooltip("Per-seat camera poses, zoomed in on that seat's cards + the dealer. Index = seat index.")]
+    [SerializeField] Transform[] seatCameraAnchors = new Transform[BlackjackConfig.SeatCount];
+    public Transform TableCameraAnchor => tableCameraAnchor;
+
+    /// <summary>Camera pose for the given seat (per-seat if authored, else the shared table anchor).</summary>
+    public Transform GetSeatCameraAnchor(int seatIndex)
+    {
+        if (seatCameraAnchors != null && seatIndex >= 0 && seatIndex < seatCameraAnchors.Length && seatCameraAnchors[seatIndex] != null)
+            return seatCameraAnchors[seatIndex];
+        return tableCameraAnchor;
+    }
+
     [Header("Timing (seconds)")]
     [SerializeField, Min(2f)] float bettingWindowSeconds = 12f;
     [SerializeField, Min(3f)] float turnTimeoutSeconds = 15f;

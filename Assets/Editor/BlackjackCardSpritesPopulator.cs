@@ -2,12 +2,12 @@ using UnityEditor;
 using UnityEngine;
 
 /// <summary>
-/// Editor tool that creates / refreshes the <see cref="BlackjackCardSprites"/> asset by loading the Kenney
-/// card sprites by file name. Run from Tools ▸ Blackjack ▸ Populate Card Sprites.
+/// Editor tool that creates / refreshes the <see cref="BlackjackCardSprites"/> asset by loading the Bridge
+/// playing-card sprites by file name. Run from Tools ▸ Blackjack ▸ Populate Card Sprites.
 /// </summary>
 public static class BlackjackCardSpritesPopulator
 {
-    const string SpriteFolder = "Assets/Kenney Playing Cards/Sprites";
+    const string SpriteFolder = "Assets/Bridge Playing Cards/Sprites";
     const string AssetPath = "Assets/Prefabs/Maze Components/Carnival/BlackjackCardSprites.asset";
 
     [MenuItem("Tools/Blackjack/Populate Card Sprites")]
@@ -34,8 +34,8 @@ public static class BlackjackCardSpritesPopulator
             so.cards[c] = sp;
         }
 
-        so.back = AssetDatabase.LoadAssetAtPath<Sprite>($"{SpriteFolder}/card_back.png");
-        so.empty = AssetDatabase.LoadAssetAtPath<Sprite>($"{SpriteFolder}/card_empty.png");
+        so.back = AssetDatabase.LoadAssetAtPath<Sprite>($"{SpriteFolder}/Back-R.png"); // red back
+        so.empty = null; // Bridge pack has no "empty" card; the table view doesn't reference it.
 
         EditorUtility.SetDirty(so);
         AssetDatabase.SaveAssets();

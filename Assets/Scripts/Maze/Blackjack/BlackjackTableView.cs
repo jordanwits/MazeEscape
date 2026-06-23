@@ -4,35 +4,78 @@ using UnityEngine;
 
 /// <summary>
 /// Purely-visual, non-networked renderer for a blackjack table. Runs on every peer and rebuilds in-world card
-/// sprites from the replicated <see cref="BlackjackGameController"/> state whenever it changes. The dealer's
-/// hidden hole card is drawn as a face-down placeholder until the server reveals it (the real card isn't
-/// replicated until then). Card visuals carry no colliders so they never block the interact raycast.
+/// sprites from the replicated <see cref="BlackjackGameController"/> state whenever it changes. Cards lie FLAT on
+/// the felt and slide out from the <see cref="cardHolderAnchor"/> (the dealer's shoe) when dealt. The dealer's
+/// hidden hole card shows a face-down back until the server reveals it. Card visuals carry no colliders so they
+/// never block the interact raycast.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class BlackjackTableView : MonoBehaviour
 {
+    const int DealerPoolIndex = BlackjackConfig.SeatCount; // pools[4] == dealer
+
     [SerializeField] BlackjackGameController controller;
     [SerializeField] BlackjackCardSprites sprites;
 
-    [Header("Anchors (authored on the table prefab, under the scale-1 root)")]
+    [Header("Anchors (authored flat on the felt; +X = fan direction)")]
     [SerializeField] Transform[] seatCardAnchors = new Transform[BlackjackConfig.SeatCount];
     [SerializeField] Transform dealerCardAnchor;
+    [Tooltip("The shoe / card holder cards are dealt FROM (deal animation origin).")]
+    [SerializeField] Transform cardHolderAnchor;
 
     [Header("Card layout")]
-    [SerializeField] float cardScale = 0.3f;
-    [SerializeField] float cardSpacing = 0.18f;
-    [SerializeField] float depthStep = 0.004f;
+    [SerializeField] float cardScale = 0.32f;
+    [SerializeField] float cardSpacing = 0.26f;   // along the anchor's local +X
+    [SerializeField] float stackHeight = 0.004f;  // tiny lift per card (anchor local +Z = world up) to avoid z-fighting
     [SerializeField] string sortingLayerName = "Default";
     [SerializeField] int baseSortingOrder = 100;
 
-    readonly List<SpriteRenderer>[] _seatPools = new List<SpriteRenderer>[BlackjackConfig.SeatCount];
-    List<SpriteRenderer> _dealerPool;
+    [Header("Deal animation")]
+    [SerializeField] float dealDuration = 0.32f;
+    [SerializeField] float dealStagger = 0.07f;   // delay between cards in the same hand
+    [SerializeField] float recenterDuration = 0.15f;
+    [SerializeField] float flipDuration = 0.45f;  // dealer hole-card reveal flip
+
+    [Header("Hand total labels (floating above each hand)")]
+    [SerializeField] bool showHandTotals = true;
+    [SerializeField] float totalCharacterSize = 0.024f;
+    [SerializeField] float totalLiftY = 0.06f;       // world up, off the felt
+    [SerializeField] float totalUpScreen = 0.05f;    // toward the dealer side (up on the seat camera)
+    [SerializeField] Color totalColor = new(1f, 0.97f, 0.85f, 1f);
+
+    sealed class CardVisual
+    {
+        public SpriteRenderer sr;
+        public bool inUse;
+        public byte card;
+        public bool faceDown;
+        public Vector3 fromPos, toPos;
+        public Quaternion fromRot, toRot;
+        public float t, dur, delay;
+        public bool arrived;
+        public bool flipping;
+        public float flipT;
+        public byte flipToCard;
+        public bool flipSwapped;
+    }
+
+    struct CardEntry
+    {
+        public byte card;
+        public bool faceDown;
+    }
+
+    readonly List<CardVisual>[] _pools = new List<CardVisual>[BlackjackConfig.SeatCount + 1];
+    readonly TextMesh[] _totals = new TextMesh[BlackjackConfig.SeatCount + 1];
+    readonly List<CardEntry> _entries = new(16);
     bool _subscribed;
 
     void Awake()
     {
         if (controller == null)
             controller = GetComponentInParent<BlackjackGameController>(true);
+        for (int i = 0; i < _pools.Length; i++)
+            _pools[i] = new List<CardVisual>();
     }
 
     void OnEnable()
@@ -50,16 +93,6 @@ public sealed class BlackjackTableView : MonoBehaviour
         }
     }
 
-    void Update()
-    {
-        // The controller is on this prefab from instantiate, but guard for late binding regardless.
-        if (!_subscribed)
-        {
-            TrySubscribe();
-            Rebuild();
-        }
-    }
-
     void TrySubscribe()
     {
         if (controller == null)
@@ -71,6 +104,16 @@ public sealed class BlackjackTableView : MonoBehaviour
         }
     }
 
+    void Update()
+    {
+        if (!_subscribed)
+        {
+            TrySubscribe();
+            Rebuild();
+        }
+        AnimateCards();
+    }
+
     void Rebuild()
     {
         if (controller == null || sprites == null)
@@ -80,71 +123,253 @@ public sealed class BlackjackTableView : MonoBehaviour
         for (int i = 0; i < BlackjackConfig.SeatCount; i++)
         {
             Transform anchor = (seatCardAnchors != null && i < seatCardAnchors.Length) ? seatCardAnchors[i] : null;
-            if (anchor == null)
-                continue;
-            List<SpriteRenderer> pool = _seatPools[i] ??= new List<SpriteRenderer>();
-            if (i < seats)
+            _entries.Clear();
+            bool hasCards = i < seats && anchor != null && controller.GetSeat(i).Cards.Length > 0;
+            if (i < seats && anchor != null)
             {
                 SeatState s = controller.GetSeat(i);
-                RenderCards(anchor, pool, s.Cards, s.Cards.Length, false);
+                AppendCards(s.Cards, false);
+            }
+            SyncAnchor(i, anchor, _entries);
+            UpdateTotal(i, anchor, hasCards, hasCards ? controller.SeatTotal(i, out _, out _) : 0);
+        }
+
+        // Dealer
+        _entries.Clear();
+        DealerState d = controller.Dealer;
+        AppendCards(d.Cards, false);
+        if (d.HoleHidden == 1)
+            _entries.Add(new CardEntry { card = BlackjackCard.None, faceDown = true });
+        SyncAnchor(DealerPoolIndex, dealerCardAnchor, _entries);
+        bool dealerHas = dealerCardAnchor != null && d.Cards.Length > 0;
+        UpdateTotal(DealerPoolIndex, dealerCardAnchor, dealerHas, dealerHas ? controller.DealerVisibleTotal() : 0);
+    }
+
+    void UpdateTotal(int idx, Transform anchor, bool show, int total)
+    {
+        if (!showHandTotals || anchor == null)
+            show = false;
+
+        TextMesh tm = _totals[idx];
+        if (!show)
+        {
+            if (tm != null)
+                tm.gameObject.SetActive(false);
+            return;
+        }
+
+        if (tm == null)
+            tm = _totals[idx] = CreateTotalLabel();
+
+        tm.text = total.ToString();
+        tm.color = totalColor;
+        tm.characterSize = totalCharacterSize;
+        // Float above the hand: lifted off the felt + nudged toward the dealer (up on the seat camera).
+        tm.transform.SetPositionAndRotation(
+            anchor.position + Vector3.up * totalLiftY + anchor.up * totalUpScreen,
+            anchor.rotation);
+        tm.gameObject.SetActive(true);
+    }
+
+    TextMesh CreateTotalLabel()
+    {
+        GameObject go = new("HandTotal");
+        go.transform.SetParent(transform, false);
+        // Mirror on X (negative scale) for the same reason the card sprites use flipX — the seat camera
+        // faces -Z, so flat text would otherwise read backwards.
+        go.transform.localScale = new Vector3(-1f, 1f, 1f);
+        TextMesh tm = go.AddComponent<TextMesh>();
+        tm.anchor = TextAnchor.MiddleCenter;
+        tm.alignment = TextAlignment.Center;
+        tm.fontSize = 64;
+        tm.characterSize = totalCharacterSize;
+        tm.color = totalColor;
+
+        // Rebind the built-in font + its material so glyphs render (the blank-quad gotcha, see CarnivalWorldNumberDisplay).
+        Font f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        MeshRenderer mr = go.GetComponent<MeshRenderer>();
+        if (f != null)
+        {
+            tm.font = f;
+            if (mr != null && f.material != null)
+                mr.sharedMaterial = f.material;
+        }
+        if (mr != null)
+        {
+            mr.sortingLayerName = sortingLayerName;
+            mr.sortingOrder = baseSortingOrder + 500; // draw above the cards
+        }
+        return tm;
+    }
+
+    void AppendCards(FixedList32Bytes<byte> cards, bool faceDown)
+    {
+        for (int i = 0; i < cards.Length; i++)
+            _entries.Add(new CardEntry { card = cards[i], faceDown = faceDown });
+    }
+
+    void SyncAnchor(int poolIndex, Transform anchor, List<CardEntry> entries)
+    {
+        List<CardVisual> pool = _pools[poolIndex];
+        int n = anchor != null ? entries.Count : 0;
+
+        Vector3 dealFromPos = cardHolderAnchor != null ? cardHolderAnchor.position : (anchor != null ? anchor.position : transform.position);
+        Quaternion dealFromRot = anchor != null ? anchor.rotation : transform.rotation;
+
+        for (int i = 0; i < n; i++)
+        {
+            float fanX = (i - (n - 1) * 0.5f) * cardSpacing;
+            Vector3 localOffset = new(fanX, 0f, i * stackHeight);
+            Vector3 targetPos = anchor.TransformPoint(localOffset);
+            Quaternion targetRot = anchor.rotation;
+
+            CardEntry e = entries[i];
+
+            CardVisual v = EnsureVisual(pool, i, out bool isNew);
+            // Seat cameras face the dealer (-Z), so the camera's screen-right is world -X while the flat
+            // card's right is +X — without this the cards read mirrored. flipX cancels that.
+            v.sr.flipX = true;
+            v.sr.sortingLayerName = sortingLayerName;
+            v.sr.sortingOrder = baseSortingOrder + poolIndex * 20 + i;
+            v.sr.gameObject.SetActive(true);
+
+            if (isNew)
+            {
+                // Deal it: start at the shoe and slide to the slot.
+                v.sr.sprite = e.faceDown ? sprites.back : sprites.Get(e.card);
+                v.sr.transform.localScale = Vector3.one * cardScale;
+                v.fromPos = dealFromPos;
+                v.fromRot = dealFromRot;
+                v.toPos = targetPos;
+                v.toRot = targetRot;
+                v.t = 0f;
+                v.dur = dealDuration;
+                v.delay = i * dealStagger;
+                v.arrived = false;
+                v.flipping = false;
+                v.card = e.card;
+                v.faceDown = e.faceDown;
+                v.sr.transform.SetPositionAndRotation(dealFromPos, dealFromRot);
+            }
+            else if (v.flipping)
+            {
+                // A flip owns the sprite + scale until it finishes; just keep the slot pinned.
+                v.toPos = targetPos;
+                v.toRot = targetRot;
+            }
+            else if (v.faceDown && !e.faceDown)
+            {
+                // The hole card is being revealed: play a flip instead of snapping the sprite.
+                v.flipping = true;
+                v.flipT = 0f;
+                v.flipToCard = e.card;
+                v.flipSwapped = false;
+                v.arrived = true;
+                v.toPos = targetPos;
+                v.toRot = targetRot;
+                v.sr.transform.SetPositionAndRotation(targetPos, targetRot);
             }
             else
             {
-                HideFrom(pool, 0);
+                v.sr.sprite = e.faceDown ? sprites.back : sprites.Get(e.card);
+                v.sr.transform.localScale = Vector3.one * cardScale;
+                bool faceChanged = v.faceDown != e.faceDown || v.card != e.card;
+                v.card = e.card;
+                v.faceDown = e.faceDown;
+                // Re-target (fan recenters as new cards arrive) with a quick settle, unless it's basically unchanged.
+                if ((v.toPos - targetPos).sqrMagnitude > 0.0000001f || Quaternion.Angle(v.toRot, targetRot) > 0.5f)
+                {
+                    v.fromPos = v.sr.transform.position;
+                    v.fromRot = v.sr.transform.rotation;
+                    v.toPos = targetPos;
+                    v.toRot = targetRot;
+                    v.t = 0f;
+                    v.dur = recenterDuration;
+                    v.delay = 0f;
+                    v.arrived = false;
+                }
+                else if (faceChanged && v.arrived)
+                {
+                    v.sr.transform.SetPositionAndRotation(targetPos, targetRot);
+                }
             }
         }
 
-        if (dealerCardAnchor != null)
+        for (int i = n; i < pool.Count; i++)
         {
-            _dealerPool ??= new List<SpriteRenderer>();
-            DealerState d = controller.Dealer;
-            RenderCards(dealerCardAnchor, _dealerPool, d.Cards, d.Cards.Length, d.HoleHidden == 1);
+            if (pool[i].inUse)
+            {
+                pool[i].inUse = false;
+                pool[i].sr.gameObject.SetActive(false);
+            }
         }
     }
 
-    void RenderCards(Transform anchor, List<SpriteRenderer> pool, FixedList32Bytes<byte> cards, int count, bool appendFaceDown)
-    {
-        int visual = 0;
-        for (int i = 0; i < count; i++)
-            SetCard(anchor, pool, visual++, sprites.Get(cards[i]));
-        if (appendFaceDown)
-            SetCard(anchor, pool, visual++, sprites.back);
-        HideFrom(pool, visual);
-    }
-
-    void SetCard(Transform anchor, List<SpriteRenderer> pool, int index, Sprite sprite)
-    {
-        SpriteRenderer sr = EnsureRenderer(anchor, pool, index);
-        sr.sprite = sprite;
-        sr.transform.localPosition = new Vector3(index * cardSpacing, 0f, -index * depthStep);
-        sr.transform.localRotation = Quaternion.identity;
-        sr.transform.localScale = Vector3.one * cardScale;
-        sr.sortingLayerName = sortingLayerName;
-        sr.sortingOrder = baseSortingOrder + index;
-        sr.gameObject.SetActive(sprite != null);
-    }
-
-    SpriteRenderer EnsureRenderer(Transform anchor, List<SpriteRenderer> pool, int index)
+    CardVisual EnsureVisual(List<CardVisual> pool, int index, out bool isNew)
     {
         while (pool.Count <= index)
         {
-            GameObject go = new GameObject($"Card{pool.Count}");
-            go.transform.SetParent(anchor, false);
+            GameObject go = new($"Card{pool.Count}");
+            go.transform.SetParent(transform, false);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-            pool.Add(sr);
+            pool.Add(new CardVisual { sr = sr, inUse = false });
         }
-        // Re-parent in case the pooled renderer was created for a different anchor (shouldn't happen, but safe).
-        if (pool[index].transform.parent != anchor)
-            pool[index].transform.SetParent(anchor, false);
-        return pool[index];
+        CardVisual v = pool[index];
+        isNew = !v.inUse;
+        v.inUse = true;
+        return v;
     }
 
-    static void HideFrom(List<SpriteRenderer> pool, int from)
+    void AnimateCards()
     {
-        if (pool == null)
-            return;
-        for (int i = from; i < pool.Count; i++)
-            if (pool[i] != null)
-                pool[i].gameObject.SetActive(false);
+        float dt = Time.deltaTime;
+        for (int p = 0; p < _pools.Length; p++)
+        {
+            List<CardVisual> pool = _pools[p];
+            for (int i = 0; i < pool.Count; i++)
+            {
+                CardVisual v = pool[i];
+                if (!v.inUse)
+                    continue;
+                if (v.flipping)
+                {
+                    v.flipT += flipDuration > 0f ? dt / flipDuration : 1f;
+                    float ft = Mathf.Clamp01(v.flipT);
+                    // Collapse width to 0 at the halfway point (edge-on), then expand — a single-quad card flip.
+                    float widthFactor = Mathf.Abs(Mathf.Cos(ft * Mathf.PI));
+                    if (!v.flipSwapped && ft >= 0.5f)
+                    {
+                        v.flipSwapped = true;
+                        v.sr.sprite = sprites.Get(v.flipToCard);
+                        v.card = v.flipToCard;
+                        v.faceDown = false;
+                    }
+                    v.sr.transform.localScale = new Vector3(cardScale * widthFactor, cardScale, cardScale);
+                    if (v.flipT >= 1f)
+                    {
+                        v.flipping = false;
+                        v.sr.transform.localScale = Vector3.one * cardScale;
+                    }
+                    continue;
+                }
+                if (v.arrived)
+                    continue;
+                if (v.delay > 0f)
+                {
+                    v.delay -= dt;
+                    continue;
+                }
+                v.t += v.dur > 0f ? dt / v.dur : 1f;
+                float e = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(v.t));
+                v.sr.transform.SetPositionAndRotation(
+                    Vector3.LerpUnclamped(v.fromPos, v.toPos, e),
+                    Quaternion.SlerpUnclamped(v.fromRot, v.toRot, e));
+                if (v.t >= 1f)
+                {
+                    v.arrived = true;
+                    v.sr.transform.SetPositionAndRotation(v.toPos, v.toRot);
+                }
+            }
+        }
     }
 }
