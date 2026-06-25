@@ -47,7 +47,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 8964159345517639155}
-  m_Mesh: {fileID: 5461320835613783329, guid: 1be7e101aae209e46a3466e0c20a30cb, type: 3}
+  m_Mesh: {fileID: 7027636043351174211, guid: 1be7e101aae209e46a3466e0c20a30cb, type: 3}
 --- !u!23 &7451182622811362342
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -122,19 +122,6 @@ MonoBehaviour:
   AutoObjectParentSync: 0
   SyncOwnerTransformWhenParented: 0
   AllowOwnerToParent: 0
---- !u!114 &7722098834412200110
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8964159345517639155}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c4d8a2e1f9054b6c9d0e1f2a3b4c5d6e, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics
-  ShowTopMostFoldoutHeaderGroup: 1
 --- !u!54 &7722098834412200104
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -264,3 +251,16 @@ MonoBehaviour:
   sfxPriority: 88
   spatialMinDistance: 0.65
   spatialMaxDistance: 38
+--- !u!114 &7722098834412200110
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8964159345517639155}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c4d8a2e1f9054b6c9d0e1f2a3b4c5d6e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics
+  ShowTopMostFoldoutHeaderGroup: 1

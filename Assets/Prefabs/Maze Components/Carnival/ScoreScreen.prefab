@@ -25,16 +25,16 @@ RectTransform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 4078219340402833571}
-  m_LocalRotation: {x: 0.7071068, y: -0, z: -0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 0, z: -0.0022}
+  m_LocalRotation: {x: -1, y: 0, z: 0, w: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -0.000339}
   m_LocalScale: {x: -0.00064131705, y: 0.0006413166, z: 0.0006413166}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 8736090128843866930}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: -180, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0.00003, y: 0.00023}
+  m_AnchoredPosition: {x: 0.00003, y: 0.0009}
   m_SizeDelta: {x: 20, y: 5}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!23 &1867210763122444917
@@ -106,7 +106,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: 0
+  m_text: --
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -206,16 +206,16 @@ RectTransform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7128087143692749033}
-  m_LocalRotation: {x: 0.7071068, y: -0, z: -0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 0, z: 0.00074}
+  m_LocalRotation: {x: -1, y: 0, z: 0, w: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -0.000358}
   m_LocalScale: {x: -0.00064131705, y: 0.0006413166, z: 0.0006413166}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 8736090128843866930}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: -180, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0.00003, y: 0.00023}
+  m_AnchoredPosition: {x: 0.00003, y: -0.00182}
   m_SizeDelta: {x: 20, y: 5}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!23 &8633857416339030784
@@ -389,7 +389,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 8248064554730871176}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.7071068, y: -0, z: -0, w: 0.7071068}
+  m_LocalRotation: {x: -1, y: 0, z: 0, w: 0}
   m_LocalPosition: {x: 8.724, y: 5.733, z: -13.811}
   m_LocalScale: {x: 54.922, y: 54.92201, z: 54.92201}
   m_ConstrainProportionsScale: 0
@@ -405,7 +405,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 8248064554730871176}
-  m_Mesh: {fileID: 5461320835613783329, guid: 032ed69f51995d5489c5025053e8522b, type: 3}
+  m_Mesh: {fileID: -5872077933228866730, guid: 032ed69f51995d5489c5025053e8522b, type: 3}
 --- !u!23 &7599823766060202077
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -467,7 +467,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c0a1c0a1c0a1c0a1c0a1c0a1c0a1c004, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CarnivalWorldNumberDisplay
-  controller: {fileID: 0}
+  controllerHost: {fileID: 0}
   mode: 1
   tmpText: {fileID: 2116462719009283326}
   worldTextMesh: {fileID: 0}
