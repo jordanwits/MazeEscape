@@ -318,7 +318,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 3226514803
+  GlobalObjectIdHash: 3229962721
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 1
@@ -346,14 +346,19 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   hinge: {fileID: 3337242694032151114}
   openLocalEuler: {x: 0, y: 90, z: 0}
+  hingeRestPoseIsOpen: 0
   moveDuration: 10
   interactMaxDistance: 5
   useKeyToUnlock: 1
+  jailCellStartUnlocked: 0
   openAfterUnlockDelay: 0.45
   doorUnlockClip: {fileID: 8300000, guid: 044ba666a1102254d98a1174b7223dcf, type: 3}
   doorOpenClip: {fileID: 8300000, guid: 77d87fc9c97416f40906541d18efd180, type: 3}
+  doorCloseClip: {fileID: 0}
   doorUnlockVolume: 0.1
   doorOpenVolume: 0.1
+  pairedLeaf: {fileID: 0}
+  optionalCloseValidator: {fileID: 0}
 --- !u!1 &7494923041786467350
 GameObject:
   m_ObjectHideFlags: 0
