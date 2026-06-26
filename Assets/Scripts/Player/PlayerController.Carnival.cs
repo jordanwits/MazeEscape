@@ -258,4 +258,57 @@ public partial class PlayerController
 
         return false;
     }
+
+    // =========================================================================================
+    // Blackjack seating: snap the avatar onto the stool + drive the looping Sit animation.
+    // Position/rotation are written on the owning client; OwnerNetworkTransform replicates the pose and
+    // OwnerNetworkAnimator replicates the "Seated" bool, so remote peers see the player sitting on the stool.
+    // =========================================================================================
+    const string SeatedAnimatorParameter = "Seated";
+    bool _blackjackSeated;
+    Vector3 _preSeatPosition;
+    Quaternion _preSeatRotation;
+
+    void TeleportPlayer(Vector3 worldPos, Quaternion worldRot)
+    {
+        // Briefly disable the CharacterController so its solver doesn't fight the direct position write.
+        bool reenable = characterController != null && characterController.enabled;
+        if (reenable)
+            characterController.enabled = false;
+        transform.SetPositionAndRotation(worldPos, worldRot);
+        if (reenable)
+            characterController.enabled = true;
+    }
+
+    /// <summary>Teleport the player onto the stool and start the sitting animation.</summary>
+    public void EnterBlackjackSeat(Vector3 worldPos, Quaternion worldRot)
+    {
+        if (!_blackjackSeated)
+        {
+            // Remember where we stood so we can stand back up there (the seated root is raised onto the stool).
+            _preSeatPosition = transform.position;
+            _preSeatRotation = transform.rotation;
+            _blackjackSeated = true;
+        }
+
+        _horizontalVelocity = Vector3.zero;
+        CancelThrowCharge();
+        TeleportPlayer(worldPos, worldRot);
+
+        if (driveAnimator && animator != null)
+            animator.SetBool(SeatedAnimatorParameter, true);
+    }
+
+    /// <summary>Stand the player back up at their pre-sit spot (stops the sitting animation).</summary>
+    public void ExitBlackjackSeat()
+    {
+        if (driveAnimator && animator != null)
+            animator.SetBool(SeatedAnimatorParameter, false);
+
+        if (_blackjackSeated)
+        {
+            TeleportPlayer(_preSeatPosition, _preSeatRotation);
+            _blackjackSeated = false;
+        }
+    }
 }

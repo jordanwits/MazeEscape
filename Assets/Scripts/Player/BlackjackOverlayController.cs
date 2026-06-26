@@ -159,18 +159,30 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         if (show)
         {
             ActivateCamera();
+            SeatPlayerOnStool();
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
         }
         else
         {
             DeactivateCamera();
+            if (_player != null)
+                _player.ExitBlackjackSeat();
             if (!PauseMenuController.BlocksGameplayInput)
             {
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
             }
         }
+    }
+
+    /// <summary>Snap the local player's avatar onto the current seat's stool (server replicates pose + sit anim).</summary>
+    void SeatPlayerOnStool()
+    {
+        if (_player == null || _table == null)
+            return;
+        if (_table.TryGetSeatSitPose(_currentSeatIndex, out Vector3 pos, out Quaternion rot))
+            _player.EnterBlackjackSeat(pos, rot);
     }
 
     // =========================================================================================

@@ -34,12 +34,42 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
     [SerializeField] Transform[] seatCameraAnchors = new Transform[BlackjackConfig.SeatCount];
     public Transform TableCameraAnchor => tableCameraAnchor;
 
+    [Header("Seating (sit-down pose)")]
+    [Tooltip("Per-seat anchor placed at the top-center of each stool. The seated player is positioned relative to " +
+        "this (see seatSitOffset), so it stays correct even if the table is scaled. Index = seat index.")]
+    [SerializeField] Transform[] seatSitAnchors = new Transform[BlackjackConfig.SeatCount];
+    [Tooltip("Player-root offset from the stool-top anchor, in the seated player's local space (x=right, y=up, " +
+        "z=forward/toward dealer). y lowers the feet-origin so the seated hips rest on the seat; z nudges the body " +
+        "so the buttocks land on the seat center. Applied in WORLD via the anchor's yaw, so it is NOT scaled by the table.")]
+    [SerializeField] Vector3 seatSitOffset = new Vector3(0f, -0.45f, 0.11f);
+
     /// <summary>Camera pose for the given seat (per-seat if authored, else the shared table anchor).</summary>
     public Transform GetSeatCameraAnchor(int seatIndex)
     {
         if (seatCameraAnchors != null && seatIndex >= 0 && seatIndex < seatCameraAnchors.Length && seatCameraAnchors[seatIndex] != null)
             return seatCameraAnchors[seatIndex];
         return tableCameraAnchor;
+    }
+
+    /// <summary>Stool-top anchor for the given seat (or null if none authored).</summary>
+    public Transform GetSeatSitAnchor(int seatIndex)
+    {
+        if (seatSitAnchors != null && seatIndex >= 0 && seatIndex < seatSitAnchors.Length)
+            return seatSitAnchors[seatIndex];
+        return null;
+    }
+
+    /// <summary>World pose to place a seated player's root so the avatar sits naturally on that seat's stool.</summary>
+    public bool TryGetSeatSitPose(int seatIndex, out Vector3 position, out Quaternion rotation)
+    {
+        position = default;
+        rotation = Quaternion.identity;
+        Transform a = GetSeatSitAnchor(seatIndex);
+        if (a == null)
+            return false;
+        rotation = Quaternion.Euler(0f, a.eulerAngles.y, 0f); // yaw only — player faces the dealer
+        position = a.position + rotation * seatSitOffset;
+        return true;
     }
 
     [Header("Timing (seconds)")]
