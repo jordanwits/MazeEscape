@@ -85,6 +85,12 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
     /// <summary>Fired on every peer whenever any replicated state changes; the view + overlay rebuild from it.</summary>
     public event Action StateChanged;
 
+    /// <summary>
+    /// Fired on every peer (host + clients) when a player is dealt a natural blackjack — drives the dealer-bot
+    /// spin/stinger celebration (<see cref="BlackjackDealerSpin"/>). Server-raised via a ClientRpc.
+    /// </summary>
+    public event Action BlackjackCelebrated;
+
     public int ActiveSeatCount => Mathf.Clamp(activeSeatCount, 1, BlackjackConfig.SeatCount);
     public BlackjackPhase Phase => _phase.Value;
     public int ActingSeatIndex => _actingSeatIndex.Value;
@@ -227,6 +233,12 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
     void SubmitActionServerRpc(byte action, int arg, ulong playerNetObjId, ServerRpcParams rpcParams = default)
     {
         ServerHandleAction((SeatAction)action, arg, playerNetObjId, rpcParams.Receive.SenderClientId);
+    }
+
+    [ClientRpc]
+    void BlackjackCelebrationClientRpc()
+    {
+        BlackjackCelebrated?.Invoke();
     }
 
     void ServerHandleAction(SeatAction action, int arg, ulong playerNetObjId, ulong expectedOwnerClientId)
@@ -467,6 +479,7 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
         _dealer.Value = d;
 
         // Flag player naturals.
+        bool anyPlayerBlackjack = false;
         for (int i = 0; i < ActiveSeatCount; i++)
         {
             SeatState s = GetSeat(i);
@@ -477,8 +490,13 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
             {
                 s.Status = (byte)BlackjackHandStatus.Blackjack;
                 SetSeat(i, s);
+                anyPlayerBlackjack = true;
             }
         }
+
+        // Celebrate a player natural on every peer (dealer head spins + stinger SFX).
+        if (anyPlayerBlackjack)
+            BlackjackCelebrationClientRpc();
 
         // Dealer peek on an Ace / ten-value up-card.
         bool dealerNatural = false;

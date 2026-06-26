@@ -1,6 +1,9 @@
 using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 /// <summary>
 /// Purely-visual, non-networked renderer for a blackjack table. Runs on every peer and rebuilds in-world card
@@ -36,6 +39,11 @@ public sealed class BlackjackTableView : MonoBehaviour
     [SerializeField] float recenterDuration = 0.15f;
     [SerializeField] float flipDuration = 0.45f;  // dealer hole-card reveal flip
 
+    [Header("Audio")]
+    [Tooltip("Played as each card slides out from the shoe and when the dealer's hole card flips face-up.")]
+    [SerializeField] AudioClip cardDealClip;
+    [SerializeField, Range(0f, 1f)] float cardDealVolume = 1f;
+
     [Header("Hand total labels (floating above each hand)")]
     [SerializeField] bool showHandTotals = true;
     [SerializeField] float totalCharacterSize = 0.024f;
@@ -57,6 +65,7 @@ public sealed class BlackjackTableView : MonoBehaviour
         public float flipT;
         public byte flipToCard;
         public bool flipSwapped;
+        public bool needsDealSound; // play the deal SFX when this freshly-dealt card starts sliding
     }
 
     struct CardEntry
@@ -69,6 +78,8 @@ public sealed class BlackjackTableView : MonoBehaviour
     readonly TextMesh[] _totals = new TextMesh[BlackjackConfig.SeatCount + 1];
     readonly List<CardEntry> _entries = new(16);
     bool _subscribed;
+    AudioSource _audio;
+    bool _firstRebuildDone; // suppress deal SFX for the cards present on the very first state sync (e.g. late join)
 
     void Awake()
     {
@@ -76,6 +87,30 @@ public sealed class BlackjackTableView : MonoBehaviour
             controller = GetComponentInParent<BlackjackGameController>(true);
         for (int i = 0; i < _pools.Length; i++)
             _pools[i] = new List<CardVisual>();
+        EnsureAudio();
+    }
+
+    void EnsureAudio()
+    {
+        if (_audio != null)
+            return;
+        _audio = GetComponent<AudioSource>();
+        if (_audio == null)
+            _audio = gameObject.AddComponent<AudioSource>();
+        _audio.playOnAwake = false;
+        _audio.loop = false;
+        _audio.spatialBlend = 1f;
+        _audio.minDistance = 1f;
+        _audio.maxDistance = 45f;
+        _audio.rolloffMode = AudioRolloffMode.Linear;
+    }
+
+    void PlayCardSfx()
+    {
+        if (cardDealClip == null)
+            return;
+        EnsureAudio();
+        _audio.PlayOneShot(cardDealClip, Mathf.Clamp01(cardDealVolume));
     }
 
     void OnEnable()
@@ -143,6 +178,8 @@ public sealed class BlackjackTableView : MonoBehaviour
         SyncAnchor(DealerPoolIndex, dealerCardAnchor, _entries);
         bool dealerHas = dealerCardAnchor != null && d.Cards.Length > 0;
         UpdateTotal(DealerPoolIndex, dealerCardAnchor, dealerHas, dealerHas ? controller.DealerVisibleTotal() : 0);
+
+        _firstRebuildDone = true;
     }
 
     void UpdateTotal(int idx, Transform anchor, bool show, int total)
@@ -249,6 +286,8 @@ public sealed class BlackjackTableView : MonoBehaviour
                 v.flipping = false;
                 v.card = e.card;
                 v.faceDown = e.faceDown;
+                // Thwack when it actually starts sliding (after its stagger delay), not all at once here.
+                v.needsDealSound = _firstRebuildDone;
                 v.sr.transform.SetPositionAndRotation(dealFromPos, dealFromRot);
             }
             else if (v.flipping)
@@ -268,6 +307,8 @@ public sealed class BlackjackTableView : MonoBehaviour
                 v.toPos = targetPos;
                 v.toRot = targetRot;
                 v.sr.transform.SetPositionAndRotation(targetPos, targetRot);
+                if (_firstRebuildDone)
+                    PlayCardSfx(); // dealer's second-card (hole) reveal flip
             }
             else
             {
@@ -320,6 +361,14 @@ public sealed class BlackjackTableView : MonoBehaviour
         return v;
     }
 
+#if UNITY_EDITOR
+    void OnValidate()
+    {
+        if (cardDealClip == null)
+            cardDealClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Carnival/CardDeal.wav");
+    }
+#endif
+
     void AnimateCards()
     {
         float dt = Time.deltaTime;
@@ -358,6 +407,11 @@ public sealed class BlackjackTableView : MonoBehaviour
                 {
                     v.delay -= dt;
                     continue;
+                }
+                if (v.needsDealSound)
+                {
+                    v.needsDealSound = false;
+                    PlayCardSfx();
                 }
                 v.t += v.dur > 0f ? dt / v.dur : 1f;
                 float e = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(v.t));
