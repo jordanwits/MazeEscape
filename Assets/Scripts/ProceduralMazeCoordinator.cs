@@ -3543,8 +3543,9 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
-            Vector3 candidate = GetMazeEnemySpawnWorldPosition(
-                cell, cellSize, yOffset, mazeSeed, spawnIndex, attempt, interiorPlan, mazeTrapRoots);
+            if (!TryGetMazeEnemySpawnWorldPosition(
+                    cell, cellSize, yOffset, mazeSeed, spawnIndex, attempt, interiorPlan, mazeTrapRoots, out Vector3 candidate))
+                continue;
             if (IsMazeEnemySpawnOverlappingTrapGeometry(candidate, mazeTrapRoots))
                 continue;
 
@@ -3564,11 +3565,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             return best;
 
         LogMazeWarningOnce(
-            "enemy-spawn-pit-overlap-fallback",
-            "[Maze] Could not find a spawn position outside maze trap geometry after retries; using raw jitter (may overlap trap). "
-            + "Check trap colliders vs. corridor width.",
+            "enemy-spawn-floor-fallback",
+            "[Maze] Could not confirm a NavMesh-walkable spawn near this cell after retries; using cell-center floor fallback. "
+            + "Check NavMesh bake / trap colliders vs. corridor width.",
             this);
-        return GetMazeEnemySpawnWorldPosition(cell, cellSize, yOffset, mazeSeed, spawnIndex, 0, interiorPlan, mazeTrapRoots);
+        return GetMazeEnemySpawnFallbackPosition(cell, cellSize, yOffset, interiorPlan);
     }
 
     /// <summary>
@@ -3643,7 +3644,19 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         return best;
     }
 
-    Vector3 GetMazeEnemySpawnWorldPosition(
+    // Vertical band, relative to the corridor floor, within which a NavMesh sample is accepted as
+    // "the same walkable layer". Anything outside is a roof/wall-top above or a pit below.
+    const float MazeEnemyNavMaxAboveFloor = 1.65f;
+    const float MazeEnemyNavMaxBelowFloor = 1.2f;
+
+    /// <summary>
+    /// Resolves a jittered, NavMesh-confirmed spawn position for one placement attempt. Returns false
+    /// when no walkable point can be confirmed within the corridor-floor band — that happens when the
+    /// down-ray's only "floor" is actually a roof, a wall top, or a pit roof-cap (e.g. the jitter pushed
+    /// the probe over a pit). Returning false lets the caller try another jitter or fall back to a
+    /// guaranteed floor-level position, instead of stranding the enemy on top of the maze.
+    /// </summary>
+    bool TryGetMazeEnemySpawnWorldPosition(
         Vector2Int cell,
         float cellSize,
         float yOffset,
@@ -3651,8 +3664,10 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int spawnIndex,
         int placementAttempt,
         InteriorRoomBuildPlan interiorPlan,
-        List<Transform> mazeTrapRoots)
+        List<Transform> mazeTrapRoots,
+        out Vector3 position)
     {
+        position = default;
         Vector3 cellCenter = ResolveMazeEnemySpawnHorizontalCellOrigin(cell, cellSize, interiorPlan);
         int jitterSeed = MixSeed(mazeSeed, MixSeed(spawnIndex, MixSeed(placementAttempt, unchecked((int)0x51A4EED5))));
         System.Random jitterRng = new(jitterSeed);
@@ -3661,10 +3676,14 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         float jz = (float)(jitterRng.NextDouble() * 2d - 1d) * jitterRadius;
         Vector3 xzOnGrid = cellCenter + new Vector3(jx, 0f, jz);
 
-        if (!TryFindMazeEnemySpawnFloor(xzOnGrid, cellSize, out Vector3 floorPoint, mazeTrapRoots))
-            floorPoint = xzOnGrid;
+        // Reference floor Y: the down-ray hit when we have one, otherwise the maze corridor floor
+        // (cell-origin Y from _config.Origin). The down-ray result is only a *seed* for the band check
+        // below — it is never trusted as the final height, because it may be a roof/wall top.
+        float referenceFloorY = TryFindMazeEnemySpawnFloor(xzOnGrid, cellSize, out Vector3 floorPoint, mazeTrapRoots)
+            ? floorPoint.y
+            : xzOnGrid.y;
 
-        Vector3 sampleFrom = floorPoint + Vector3.up * 0.35f;
+        Vector3 sampleFrom = new Vector3(xzOnGrid.x, referenceFloorY, xzOnGrid.z) + Vector3.up * 0.35f;
         float[] snapRadii =
         {
             Mathf.Clamp(cellSize * 0.22f, 0.75f, 3f),
@@ -3676,15 +3695,40 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             if (!NavMesh.SamplePosition(sampleFrom, out NavMeshHit navHit, snapRadii[i], NavMesh.AllAreas))
                 continue;
 
-            // Stay on the walkable layer the down-ray found — reject nearby NavMesh patches far above (roofs) or far below (pits).
-            const float navMaxAboveRayFloor = 1.65f;
-            const float navMaxBelowRayFloor = 1.2f;
-            if (navHit.position.y <= floorPoint.y + navMaxAboveRayFloor
-                && navHit.position.y >= floorPoint.y - navMaxBelowRayFloor)
-                return navHit.position + Vector3.up * yOffset;
+            // Stay on the walkable layer the reference floor sits on — reject NavMesh patches far above
+            // (roofs/wall tops) or far below (pits). A roof "floor" seed has no NavMesh in-band, so the
+            // whole attempt fails here rather than spawning the enemy on top of the maze.
+            if (navHit.position.y <= referenceFloorY + MazeEnemyNavMaxAboveFloor
+                && navHit.position.y >= referenceFloorY - MazeEnemyNavMaxBelowFloor)
+            {
+                position = navHit.position + Vector3.up * yOffset;
+                return true;
+            }
         }
 
-        return floorPoint + Vector3.up * yOffset;
+        return false;
+    }
+
+    /// <summary>
+    /// Floor-level fallback used only when no jittered attempt produced a NavMesh-confirmed spawn.
+    /// Never returns a roof/wall top: snaps to NavMesh near the cell-center corridor floor, or the raw
+    /// corridor floor (cell-origin Y + offset) when NavMesh is unavailable there.
+    /// </summary>
+    Vector3 GetMazeEnemySpawnFallbackPosition(
+        Vector2Int cell,
+        float cellSize,
+        float yOffset,
+        InteriorRoomBuildPlan interiorPlan)
+    {
+        Vector3 cellCenter = ResolveMazeEnemySpawnHorizontalCellOrigin(cell, cellSize, interiorPlan);
+        Vector3 sampleFrom = cellCenter + Vector3.up * 0.5f;
+        float radius = Mathf.Clamp(cellSize * 0.5f, 1f, 8f);
+        if (NavMesh.SamplePosition(sampleFrom, out NavMeshHit navHit, radius, NavMesh.AllAreas)
+            && navHit.position.y <= cellCenter.y + MazeEnemyNavMaxAboveFloor
+            && navHit.position.y >= cellCenter.y - MazeEnemyNavMaxBelowFloor)
+            return navHit.position + Vector3.up * yOffset;
+
+        return cellCenter + Vector3.up * yOffset;
     }
 
     /// <summary>

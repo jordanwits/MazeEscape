@@ -79,6 +79,26 @@ public class SkeletonAI : MonoBehaviour
     [SerializeField] float pitProbeUpOffset = 0.4f;
     [Tooltip("If no ground is found within this drop ahead, it's treated as a pit and the skeleton turns away.")]
     [SerializeField] float pitProbeDepth = 2.5f;
+    [Tooltip("If a chase makes no progress for this long (e.g. the target is across a pit, so the agent steers at it " +
+             "but the pit-probe freezes every step), give up the target and return to patrol instead of freezing.")]
+    [SerializeField] float chaseUnreachablePatrolSeconds = 0.5f;
+    [Tooltip("After abandoning an unreachable target, ignore that same player for this long so it doesn't instantly " +
+             "re-acquire it and freeze again.")]
+    [SerializeField] float unreachableTargetForgetSeconds = 3f;
+
+    [Header("Anti-stuck (props / walls)")]
+    [Tooltip("Recover when the body is wedged against an un-baked prop/wall: the NavMesh path runs through it so the " +
+             "agent pushes forward but the CharacterController makes no actual progress (walking in place). It sidesteps " +
+             "to slip around it, and gives up after a few failed nudges so it can never stay stuck.")]
+    [SerializeField] bool recoverFromStuck = true;
+    [Tooltip("Window (s) over which ACTUAL ground movement is measured to decide whether it's wedged in place.")]
+    [SerializeField] float stuckCheckWindow = 0.4f;
+    [Tooltip("If it advances less than this (m) over the window while trying to move, it's treated as wedged.")]
+    [SerializeField] float stuckProgressEpsilon = 0.06f;
+    [Tooltip("How long each sideways unstick nudge lasts.")]
+    [SerializeField] float unstickDuration = 0.45f;
+    [Tooltip("Consecutive failed nudges before it gives up the chase / repicks a patrol waypoint instead of nudging.")]
+    [SerializeField] int stuckStrikesBeforeGiveUp = 4;
 
     [Header("Throw (ranged)")]
     [Tooltip("The object lobbed at the player (the flaming skull). Server-spawned. May be left empty until the " +
@@ -177,6 +197,16 @@ public class SkeletonAI : MonoBehaviour
     Vector3 _horizontalVelocity;
     Vector3 _verticalVelocity;
     bool _pitBlocked;
+    float _chaseUnreachableTime;
+    PlayerHealth _unreachableTargetHealth;
+    float _unreachableTargetUntil;
+    Vector3 _antiStuckSamplePos;
+    float _antiStuckSampleTime;
+    float _antiStuckNudgeUntil;
+    Vector3 _antiStuckNudgeDir;
+    int _antiStuckSide;
+    int _antiStuckStrikes;
+    float _antiStuckStrikeExpiry;
 
     // Patrol state
     bool _hasPatrolDestination;
@@ -346,6 +376,8 @@ public class SkeletonAI : MonoBehaviour
         }
 
         ApplyMovement(desiredHorizontalVelocity);
+        TrackChaseStall(); // bail out of a chase that can't make progress (e.g. target across a pit)
+        UpdateAntiStuck();  // sidestep / recover when wedged in place against a prop or wall
         UpdateAnimatorParameters();
     }
 
@@ -396,6 +428,122 @@ public class SkeletonAI : MonoBehaviour
             desiredVelocity = desiredVelocity.normalized * walkSpeed;
 
         return desiredVelocity;
+    }
+
+    /// <summary>Drop the current (unreachable) target and briefly blacklist it so it isn't instantly re-acquired.</summary>
+    void AbandonUnreachableTarget()
+    {
+        _unreachableTargetHealth = _targetHealth;
+        _unreachableTargetUntil = Time.time + Mathf.Max(0f, unreachableTargetForgetSeconds);
+        ClearTarget();
+    }
+
+    /// <summary>
+    /// While chasing, the NavMesh may report a complete path the body can't physically follow — e.g. the target is
+    /// across a pit, so the agent steers straight at it but the pit-probe (<see cref="WouldStepIntoPit"/>) zeroes
+    /// every step and it freezes at the edge. Detect that — a chase step actively blocked by a pit — and fall back
+    /// to patrol. Only counts pit-blocked steps, so a skeleton deliberately stopped in range (throwing or waiting out
+    /// a cooldown) is never mistaken for stuck.
+    /// </summary>
+    void TrackChaseStall()
+    {
+        if (_state != SkeletonState.Chase || _target == null || !_pitBlocked)
+        {
+            _chaseUnreachableTime = 0f;
+            return;
+        }
+
+        _chaseUnreachableTime += Time.deltaTime;
+        if (_chaseUnreachableTime >= Mathf.Max(0f, chaseUnreachablePatrolSeconds))
+            AbandonUnreachableTarget(); // next Update has no target -> routes to patrol
+    }
+
+    /// <summary>
+    /// Stops the skeleton ever "walking in place" against a prop/wall the NavMesh path runs through but the body
+    /// can't pass. Measures ACTUAL ground progress while it's trying to move; if it isn't advancing it sidesteps to
+    /// slip around the obstacle, and after several failed nudges gives up (chase -> patrol, or a fresh patrol
+    /// waypoint) so it can never stay wedged. Pit blocks are left to <see cref="TrackChaseStall"/>.
+    /// </summary>
+    void UpdateAntiStuck()
+    {
+        if (!recoverFromStuck)
+            return;
+
+        bool movingState = _state == SkeletonState.Chase || _state == SkeletonState.Patrol;
+        bool wantsToMove = navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh
+            && !navMeshAgent.isStopped && navMeshAgent.hasPath
+            && navMeshAgent.desiredVelocity.sqrMagnitude > 0.04f;
+
+        // Not trying to move, a pit is the cause (handled elsewhere), or a nudge is mid-play: just (re)start sampling.
+        if (!movingState || !wantsToMove || _pitBlocked || Time.time < _antiStuckNudgeUntil)
+        {
+            _antiStuckSamplePos = transform.position;
+            _antiStuckSampleTime = Time.time;
+            return;
+        }
+
+        if (Time.time - _antiStuckSampleTime < Mathf.Max(0.1f, stuckCheckWindow))
+            return;
+
+        // How far did it ACTUALLY travel along the ground over the window?
+        Vector3 a = transform.position; a.y = 0f;
+        Vector3 b = _antiStuckSamplePos; b.y = 0f;
+        float moved = Vector3.Distance(a, b);
+        _antiStuckSamplePos = transform.position;
+        _antiStuckSampleTime = Time.time;
+
+        if (moved >= stuckProgressEpsilon)
+        {
+            _antiStuckStrikes = 0; // advancing fine
+            return;
+        }
+
+        // Wedged in place while wanting to move. Count strikes (decaying) and escalate from nudges to giving up.
+        if (Time.time > _antiStuckStrikeExpiry)
+            _antiStuckStrikes = 0;
+        _antiStuckStrikes++;
+        _antiStuckStrikeExpiry = Time.time + 2f;
+
+        if (_antiStuckStrikes >= Mathf.Max(1, stuckStrikesBeforeGiveUp))
+        {
+            _antiStuckStrikes = 0;
+            _antiStuckNudgeUntil = 0f;
+            if (_state == SkeletonState.Chase)
+            {
+                AbandonUnreachableTarget(); // give up this target -> patrols away from the obstacle
+            }
+            else
+            {
+                // Patrol: turn around and pick a fresh waypoint away from whatever it's jammed against.
+                _patrolForwardOverride = -transform.forward;
+                _patrolForwardOverrideUntil = Time.time + 1.5f;
+                _hasPatrolDestination = false;
+                TrySetNextPatrolDestination();
+            }
+            return;
+        }
+
+        BeginUnstickNudge();
+    }
+
+    /// <summary>Steer sideways (alternating sides) for a moment to slide off the corner of whatever is blocking it.</summary>
+    void BeginUnstickNudge()
+    {
+        Vector3 forward = navMeshAgent != null ? navMeshAgent.desiredVelocity : transform.forward;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < 0.0001f)
+            forward = transform.forward;
+        forward.Normalize();
+
+        Vector3 perpendicular = Vector3.Cross(Vector3.up, forward); // to the right of travel
+        _antiStuckSide ^= 1;
+        if (_antiStuckSide == 1)
+            perpendicular = -perpendicular; // alternate sides so a blocked side flips to the other next time
+
+        _antiStuckNudgeDir = (perpendicular * 0.85f + forward * 0.35f).normalized; // mostly sideways, a little forward
+        _antiStuckNudgeUntil = Time.time + Mathf.Max(0.1f, unstickDuration);
+        _antiStuckSamplePos = transform.position;
+        _antiStuckSampleTime = Time.time;
     }
 
     // ---- Patrol ------------------------------------------------------------
@@ -830,6 +978,8 @@ public class SkeletonAI : MonoBehaviour
             PlayerHealth candidate = hit.GetComponentInParent<PlayerHealth>();
             if (candidate == null || candidate.IsDead)
                 continue;
+            if (IsUnreachableSuppressed(candidate))
+                continue;
             if (!HasDetectionLineOfSight(candidate))
                 continue;
 
@@ -849,6 +999,8 @@ public class SkeletonAI : MonoBehaviour
                 PlayerHealth candidate = players[i];
                 if (candidate == null || candidate.IsDead)
                     continue;
+                if (IsUnreachableSuppressed(candidate))
+                    continue;
 
                 float distance = Vector3.Distance(transform.position, candidate.transform.position);
                 if (distance > detectionRadius || distance >= closestDistance)
@@ -866,6 +1018,12 @@ public class SkeletonAI : MonoBehaviour
 
         _targetHealth = closest;
         _target = closest.transform;
+    }
+
+    /// <summary>True while a target we just gave up on (because it was unreachable) is still being ignored.</summary>
+    bool IsUnreachableSuppressed(PlayerHealth candidate)
+    {
+        return candidate != null && candidate == _unreachableTargetHealth && Time.time < _unreachableTargetUntil;
     }
 
     bool HasDetectionLineOfSight(PlayerHealth targetHealth)
@@ -924,7 +1082,13 @@ public class SkeletonAI : MonoBehaviour
             || _state == SkeletonState.Throw || _state == SkeletonState.Bash;
         _horizontalVelocity = frozen ? Vector3.zero : desiredHorizontalVelocity;
 
+        // Mid-nudge: a prop/wall wedged the body, so steer sideways for a moment to slip around it.
+        if (!frozen && recoverFromStuck && Time.time < _antiStuckNudgeUntil)
+            _horizontalVelocity = _antiStuckNudgeDir * walkSpeed;
+
         // Can't cross pits: if the next step has no ground ahead, cancel it (and flag patrol to turn around).
+        // Recomputed every frame so it reflects only the current step (a stationary skeleton isn't pit-blocked).
+        _pitBlocked = false;
         if (avoidPits && !frozen && _horizontalVelocity.sqrMagnitude > 0.0001f && WouldStepIntoPit(_horizontalVelocity))
         {
             _horizontalVelocity = Vector3.zero;
@@ -1012,6 +1176,7 @@ public class SkeletonAI : MonoBehaviour
     {
         _target = null;
         _targetHealth = null;
+        _chaseUnreachableTime = 0f;
     }
 
     bool TrySnapToNavMesh()

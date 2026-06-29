@@ -40,6 +40,13 @@ public class SkeletonThrownObject : NetworkBehaviour
     [Tooltip("Linear damping during the roll so the skull skids to a stop instead of sliding forever.")]
     [SerializeField] float rollDrag = 0.6f;
 
+    [Header("Bounce (on player hit)")]
+    [Tooltip("Horizontal speed the skull ricochets away from the player with after a direct hit (it bounces off " +
+             "and rolls instead of shattering).")]
+    [SerializeField] float bounceHorizontalSpeed = 4f;
+    [Tooltip("Upward pop given to the skull as it bounces off the player.")]
+    [SerializeField] float bounceUpwardSpeed = 2.5f;
+
     enum Phase { Flight, Rolling }
 
     readonly Collider[] _overlap = new Collider[8];
@@ -143,8 +150,8 @@ public class SkeletonThrownObject : NetworkBehaviour
         Vector3 position = EvaluateArc(t);
         transform.position = position;
 
-        // A direct hit shatters the skull on the player; otherwise it lands (or clips a wall) and rolls.
-        if (TryHitPlayer(position))
+        // A direct hit damages the player and bounces the skull off (into the roll); otherwise it lands (or clips a wall) and rolls.
+        if (TryHitPlayer(position, ArcVelocity(t)))
             return;
 
         if (CheckWorldBlocked(_prevPosition, position))
@@ -220,7 +227,7 @@ public class SkeletonThrownObject : NetworkBehaviour
         return mask;
     }
 
-    bool TryHitPlayer(Vector3 position)
+    bool TryHitPlayer(Vector3 position, Vector3 arcVelocity)
     {
         int mask = playerMask.value != 0 ? playerMask.value : Physics.DefaultRaycastLayers;
         int count = Physics.OverlapSphereNonAlloc(position, hitRadius, _overlap, mask, QueryTriggerInteraction.Ignore);
@@ -235,11 +242,27 @@ public class SkeletonThrownObject : NetworkBehaviour
                 continue;
 
             ApplyHit(ph);
-            Despawn();
+            // Deal damage but don't shatter: ricochet off the player and roll. The roll phase doesn't re-run this
+            // check, so damage is only applied once.
+            StartRolling(position, BounceVelocity(position, arcVelocity, ph.transform.position));
             return true;
         }
 
         return false;
+    }
+
+    /// <summary>Velocity for the skull as it bounces off a player it just struck — pushed back away from them with an upward pop.</summary>
+    Vector3 BounceVelocity(Vector3 position, Vector3 arcVelocity, Vector3 playerPosition)
+    {
+        Vector3 away = position - playerPosition;
+        away.y = 0f;
+        if (away.sqrMagnitude < 1e-4f)
+        {
+            // Skull is essentially on top of the player; bounce back along the incoming horizontal direction instead.
+            away = new Vector3(-arcVelocity.x, 0f, -arcVelocity.z);
+        }
+        away = away.sqrMagnitude > 1e-4f ? away.normalized : Vector3.back;
+        return away * bounceHorizontalSpeed + Vector3.up * bounceUpwardSpeed;
     }
 
     void ApplyHit(PlayerHealth ph)
