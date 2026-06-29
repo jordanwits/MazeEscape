@@ -34,11 +34,11 @@ public class SkeletonThrownObject : NetworkBehaviour
     [SerializeField] Transform visualToSpin;
 
     [Header("Roll (after landing)")]
-    [Tooltip("When the lob lands (or hits a wall) without striking a player, the skull drops and rolls on the " +
-             "ground for this long before disappearing. Needs a Rigidbody + Collider on this prefab.")]
+    [Tooltip("When the lob lands (or hits a wall) without striking a player, the skull keeps its trajectory into " +
+             "physics and rolls on the ground for this long before disappearing. Needs a Rigidbody + Collider.")]
     [SerializeField] float rollDurationSeconds = 3f;
-    [Tooltip("Forward speed (m/s) handed to the skull as it transitions into the rolling phase.")]
-    [SerializeField] float rollLaunchSpeed = 2.5f;
+    [Tooltip("Linear damping during the roll so the skull skids to a stop instead of sliding forever.")]
+    [SerializeField] float rollDrag = 0.6f;
 
     enum Phase { Flight, Rolling }
 
@@ -149,25 +149,29 @@ public class SkeletonThrownObject : NetworkBehaviour
 
         if (CheckWorldBlocked(_prevPosition, position))
         {
-            StartRolling(position);
+            StartRolling(position, ArcVelocity(t));
             return;
         }
 
         _prevPosition = position;
 
         if (t >= 1f)
-            StartRolling(position);
+            StartRolling(position, ArcVelocity(1f));
     }
 
-    void StartRolling(Vector3 position)
+    /// <summary>Velocity (m/s) of the arc at normalized time <paramref name="t"/> — the derivative of EvaluateArc.</summary>
+    Vector3 ArcVelocity(float t)
+    {
+        Vector3 velocity = (_target - _start) / _flightDuration;
+        velocity.y += (_arcHeight * 4f * (1f - 2f * t)) / _flightDuration;
+        return velocity;
+    }
+
+    void StartRolling(Vector3 position, Vector3 handoffVelocity)
     {
         _phase = Phase.Rolling;
         _rollEndTime = Time.time + Mathf.Max(0.2f, rollDurationSeconds);
         transform.position = position;
-
-        Vector3 horizontal = _target - _start;
-        horizontal.y = 0f;
-        horizontal = horizontal.sqrMagnitude > 1e-4f ? horizontal.normalized : transform.forward;
 
         if (_collider != null)
             _collider.enabled = true;
@@ -175,7 +179,10 @@ public class SkeletonThrownObject : NetworkBehaviour
         {
             _rigidbody.isKinematic = false;
             _rigidbody.useGravity = true;
-            _rigidbody.linearVelocity = horizontal * rollLaunchSpeed;
+            _rigidbody.linearDamping = Mathf.Max(0f, rollDrag);
+            // Continue the arc's real velocity (incl. its downward component) so it descends into the ground
+            // smoothly instead of stopping mid-air and dropping.
+            _rigidbody.linearVelocity = handoffVelocity;
             _rigidbody.angularVelocity = new Vector3(Random.Range(-5f, 5f), Random.Range(-3f, 3f), Random.Range(-5f, 5f));
         }
     }

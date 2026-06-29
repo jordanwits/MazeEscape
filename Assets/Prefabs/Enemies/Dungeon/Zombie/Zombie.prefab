@@ -2717,6 +2717,12 @@ MonoBehaviour:
   hitReactionExitCrossfadeDuration: 0.18
   upperBodyLayerIndex: 1
   allowMoveWhileAttacking: 1
+  clampHitReactionToWalls: 1
+  hitReactionWallMask:
+    serializedVersion: 2
+    m_Bits: 4294967291
+  hitReactionBodyRadius: 0.32
+  hitReactionCastHeight: 1.1
 --- !u!143 &2122988434391096662
 CharacterController:
   m_ObjectHideFlags: 0

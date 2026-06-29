@@ -63,7 +63,6 @@ public class SkeletonAI : MonoBehaviour
 
     [Header("Patrol")]
     [SerializeField] bool patrolWhenNoTarget = true;
-    [SerializeField] float patrolSpeed = 1.3f;
     [SerializeField] float patrolMinWaypointDistance = 5f;
     [SerializeField] float patrolMaxWaypointDistance = 12f;
     [SerializeField] float patrolArrivalDistance = 1.2f;
@@ -132,6 +131,21 @@ public class SkeletonAI : MonoBehaviour
     [SerializeField] float hitReactionBodyRadius = 0.28f;
     [SerializeField] float hitReactionCastHeight = 1.1f;
 
+    [Header("Footsteps")]
+    [Tooltip("Dedicated 3D AudioSource for footsteps (child 'Skeleton_Footsteps'). Auto-resolved if left empty.")]
+    [SerializeField] AudioSource footstepAudioSource;
+    [SerializeField] AudioClip footstepClip1;
+    [SerializeField] AudioClip footstepClip2;
+    [SerializeField, Range(0f, 1f)] float footstepVolume = 0.6f;
+    [Tooltip("Footsteps per walk-clip loop (usually 2: left + right). Footsteps are locked to the walk cycle so " +
+             "they always match the animation regardless of move/playback speed.")]
+    [SerializeField] float footstepsPerCycle = 2f;
+    [Tooltip("Shifts footstep timing within the cycle (0..1) to line the sound up with the foot hitting the ground. " +
+             "Tuned so the steps land on the clip's actual foot plants (nt ~0.31 / ~0.81).")]
+    [SerializeField, Range(0f, 1f)] float footstepPhaseOffset = 0.19f;
+    [Tooltip("Normalized Speed (0..1) below which footsteps stop.")]
+    [SerializeField] float minFootstepSpeed = 0.12f;
+
     [Header("Animator")]
     [SerializeField] string speedParameter = "Speed";
     [Tooltip("Float param that scales walk-clip playback so the (in-place) feet match the ground.")]
@@ -180,6 +194,10 @@ public class SkeletonAI : MonoBehaviour
     AudioSource _sfxSource;
     Transform _hipsBone;
     int _hitReactionStateHash;
+    int _footstepCycleIndex;
+    bool _footstepPrimed;
+    bool _footstepToggle;
+    int _walkStateHash;
 
     void Reset()
     {
@@ -194,7 +212,12 @@ public class SkeletonAI : MonoBehaviour
         ResolveBones();
         ApplyAgentSettings();
         EnsureSfxSource();
+        ConfigureFootstepSource();
+#if UNITY_EDITOR
+        AutoAssignFootstepClips();
+#endif
         _hitReactionStateHash = Animator.StringToHash(hitReactionStateName);
+        _walkStateHash = Animator.StringToHash(walkStateName);
     }
 
     void LateUpdate()
@@ -252,11 +275,15 @@ public class SkeletonAI : MonoBehaviour
     void OnValidate()
     {
         CacheReferences();
+        AutoAssignFootstepClips();
     }
 #endif
 
     void Update()
     {
+        // Footsteps run on EVERY peer, keyed off the replicated animator Speed so clients hear them too.
+        UpdateFootsteps();
+
         // Clients never simulate the skeleton; only the server (or fully-offline host) runs the AI.
         bool isNetworkClient = _networkObject != null
             && NetworkManager.Singleton != null
@@ -399,7 +426,7 @@ public class SkeletonAI : MonoBehaviour
             return Vector3.zero;
 
         navMeshAgent.isStopped = false;
-        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.speed = walkSpeed;
         navMeshAgent.stoppingDistance = Mathf.Max(0.2f, patrolArrivalDistance * 0.8f);
 
         if (!_hasPatrolDestination)
@@ -457,8 +484,8 @@ public class SkeletonAI : MonoBehaviour
 
         Vector3 desired = navMeshAgent.desiredVelocity;
         desired.y = 0f;
-        if (desired.sqrMagnitude > patrolSpeed * patrolSpeed)
-            desired = desired.normalized * patrolSpeed;
+        if (desired.sqrMagnitude > walkSpeed * walkSpeed)
+            desired = desired.normalized * walkSpeed;
         return desired;
     }
 
@@ -1029,7 +1056,7 @@ public class SkeletonAI : MonoBehaviour
         if (animator == null)
             return;
 
-        float reference = Mathf.Max(walkSpeed, patrolSpeed, 0.001f);
+        float reference = Mathf.Max(walkSpeed, 0.001f);
         float horizontalSpeed = _horizontalVelocity.magnitude;
         float normalizedSpeed = Mathf.Clamp01(horizontalSpeed / reference);
         animator.SetFloat(speedParameter, normalizedSpeed);
@@ -1113,6 +1140,79 @@ public class SkeletonAI : MonoBehaviour
             return;
         _sfxSource.PlayOneShot(clip);
     }
+
+    void UpdateFootsteps()
+    {
+        if (footstepAudioSource == null || animator == null)
+            return;
+
+        // Lock footsteps to the walk animation's cycle so they always match the visible feet, at any playback speed.
+        float speed = animator.GetFloat(speedParameter);
+        AnimatorStateInfo st = animator.GetCurrentAnimatorStateInfo(0);
+        bool walking = speed > minFootstepSpeed && st.shortNameHash == _walkStateHash;
+        if (!walking)
+        {
+            _footstepPrimed = false;
+            return;
+        }
+
+        // normalizedTime accumulates across loops; one whole-number increment of (time * stepsPerCycle) = one footstep.
+        int index = Mathf.FloorToInt((st.normalizedTime + footstepPhaseOffset) * Mathf.Max(1f, footstepsPerCycle));
+        if (!_footstepPrimed)
+        {
+            _footstepCycleIndex = index;
+            _footstepPrimed = true;
+            return;
+        }
+        if (index <= _footstepCycleIndex)
+            return;
+        _footstepCycleIndex = index;
+
+        AudioClip clip = _footstepToggle ? footstepClip2 : footstepClip1;
+        _footstepToggle = !_footstepToggle;
+        if (clip == null)
+            clip = footstepClip1 != null ? footstepClip1 : footstepClip2;
+        if (clip != null)
+            footstepAudioSource.PlayOneShot(clip, Mathf.Clamp01(footstepVolume));
+    }
+
+    void ConfigureFootstepSource()
+    {
+        if (footstepAudioSource == null)
+            footstepAudioSource = FindChildAudioSource("Skeleton_Footsteps");
+        if (footstepAudioSource == null)
+            return;
+
+        footstepAudioSource.playOnAwake = false;
+        footstepAudioSource.loop = false;
+        footstepAudioSource.spatialBlend = 1f;
+        footstepAudioSource.minDistance = 1.5f;
+        footstepAudioSource.maxDistance = 25f;
+        footstepAudioSource.rolloffMode = AudioRolloffMode.Linear;
+        footstepAudioSource.dopplerLevel = 0f;
+        GameAudioManager.RouteSfxSource(footstepAudioSource);
+    }
+
+    AudioSource FindChildAudioSource(string childName)
+    {
+        for (int i = 0; i < transform.childCount; i++)
+        {
+            Transform c = transform.GetChild(i);
+            if (c.name == childName)
+                return c.GetComponent<AudioSource>();
+        }
+        return null;
+    }
+
+#if UNITY_EDITOR
+    void AutoAssignFootstepClips()
+    {
+        if (footstepClip1 == null)
+            footstepClip1 = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Dungeon/SkeletonFootstep1.wav");
+        if (footstepClip2 == null)
+            footstepClip2 = UnityEditor.AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Dungeon/SkeletonFootstep2.wav");
+    }
+#endif
 
     sealed class RaycastHitDistanceComparer : IComparer<RaycastHit>
     {

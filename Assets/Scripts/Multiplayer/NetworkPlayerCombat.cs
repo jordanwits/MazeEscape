@@ -112,6 +112,21 @@ public class NetworkPlayerCombat : NetworkBehaviour
         playerController?.PlayMeleeHitSfxWithIndex(punchClipSlot0To2);
     }
 
+    /// <summary>Server-only: play the Skeleton-specific impact sound on every client (replaces the punch sound).</summary>
+    public void NotifyObserversSkeletonHit()
+    {
+        if (!IsServer)
+            return;
+
+        PlaySkeletonHitObserversClientRpc();
+    }
+
+    [ClientRpc]
+    void PlaySkeletonHitObserversClientRpc(ClientRpcParams clientRpcParams = default)
+    {
+        playerController?.PlaySkeletonHitSfx();
+    }
+
     /// <summary>Server-only: tells the owning client to play feedback when a zombie hit lands.</summary>
     public void NotifyOwnerZombieHitSfx()
     {

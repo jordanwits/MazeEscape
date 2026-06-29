@@ -2046,6 +2046,7 @@ MonoBehaviour:
   meleeHitPunch2: {fileID: 8300000, guid: 86521a467b5e53743a882401f4c6826b, type: 3}
   meleeHitPunch3: {fileID: 8300000, guid: fbb08b43cbfdff34dbc315d33be6c1da, type: 3}
   meleeHitPunchVolume: 0.1
+  skeletonHitClip: {fileID: 8300000, guid: 010249a35b42f974b992318543550749, type: 3}
   zombieHitClip: {fileID: 8300000, guid: 760ebab85d080824fa55f9111cd5c194, type: 3}
   zombieHitVolume: 0.1
   driveAnimator: 1
@@ -2324,6 +2325,7 @@ MonoBehaviour:
   localOnlyCameras: []
   localOnlyAudioListeners: []
   avatarRenderers: []
+  localViewShadowOnlyRenderers: []
   playerInventory: {fileID: 0}
   flashlightAimPivot: {fileID: 0}
   remoteFlashlightProxyLocalPosition: {x: 0, y: 0, z: 0.08}
@@ -2374,6 +2376,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
   playerController: {fileID: 2408966858996660808}
+  playerHealth: {fileID: 0}
 --- !u!114 &640123456789012347
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2452,6 +2455,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   ragdoll: {fileID: 7861290197597770154}
   playerHealth: {fileID: 0}
+  ownerNetTransform: {fileID: 0}
 --- !u!114 &9030000000000000001
 MonoBehaviour:
   m_ObjectHideFlags: 0

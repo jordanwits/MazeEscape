@@ -791,8 +791,8 @@ Transform:
   m_GameObject: {fileID: 3546273068698377649}
   serializedVersion: 2
   m_LocalRotation: {x: -0.065958396, y: -0.011932645, z: 0.001493273, w: 0.9977499}
-  m_LocalPosition: {x: -0.0000000047683715, y: 0.040452946, z: -0.258103}
-  m_LocalScale: {x: 0.9999999, y: 0.9999999, z: 0.99999994}
+  m_LocalPosition: {x: 0, y: 0.040452946, z: -0.258103}
+  m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 2042433213113052469}
@@ -925,6 +925,135 @@ Transform:
   m_Children: []
   m_Father: {fileID: 5907291130190198604}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &4300511036383635746
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 770591001452579801}
+  - component: {fileID: 1492840143190002622}
+  m_Layer: 0
+  m_Name: Skeleton_Footsteps
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &770591001452579801
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4300511036383635746}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3355609217092162833}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!82 &1492840143190002622
+AudioSource:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4300511036383635746}
+  m_Enabled: 1
+  serializedVersion: 4
+  OutputAudioMixerGroup: {fileID: 0}
+  m_audioClip: {fileID: 0}
+  m_Resource: {fileID: 0}
+  m_PlayOnAwake: 0
+  m_Volume: 1
+  m_Pitch: 1
+  Loop: 0
+  Mute: 0
+  Spatialize: 0
+  SpatializePostEffects: 0
+  Priority: 128
+  DopplerLevel: 0
+  MinDistance: 1.5
+  MaxDistance: 25
+  Pan2D: 0
+  rolloffMode: 1
+  BypassEffects: 0
+  BypassListenerEffects: 0
+  BypassReverbZones: 0
+  rolloffCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  panLevelCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  spreadCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  reverbZoneMixCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
 --- !u!1 &4375302803500471135
 GameObject:
   m_ObjectHideFlags: 0
@@ -1464,7 +1593,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0.65837663, y: -0.34227172, z: 0.43374965, w: 0.5111277}
   m_LocalPosition: {x: -0.05056711, y: 0.13844219, z: 0.0043572662}
-  m_LocalScale: {x: 0.9999998, y: 1, z: 0.99999994}
+  m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 4894345681850261638}
@@ -1511,6 +1640,7 @@ Transform:
   m_Children:
   - {fileID: 3113681649936299549}
   - {fileID: 3214885817226752562}
+  - {fileID: 770591001452579801}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!95 &6536415490782655252
@@ -1702,7 +1832,6 @@ MonoBehaviour:
   groundedStickDown: 2
   targetNavMeshSampleRadius: 3
   patrolWhenNoTarget: 1
-  patrolSpeed: 1.3
   patrolMinWaypointDistance: 5
   patrolMaxWaypointDistance: 12
   patrolArrivalDistance: 1.2
@@ -1713,7 +1842,7 @@ MonoBehaviour:
   avoidPits: 1
   groundMask:
     serializedVersion: 2
-    m_Bits: 4294967291
+    m_Bits: 2035
   pitProbeForwardDistance: 0.65
   pitProbeUpOffset: 0.4
   pitProbeDepth: 2.5
@@ -1728,7 +1857,7 @@ MonoBehaviour:
   throwClearanceDistance: 1.6
   throwClearanceMask:
     serializedVersion: 2
-    m_Bits: 4294967291
+    m_Bits: 2035
   throwSfx: {fileID: 0}
   bashRange: 2.4
   bashDamage: 22
@@ -1744,7 +1873,22 @@ MonoBehaviour:
   hitReactionDuration: 1.3
   hitReactionCrossfade: 0.1
   hitReactionExitCrossfade: 0.18
+  clampHitReactionToWalls: 1
+  hitReactionWallMask:
+    serializedVersion: 2
+    m_Bits: 2035
+  hitReactionBodyRadius: 0.28
+  hitReactionCastHeight: 1.1
+  footstepAudioSource: {fileID: 1492840143190002622}
+  footstepClip1: {fileID: 8300000, guid: 839cdc054546a5b4dac0623c628d2af1, type: 3}
+  footstepClip2: {fileID: 8300000, guid: 1626e882ee4438940878e8d822314aee, type: 3}
+  footstepVolume: 0.03
+  footstepsPerCycle: 2
+  footstepPhaseOffset: 0.19
+  minFootstepSpeed: 0.12
   speedParameter: Speed
+  walkPlaybackParameter: WalkPlaybackSpeed
+  walkAnimMatchSpeed: 1.9
   idleStateName: Idle
   walkStateName: Walk
   throwStateName: Throw
@@ -1892,6 +2036,10 @@ MonoBehaviour:
     ParameterEntries:
     - name: Speed
       NameHash: -823668238
+      Synchronize: 1
+      ParameterType: 1
+    - name: WalkPlaybackSpeed
+      NameHash: -238730511
       Synchronize: 1
       ParameterType: 1
   AnimatorParametersExpanded: 0

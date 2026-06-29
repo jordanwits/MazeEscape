@@ -149,9 +149,8 @@ public class NetworkSkeletonAvatar : NetworkBehaviour
             }
         }
 
-        // The held skull rides the hand bone (not in visualRenderers); hide it so it doesn't hang in the air.
-        if (heldSkull != null)
-            heldSkull.gameObject.SetActive(false);
+        // Drop the flaming skull out of his hand so it falls and rests on the ground (flame still burning).
+        DropHeldSkull();
 
         SpawnCrumble();
     }
@@ -172,6 +171,37 @@ public class NetworkSkeletonAvatar : NetworkBehaviour
 
         // Pure gravity collapse from rest — no propelling force.
         crumble.Initialize();
+    }
+
+    void DropHeldSkull()
+    {
+        if (heldSkull == null)
+            return;
+
+        heldSkull.gameObject.SetActive(true);                    // ensure visible if a throw had it hidden
+        heldSkull.SetParent(null, worldPositionStays: true);     // detach so it survives the skeleton's despawn
+        heldSkull.gameObject.layer = 0;                          // Default — collides with the floor
+
+        if (heldSkull.GetComponent<Collider>() == null)
+        {
+            SphereCollider sphere = heldSkull.gameObject.AddComponent<SphereCollider>();
+            sphere.radius = 0.15f;
+        }
+        if (heldSkull.GetComponent<Rigidbody>() == null)
+        {
+            Rigidbody rb = heldSkull.gameObject.AddComponent<Rigidbody>();
+            rb.mass = 1f;
+            rb.interpolation = RigidbodyInterpolation.Interpolate;
+            rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+        }
+
+        // Reuse the bone-pile's gravity-only fall + freeze/despawn behaviour for this single piece.
+        SkeletonCrumble drop = heldSkull.GetComponent<SkeletonCrumble>();
+        if (drop == null)
+            drop = heldSkull.gameObject.AddComponent<SkeletonCrumble>();
+        drop.Initialize();
+
+        heldSkull = null; // it's dropped; no longer the in-hand skull
     }
 
     IEnumerator ServerDespawnAfterDelay()

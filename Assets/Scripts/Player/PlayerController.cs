@@ -143,6 +143,8 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] AudioClip meleeHitPunch2;
     [SerializeField] AudioClip meleeHitPunch3;
     [SerializeField, Range(0f, 1f)] float meleeHitPunchVolume = 0.7f;
+    [Tooltip("Played instead of the punch impact when the melee connects with a Skeleton.")]
+    [SerializeField] AudioClip skeletonHitClip;
     [SerializeField] AudioClip zombieHitClip;
     [SerializeField, Range(0f, 1f)] float zombieHitVolume = 0.75f;
 
@@ -241,6 +243,7 @@ public partial class PlayerController : MonoBehaviour
     readonly Collider[] _meleeHits = new Collider[16];
     readonly HashSet<ZombieHealth> _meleeHitZombies = new();
     readonly HashSet<SkeletonHealth> _meleeHitSkeletons = new();
+    bool _meleeHitSkeletonThisSwing;
     const string EnemyLayerName = "Enemy";
     NetworkPlayerCombat _networkPlayerCombat;
     NetworkPlayerAvatar _networkPlayerAvatar;
@@ -1144,6 +1147,8 @@ public partial class PlayerController : MonoBehaviour
             meleeHitPunch2 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Punch2.wav");
         if (meleeHitPunch3 == null)
             meleeHitPunch3 = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Punch3.wav");
+        if (skeletonHitClip == null)
+            skeletonHitClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Dungeon/SkeletonHit.wav");
         if (zombieHitClip == null)
             zombieHitClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/ZombieHit.wav");
     }
@@ -2412,19 +2417,35 @@ public partial class PlayerController : MonoBehaviour
         }
 
         if (ApplyMeleeDamageLocally())
-            PlayMeleeHitSfx();
+        {
+            if (_meleeHitSkeletonThisSwing)
+                PlaySkeletonHitSfx();
+            else
+                PlayMeleeHitSfx();
+        }
     }
 
     public void ApplyServerAuthoritativeMeleeDamage()
     {
-        bool hitZombie = ApplyMeleeDamageLocally();
-        if (!hitZombie)
+        bool hit = ApplyMeleeDamageLocally();
+        if (!hit)
             return;
 
         if (_networkPlayerCombat != null && _networkPlayerCombat.IsSpawned)
-            _networkPlayerCombat.NotifyObserversMeleeHit(PickRandomMeleeHitClipIndex());
+        {
+            if (_meleeHitSkeletonThisSwing)
+                _networkPlayerCombat.NotifyObserversSkeletonHit();
+            else
+                _networkPlayerCombat.NotifyObserversMeleeHit(PickRandomMeleeHitClipIndex());
+        }
+        else if (_meleeHitSkeletonThisSwing)
+        {
+            PlaySkeletonHitSfx();
+        }
         else
+        {
             PlayMeleeHitSfx();
+        }
     }
 
     bool ApplyMeleeDamageLocally()
@@ -2438,6 +2459,7 @@ public partial class PlayerController : MonoBehaviour
         bool damagedAny = false;
         _meleeHitZombies.Clear();
         _meleeHitSkeletons.Clear();
+        _meleeHitSkeletonThisSwing = false;
         for (int i = 0; i < hitCount; i++)
         {
             Collider col = _meleeHits[i];
@@ -2471,7 +2493,10 @@ public partial class PlayerController : MonoBehaviour
 
                 float damage = skeletonHealth.MaxHealth * 0.25f;
                 if (skeletonHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
+                {
                     damagedAny = true;
+                    _meleeHitSkeletonThisSwing = true;
+                }
                 continue;
             }
         }
@@ -2489,6 +2514,15 @@ public partial class PlayerController : MonoBehaviour
             return;
 
         footstepAudioSource.PlayOneShot(clip, Mathf.Max(0f, meleeHitPunchVolume));
+    }
+
+    /// <summary>Impact sound when the melee connects with a Skeleton (replaces the punch impact for that hit).</summary>
+    public void PlaySkeletonHitSfx()
+    {
+        if (footstepAudioSource == null || skeletonHitClip == null)
+            return;
+
+        footstepAudioSource.PlayOneShot(skeletonHitClip, Mathf.Max(0f, meleeHitPunchVolume));
     }
 
     /// <summary>Which punch clip slot (0–2) to play; same value must be used on all clients for a given hit.</summary>
