@@ -40,6 +40,7 @@ MonoBehaviour:
   - {fileID: 6350128951640645128, guid: 48e41cc6344954541b859a7f8a4cb0c6, type: 3}
   - {fileID: 9215304624020539271, guid: bdd518c15c5cefc49a7521ea2b3a2b25, type: 3}
   - {fileID: 5114175203983525120, guid: 63abf21e66d9c2945acf19bf5d668a2f, type: 3}
+  straightPrefabWeights: 
   cornerPrefabs:
   - {fileID: 439739833298870958, guid: 192ffd866a087a54282e818f28315f1f, type: 3}
   - {fileID: 4908712555214993215, guid: e65e0650180c0c24d930c7012dcd3928, type: 3}
@@ -53,6 +54,7 @@ MonoBehaviour:
   specialPrefabs:
   - {fileID: 1554635876598814236, guid: 9c4f005e857f4374980ec7fb19e1099b, type: 3}
   jailDeadEndPrefab: {fileID: 5483273465513195571, guid: 810a535ea8c219644bb16c0be1c18f1a, type: 3}
+  allowAdjacentDuplicatePieces: 0
   interiorRoomPrefabs:
   - {fileID: 1781627571206459426, guid: 8935eb422580dd04287d6c8b2bbc5831, type: 3}
   - {fileID: 1202736749511769541, guid: a114aced94108b341b2af7a93d9aec75, type: 3}
@@ -87,6 +89,8 @@ MonoBehaviour:
   mazeEnemyMinSeparation: 0
   mazeJailorPrefab: {fileID: 7644638518217413858, guid: 3250bcfe5b1c11d4da88e202a1b8ea13, type: 3}
   mazeJailorCount: 1
+  mazeSkeletonPrefab: {fileID: 6189255197053811317, guid: 8e793ad3ce29cd4478188a06b77c7e5e, type: 3}
+  mazeSkeletonCount: 4
   assignJailorCarryDestinationAfterSpawn: 1
   preferJailorCarryAnchorFromMazePrefab: 1
   jailorCarryAnchorTransformName: JailorCarryDrop
@@ -100,4 +104,6 @@ MonoBehaviour:
   mazeTrapExcludeExitCell: 1
   mazeTrapMinSeparation: 1
   mazeChestPrefab: {fileID: 7786454923030501191, guid: e621573098a2cb04a8ec9019443befb6, type: 3}
+  mazePosterSpawnChance: 0.25
+  mazePosterPrefabs: []
   mazeStartFlashlightPrefab: {fileID: 7328506109978203443, guid: 4f1b1ddb8a2d50848aa35c5643acaa6b, type: 3}

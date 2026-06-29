@@ -240,6 +240,7 @@ public partial class PlayerController : MonoBehaviour
     float _nextMeleeTime;
     readonly Collider[] _meleeHits = new Collider[16];
     readonly HashSet<ZombieHealth> _meleeHitZombies = new();
+    readonly HashSet<SkeletonHealth> _meleeHitSkeletons = new();
     const string EnemyLayerName = "Enemy";
     NetworkPlayerCombat _networkPlayerCombat;
     NetworkPlayerAvatar _networkPlayerAvatar;
@@ -2436,6 +2437,7 @@ public partial class PlayerController : MonoBehaviour
 
         bool damagedAny = false;
         _meleeHitZombies.Clear();
+        _meleeHitSkeletons.Clear();
         for (int i = 0; i < hitCount; i++)
         {
             Collider col = _meleeHits[i];
@@ -2450,15 +2452,28 @@ public partial class PlayerController : MonoBehaviour
                 continue;
 
             ZombieHealth zombieHealth = col.GetComponentInParent<ZombieHealth>();
-            if (zombieHealth == null || zombieHealth.IsDead)
-                continue;
+            if (zombieHealth != null && !zombieHealth.IsDead)
+            {
+                if (!_meleeHitZombies.Add(zombieHealth))
+                    continue;
 
-            if (!_meleeHitZombies.Add(zombieHealth))
+                float damage = zombieHealth.MaxHealth * 0.25f;
+                if (zombieHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
+                    damagedAny = true;
                 continue;
+            }
 
-            float damage = zombieHealth.MaxHealth * 0.25f;
-            if (zombieHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
-                damagedAny = true;
+            SkeletonHealth skeletonHealth = col.GetComponentInParent<SkeletonHealth>();
+            if (skeletonHealth != null && !skeletonHealth.IsDead)
+            {
+                if (!_meleeHitSkeletons.Add(skeletonHealth))
+                    continue;
+
+                float damage = skeletonHealth.MaxHealth * 0.25f;
+                if (skeletonHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
+                    damagedAny = true;
+                continue;
+            }
         }
 
         return damagedAny;

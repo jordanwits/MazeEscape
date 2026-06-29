@@ -123,6 +123,12 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("How many Jailors to spawn (usually 1). Cannot exceed free cells after zombie spawns.")]
     [SerializeField] int mazeJailorCount = 1;
 
+    [Header("Maze Skeleton (optional, in addition to maze enemies)")]
+    [Tooltip("Skeleton enemy prefab (with NetworkObject). Spawned after zombies and jailors in the same GeneratedEnemies pass, using extra candidate cells (same rules as maze enemies). Leave empty to skip.")]
+    [SerializeField] GameObject mazeSkeletonPrefab;
+    [Tooltip("How many Skeletons to spawn. Cannot exceed free cells after zombie and jailor spawns.")]
+    [SerializeField] int mazeSkeletonCount;
+
     [Header("Jailor carry drop (maze)")]
     [Tooltip("After maze enemies and maze jailor(s) spawn, assign carry destination on every JailorAI in the scene.")]
     [SerializeField] bool assignJailorCarryDestinationAfterSpawn = true;
@@ -241,6 +247,8 @@ public class ProceduralMazeConfig : ScriptableObject
     public float MazeEnemyMinSeparation => mazeEnemyMinSeparation;
     public GameObject MazeJailorPrefab => mazeJailorPrefab;
     public int MazeJailorCount => Mathf.Max(0, mazeJailorCount);
+    public GameObject MazeSkeletonPrefab => mazeSkeletonPrefab;
+    public int MazeSkeletonCount => Mathf.Max(0, mazeSkeletonCount);
     public bool AssignJailorCarryDestinationAfterSpawn => assignJailorCarryDestinationAfterSpawn;
     public bool PreferJailorCarryAnchorFromMazePrefab => preferJailorCarryAnchorFromMazePrefab;
     public string JailorCarryAnchorTransformName =>

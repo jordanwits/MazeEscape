@@ -842,7 +842,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             if (networkObject == null || !networkObject.IsSpawned)
                 continue;
 
-            if (networkObject.gameObject.GetComponent<NetworkZombieAvatar>() != null)
+            if (networkObject.gameObject.GetComponent<NetworkZombieAvatar>() != null
+                || networkObject.gameObject.GetComponent<NetworkSkeletonAvatar>() != null)
                 toDespawn.Add(networkObject);
         }
 
@@ -2778,10 +2779,13 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int zombieCountRequested = _config.MazeEnemyCount;
         GameObject jailorPrefab = _config.MazeJailorPrefab;
         int jailorCountRequested = _config.MazeJailorCount;
+        GameObject skeletonPrefab = _config.MazeSkeletonPrefab;
+        int skeletonCountRequested = _config.MazeSkeletonCount;
 
         bool wantZombies = zombiePrefab != null && zombieCountRequested > 0;
         bool wantJailors = jailorPrefab != null && jailorCountRequested > 0;
-        if (!wantZombies && !wantJailors)
+        bool wantSkeletons = skeletonPrefab != null && skeletonCountRequested > 0;
+        if (!wantZombies && !wantJailors && !wantSkeletons)
             return;
 
         if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
@@ -2847,7 +2851,18 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 this);
         }
 
-        int totalSpawns = zombiesToSpawn + jailorsToSpawn;
+        int freeAfterJailors = candidates.Count - zombiesToSpawn - jailorsToSpawn;
+        int skeletonsToSpawn = wantSkeletons ? Mathf.Min(skeletonCountRequested, freeAfterJailors) : 0;
+        if (wantSkeletons && skeletonsToSpawn < skeletonCountRequested)
+        {
+            LogMazeWarningOnce(
+                "maze-skeleton-trimmed",
+                $"[Maze] Requested {skeletonCountRequested} maze skeleton(s) but only {freeAfterJailors} cell(s) remain after zombies and jailors; spawning {skeletonsToSpawn}. "
+                + "Reduce maze enemy count or maze size.",
+                this);
+        }
+
+        int totalSpawns = zombiesToSpawn + jailorsToSpawn + skeletonsToSpawn;
         if (totalSpawns == 0)
             return;
 
@@ -2917,6 +2932,41 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
             placedEnemyPositions.Add(position);
             GameObject instance = Instantiate(jailorPrefab, position, Quaternion.identity, enemiesRoot);
+
+            if (spawnWithNetcode)
+            {
+                NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+                if (networkObject != null)
+                    networkObject.Spawn();
+            }
+        }
+
+        if (skeletonsToSpawn > 0)
+        {
+            Debug.Log(
+                $"[Maze] Spawning {skeletonsToSpawn} maze skeleton(s) from config \"{_config.name}\" (prefab \"{skeletonPrefab.name}\").",
+                this);
+        }
+
+        const int skeletonSpawnSalt = unchecked((int)0x5CE1E708);
+        for (int s = 0; s < skeletonsToSpawn; s++)
+        {
+            int candidateIndex = zombiesToSpawn + jailorsToSpawn + s;
+            Vector2Int cell = candidates[candidateIndex];
+            int spawnKey = zombiesToSpawn + jailorsToSpawn + MixSeed(seed, MixSeed(s, skeletonSpawnSalt));
+            Vector3 position = ResolveSpawnPositionWithSeparation(
+                cell,
+                cellSize,
+                yOffset,
+                seed,
+                spawnKey,
+                placedEnemyPositions,
+                minSeparationXZ,
+                interiorPlan,
+                mazeTrapRoots);
+
+            placedEnemyPositions.Add(position);
+            GameObject instance = Instantiate(skeletonPrefab, position, Quaternion.identity, enemiesRoot);
 
             if (spawnWithNetcode)
             {

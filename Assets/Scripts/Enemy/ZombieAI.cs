@@ -133,6 +133,15 @@ public class ZombieAI : MonoBehaviour
     [Tooltip("Allow the zombie to move while attacking (uses upper body layer).")]
     [SerializeField] bool allowMoveWhileAttacking = true;
 
+    [Header("Hit reaction wall clamp")]
+    [Tooltip("Clamp the hit-reaction stagger so the body can't lean through walls/props — the React clip shoves " +
+             "the mesh well past the collision capsule, so it would clip a wall behind it.")]
+    [SerializeField] bool clampHitReactionToWalls = true;
+    [SerializeField] LayerMask hitReactionWallMask = Physics.DefaultRaycastLayers;
+    [Tooltip("Half-thickness of the body used when checking how far it can lean before hitting a wall.")]
+    [SerializeField] float hitReactionBodyRadius = 0.32f;
+    [SerializeField] float hitReactionCastHeight = 1.1f;
+
     readonly Collider[] _detectionHits = new Collider[16];
     readonly RaycastHit[] _lineOfSightHits = new RaycastHit[16];
     float _nextSenseTime = -1f;
@@ -158,6 +167,7 @@ public class ZombieAI : MonoBehaviour
     float _nextGroanTime = -1f;
 
     NetworkObject _networkObject;
+    Transform _hipsBone;
     bool _clientAudioInitialized;
     Vector3 _clientLastPositionForAudio;
     float _clientFootstepTimer;
@@ -313,6 +323,48 @@ public class ZombieAI : MonoBehaviour
         ApplyMovement(desiredHorizontalVelocity);
         UpdateFootsteps();
         UpdateAnimatorParameters();
+    }
+
+    void LateUpdate()
+    {
+        // The hit-reaction clip leans the mesh far past the collision capsule; clamp the upper body so it can't
+        // pass through a wall/prop behind it. Runs on every peer (keyed off the replicated animator state, not the
+        // server-only AI state).
+        if (!clampHitReactionToWalls || animator == null || _hipsBone == null)
+            return;
+        if (!IsAnimatorInState(0, "HitReaction"))
+            return;
+
+        Vector3 root = transform.position;
+        Vector3 hips = _hipsBone.position;
+        Vector3 horizontal = hips - root;
+        horizontal.y = 0f;
+        float distance = horizontal.magnitude;
+        if (distance < 0.02f)
+            return;
+
+        Vector3 dir = horizontal / distance;
+        int mask = MaskExcludingActors(hitReactionWallMask);
+        if (mask == 0)
+            return;
+
+        Vector3 castOrigin = root + Vector3.up * hitReactionCastHeight;
+        if (Physics.SphereCast(castOrigin, hitReactionBodyRadius, dir, out RaycastHit hit, distance, mask, QueryTriggerInteraction.Ignore))
+        {
+            float allowed = Mathf.Max(0f, hit.distance);
+            if (allowed < distance)
+                _hipsBone.position += dir * (allowed - distance); // pull the upper body back to the wall surface
+        }
+    }
+
+    int MaskExcludingActors(LayerMask source)
+    {
+        int mask = source.value == 0 ? Physics.DefaultRaycastLayers : source.value;
+        int playerLayer = LayerMask.NameToLayer("Player");
+        int enemyLayer = LayerMask.NameToLayer("Enemy");
+        if (playerLayer >= 0) mask &= ~(1 << playerLayer);
+        if (enemyLayer >= 0) mask &= ~(1 << enemyLayer);
+        return mask;
     }
 
     public void HandleDeath()
@@ -607,6 +659,13 @@ public class ZombieAI : MonoBehaviour
 
         if (footstepAudioSource == null)
             footstepAudioSource = GetOrCreateChildAudioSource(FootstepAudioChildName, allowCreate: false);
+
+        if (_hipsBone == null)
+        {
+            Transform[] all = GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < all.Length; i++)
+                if (all[i].name == "mixamorig:Hips") { _hipsBone = all[i]; break; }
+        }
     }
 
     AudioSource GetOrCreateChildAudioSource(string childName, bool allowCreate)
