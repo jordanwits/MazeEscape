@@ -304,6 +304,9 @@ public class ClownAI : MonoBehaviour
     NavMeshPath _patrolPathScratch;
     Vector3 _investigationPoint;
     bool _hasInvestigationPoint;
+    // >0 forces this approach speed during Investigating instead of patrolSpeed (used by the wind-up monkey lure
+    // so the Clown RUNS to the monkey). Cleared once he arrives / leaves the investigate state.
+    float _investigationSpeedOverride;
     bool _isLingerAtInvestigationPoint;
     float _investigationLingerEndTime;
     bool _hasInvestigationSearchDestination;
@@ -394,12 +397,14 @@ public class ClownAI : MonoBehaviour
     void OnEnable()
     {
         ServerProximityVoiceNotifications.Register(this);
+        ClownAIRegistry.Register(this);
         TrySnapToNavMesh();
     }
 
     void OnDisable()
     {
         ServerProximityVoiceNotifications.Unregister(this);
+        ClownAIRegistry.Unregister(this);
 
         // The hammer swing never pins the player (it's a one-shot knockback), so there is nothing to release
         // if the Clown is disabled/despawned mid-swing — the player was never attached to it.
@@ -1017,6 +1022,7 @@ public class ClownAI : MonoBehaviour
         if (_state != ClownState.Patrol)
             _state = ClownState.Patrol;
 
+        _investigationSpeedOverride = 0f;
         _intendedMoveSpeed = patrolSpeed;
         if (!TrySnapToNavMesh())
             return;
@@ -1760,6 +1766,7 @@ public class ClownAI : MonoBehaviour
         _hasPatrolDestination = false;
         _patrolStuckAccumulatedTime = 0f;
         _hasInvestigationPoint = false;
+        _investigationSpeedOverride = 0f;
         _state = ClownState.Chase;
     }
 
@@ -2161,20 +2168,46 @@ public class ClownAI : MonoBehaviour
         _investigationSearchDestination = Vector3.zero;
     }
 
+    // Approach speed used while Investigating: the lure override (run) if set, else the normal patrol/search speed.
+    float InvestigationMoveSpeed => _investigationSpeedOverride > 0.01f ? _investigationSpeedOverride : patrolSpeed;
+
+    /// <summary>
+    /// Public command (used by the wind-up monkey's clap) to make the Clown RUN to a world position, no matter
+    /// how far away he is. Won't pull him off a player he's actively chasing/attacking. If he's already lingering
+    /// at that spot, just refreshes the linger so he keeps hanging around the monkey.
+    /// </summary>
+    public void LureToPosition(Vector3 worldPoint)
+    {
+        if (_state == ClownState.Chase || _state == ClownState.Attacking)
+            return;
+
+        if (_state == ClownState.Investigating && _isLingerAtInvestigationPoint
+            && (worldPoint - _investigationPoint).sqrMagnitude
+                <= investigationArrivalDistance * investigationArrivalDistance)
+        {
+            _investigationLingerEndTime = Time.time + Mathf.Max(0f, investigationLingerSeconds);
+            return;
+        }
+
+        _investigationSpeedOverride = Mathf.Max(0.01f, runSpeed);
+        SetInvestigationPoint(worldPoint);
+        EnterInvestigating();
+    }
+
     void EnterInvestigating()
     {
         if (_state != ClownState.Investigating)
             _state = ClownState.Investigating;
         _chaseLineOfSightLostSince = -1f;
 
-        _intendedMoveSpeed = patrolSpeed;
+        _intendedMoveSpeed = InvestigationMoveSpeed;
         if (!TrySnapToNavMesh())
             return;
         if (navMeshAgent == null || !navMeshAgent.isOnNavMesh)
             return;
 
         navMeshAgent.isStopped = false;
-        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.speed = InvestigationMoveSpeed;
         navMeshAgent.stoppingDistance = Mathf.Max(0.2f, investigationArrivalDistance);
         if (_isLingerAtInvestigationPoint)
         {
@@ -2186,12 +2219,12 @@ public class ClownAI : MonoBehaviour
 
     Vector3 UpdateInvestigating()
     {
-        _intendedMoveSpeed = patrolSpeed;
+        _intendedMoveSpeed = InvestigationMoveSpeed;
         if (!_hasInvestigationPoint || !TrySnapToNavMesh() || navMeshAgent == null || !navMeshAgent.isOnNavMesh)
             return Vector3.zero;
 
         navMeshAgent.isStopped = false;
-        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.speed = InvestigationMoveSpeed;
         navMeshAgent.stoppingDistance = Mathf.Max(0.2f, investigationArrivalDistance);
 
         if (_isLingerAtInvestigationPoint)
@@ -2259,6 +2292,7 @@ public class ClownAI : MonoBehaviour
         {
             _isLingerAtInvestigationPoint = true;
             _investigationLingerEndTime = Time.time + Mathf.Max(0f, investigationLingerSeconds);
+            _investigationSpeedOverride = 0f; // arrived; linger/search at normal patrol speed
             navMeshAgent.isStopped = true;
             navMeshAgent.ResetPath();
             return Vector3.zero;
@@ -2268,8 +2302,9 @@ public class ClownAI : MonoBehaviour
             ? navMeshAgent.velocity
             : navMeshAgent.desiredVelocity;
         desiredVelocity.y = 0f;
-        if (desiredVelocity.sqrMagnitude > patrolSpeed * patrolSpeed)
-            desiredVelocity = desiredVelocity.normalized * patrolSpeed;
+        float approachSpeed = InvestigationMoveSpeed;
+        if (desiredVelocity.sqrMagnitude > approachSpeed * approachSpeed)
+            desiredVelocity = desiredVelocity.normalized * approachSpeed;
         return desiredVelocity;
     }
 

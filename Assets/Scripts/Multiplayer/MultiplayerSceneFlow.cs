@@ -13,7 +13,9 @@ using UnityEngine.SceneManagement;
 public class MultiplayerSceneFlow : MonoBehaviour
 {
     public const string MenuSceneName = "Menu";
-    public const string GameSceneName = "Level01";
+    // NOTE: set to Level02 (carnival) so it loads first from the menu — handy for testing the carnival.
+    // Change back to "Level01" to restore the normal starting level.
+    public const string GameSceneName = "Level02";
 
     /// <summary>Gameplay scenes that have a matching <c>ProceduralMazeConfig</c> under <c>Resources/MazeConfigs</c> (see <see cref="ProceduralMazeCoordinator"/>).</summary>
     public static readonly string[] MazeSectionSceneNames =

@@ -53,6 +53,7 @@ MonoBehaviour:
   specialPrefabs:
   - {fileID: 1554635876598814236, guid: 10b31328d2d4de14090af252efcc5698, type: 3}
   jailDeadEndPrefab: {fileID: 0}
+  allowAdjacentDuplicatePieces: 0
   interiorRoomPrefabs:
   - {fileID: 1340219762442870727, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
   interiorRoomGridFootprint: {x: 4, y: 4}
@@ -85,6 +86,10 @@ MonoBehaviour:
   mazeEnemyMinSeparation: 0
   mazeJailorPrefab: {fileID: 7732810895938106884, guid: dadc1a2e37a149f4a9c481962f21ebdd, type: 3}
   mazeJailorCount: 1
+  mazeSkeletonPrefab: {fileID: 0}
+  mazeSkeletonCount: 0
+  mazeWindupMonkeyPrefab: {fileID: 1736033614755942688, guid: c0d21ebaad8b7654d84c98278a09c0a7, type: 3}
+  mazeWindupMonkeyCount: 3
   assignJailorCarryDestinationAfterSpawn: 0
   preferJailorCarryAnchorFromMazePrefab: 0
   jailorCarryAnchorTransformName: JailorCarryDrop

@@ -129,6 +129,14 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("How many Skeletons to spawn. Cannot exceed free cells after zombie and jailor spawns.")]
     [SerializeField] int mazeSkeletonCount;
 
+    [Header("Maze Wind-up Monkey (optional)")]
+    [Tooltip("Wind-up cymbal monkey enemy prefab (with NetworkObject). Spawned after zombies, jailors and "
+        + "skeletons in the same GeneratedEnemies pass. Stands still until a player is near, then walks straight "
+        + "and claps to lure the Clown. Leave empty to skip.")]
+    [SerializeField] GameObject mazeWindupMonkeyPrefab;
+    [Tooltip("How many wind-up monkeys to spawn. Cannot exceed free cells after zombie, jailor and skeleton spawns.")]
+    [SerializeField] int mazeWindupMonkeyCount;
+
     [Header("Jailor carry drop (maze)")]
     [Tooltip("After maze enemies and maze jailor(s) spawn, assign carry destination on every JailorAI in the scene.")]
     [SerializeField] bool assignJailorCarryDestinationAfterSpawn = true;
@@ -249,6 +257,9 @@ public class ProceduralMazeConfig : ScriptableObject
     public int MazeJailorCount => Mathf.Max(0, mazeJailorCount);
     public GameObject MazeSkeletonPrefab => mazeSkeletonPrefab;
     public int MazeSkeletonCount => Mathf.Max(0, mazeSkeletonCount);
+
+    public GameObject MazeWindupMonkeyPrefab => mazeWindupMonkeyPrefab;
+    public int MazeWindupMonkeyCount => Mathf.Max(0, mazeWindupMonkeyCount);
     public bool AssignJailorCarryDestinationAfterSpawn => assignJailorCarryDestinationAfterSpawn;
     public bool PreferJailorCarryAnchorFromMazePrefab => preferJailorCarryAnchorFromMazePrefab;
     public string JailorCarryAnchorTransformName =>

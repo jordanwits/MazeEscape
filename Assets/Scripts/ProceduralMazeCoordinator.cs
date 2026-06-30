@@ -843,7 +843,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 continue;
 
             if (networkObject.gameObject.GetComponent<NetworkZombieAvatar>() != null
-                || networkObject.gameObject.GetComponent<NetworkSkeletonAvatar>() != null)
+                || networkObject.gameObject.GetComponent<NetworkSkeletonAvatar>() != null
+                || networkObject.gameObject.GetComponent<WindupMonkeyAI>() != null)
                 toDespawn.Add(networkObject);
         }
 
@@ -2781,11 +2782,14 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int jailorCountRequested = _config.MazeJailorCount;
         GameObject skeletonPrefab = _config.MazeSkeletonPrefab;
         int skeletonCountRequested = _config.MazeSkeletonCount;
+        GameObject monkeyPrefab = _config.MazeWindupMonkeyPrefab;
+        int monkeyCountRequested = _config.MazeWindupMonkeyCount;
 
         bool wantZombies = zombiePrefab != null && zombieCountRequested > 0;
         bool wantJailors = jailorPrefab != null && jailorCountRequested > 0;
         bool wantSkeletons = skeletonPrefab != null && skeletonCountRequested > 0;
-        if (!wantZombies && !wantJailors && !wantSkeletons)
+        bool wantMonkeys = monkeyPrefab != null && monkeyCountRequested > 0;
+        if (!wantZombies && !wantJailors && !wantSkeletons && !wantMonkeys)
             return;
 
         if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
@@ -2862,7 +2866,18 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 this);
         }
 
-        int totalSpawns = zombiesToSpawn + jailorsToSpawn + skeletonsToSpawn;
+        int freeAfterSkeletons = candidates.Count - zombiesToSpawn - jailorsToSpawn - skeletonsToSpawn;
+        int monkeysToSpawn = wantMonkeys ? Mathf.Min(monkeyCountRequested, freeAfterSkeletons) : 0;
+        if (wantMonkeys && monkeysToSpawn < monkeyCountRequested)
+        {
+            LogMazeWarningOnce(
+                "maze-monkey-trimmed",
+                $"[Maze] Requested {monkeyCountRequested} maze wind-up monkey(s) but only {freeAfterSkeletons} cell(s) remain after zombies, jailors and skeletons; spawning {monkeysToSpawn}. "
+                + "Reduce maze enemy count or maze size.",
+                this);
+        }
+
+        int totalSpawns = zombiesToSpawn + jailorsToSpawn + skeletonsToSpawn + monkeysToSpawn;
         if (totalSpawns == 0)
             return;
 
@@ -2967,6 +2982,41 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
             placedEnemyPositions.Add(position);
             GameObject instance = Instantiate(skeletonPrefab, position, Quaternion.identity, enemiesRoot);
+
+            if (spawnWithNetcode)
+            {
+                NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+                if (networkObject != null)
+                    networkObject.Spawn();
+            }
+        }
+
+        if (monkeysToSpawn > 0)
+        {
+            Debug.Log(
+                $"[Maze] Spawning {monkeysToSpawn} maze wind-up monkey(s) from config \"{_config.name}\" (prefab \"{monkeyPrefab.name}\").",
+                this);
+        }
+
+        const int monkeySpawnSalt = unchecked((int)0x4D0E1A55);
+        for (int m = 0; m < monkeysToSpawn; m++)
+        {
+            int candidateIndex = zombiesToSpawn + jailorsToSpawn + skeletonsToSpawn + m;
+            Vector2Int cell = candidates[candidateIndex];
+            int spawnKey = zombiesToSpawn + jailorsToSpawn + skeletonsToSpawn + MixSeed(seed, MixSeed(m, monkeySpawnSalt));
+            Vector3 position = ResolveSpawnPositionWithSeparation(
+                cell,
+                cellSize,
+                yOffset,
+                seed,
+                spawnKey,
+                placedEnemyPositions,
+                minSeparationXZ,
+                interiorPlan,
+                mazeTrapRoots);
+
+            placedEnemyPositions.Add(position);
+            GameObject instance = Instantiate(monkeyPrefab, position, Quaternion.identity, enemiesRoot);
 
             if (spawnWithNetcode)
             {
