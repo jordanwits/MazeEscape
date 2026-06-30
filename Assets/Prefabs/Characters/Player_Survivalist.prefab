@@ -3223,6 +3223,12 @@ MonoBehaviour:
   ragdollIdleCrossFadeSeconds: 0.08
   walkAnimationSpeed: 0.35
   runAnimationSpeed: 1
+  enableCrouch: 1
+  crouchParameter: Crouching
+  crouchHeight: 1.15
+  standUpBlockingMask:
+    serializedVersion: 2
+    m_Bits: 0
   inventoryStashRoot: {fileID: 0}
 --- !u!95 &4205222711325704942
 Animator:

@@ -173,6 +173,21 @@ public partial class PlayerController : MonoBehaviour
     [Tooltip("Animator Speed value used for sprinting. Keep this above the run threshold in the controller.")]
     [SerializeField] float runAnimationSpeed = 1f;
 
+    [Header("Crouch")]
+    [Tooltip("Hold this action (Crouch input, default C / gamepad East) to crouch while standing still. Moving stands the player back up (no crouch-walk). Lowers the capsule while crouched.")]
+    [SerializeField] bool enableCrouch = true;
+    [Tooltip("Animator bool set true while crouched. Drives the Crouch (CrouchIdle) state.")]
+    [SerializeField] string crouchParameter = "Crouching";
+    [Tooltip("CharacterController height while crouched. Standing height is read from the controller at Awake.")]
+    [SerializeField] float crouchHeight = 1.15f;
+    [Tooltip("Layers that block standing back up (a low ceiling). Leave empty to auto-build everything except this player and Ignore Raycast/Enemy.")]
+    [SerializeField] LayerMask standUpBlockingMask;
+
+    bool _isCrouching;
+    float _standingHeight;
+    Vector3 _standingCenter;
+    int _standUpMaskFallback = Physics.DefaultRaycastLayers;
+
     InputActionMap _playerMap;
     InputAction _moveAction;
     InputAction _lookAction;
@@ -182,6 +197,7 @@ public partial class PlayerController : MonoBehaviour
     InputAction _dropAction;
     InputAction _flashlightAction;
     InputAction _attackAction;
+    InputAction _crouchAction;
     InputActionAsset _runtimeInputActions;
 
     float _lookYawDegrees;
@@ -304,6 +320,11 @@ public partial class PlayerController : MonoBehaviour
         if (_networkPlayerAvatar != null && _networkPlayerAvatar.IsSpawned && _networkPlayerAvatar.IsOwner)
             _networkPlayerAvatar.PublishAudiblySprinting(false);
         _smoothedStrafeDirection = 0f;
+        if (_isCrouching)
+        {
+            _isCrouching = false;
+            ApplyCrouchCollider(false);
+        }
         _verticalVelocity.y = characterController != null && characterController.isGrounded
             ? -groundedStickDown
             : 0f;
@@ -325,6 +346,8 @@ public partial class PlayerController : MonoBehaviour
         animator.SetFloat(moveXParameter, 0f);
         animator.SetFloat(moveYParameter, 0f);
         animator.SetFloat(animSpeedParameter, 1f);
+        if (!string.IsNullOrEmpty(crouchParameter))
+            animator.SetBool(crouchParameter, false);
 
         _ragdollRecoverAnimatorSuppressUntil = Time.time + Mathf.Max(0f, ragdollRecoverAnimatorSuppressSeconds);
     }
@@ -349,6 +372,12 @@ public partial class PlayerController : MonoBehaviour
     {
         if (characterController == null)
             characterController = GetComponent<CharacterController>();
+        if (characterController != null)
+        {
+            _standingHeight = characterController.height;
+            _standingCenter = characterController.center;
+        }
+        BuildStandUpMaskFallback();
         if (upperBodyWallTrigger == null)
             upperBodyWallTrigger = FindUpperBodyWallTrigger();
         if (animator == null)
@@ -578,6 +607,9 @@ public partial class PlayerController : MonoBehaviour
         bool attackHeld = _attackAction != null
             ? _attackAction.IsPressed()
             : IsAttackHeldFallback();
+        bool crouchHeld = enableCrouch && (_crouchAction != null
+            ? _crouchAction.IsPressed()
+            : IsCrouchHeldFallback());
 
         if (IsPostJailMovementLocked)
         {
@@ -648,6 +680,10 @@ public partial class PlayerController : MonoBehaviour
             sprintHeld = false;
             jumpPressed = false;
         }
+
+        UpdateCrouchState(crouchHeld, inputMagnitude > 0.01f);
+        if (_isCrouching)
+            jumpPressed = false; // crouch is a stationary pose; moving uncrouches instead of jumping
 
         _isSprinting = sprintHeld && _currentStamina > 0f && inputMagnitude > 0.01f;
         UpdateStamina(sprintHeld, _isSprinting);
@@ -728,6 +764,8 @@ public partial class PlayerController : MonoBehaviour
             animator.SetFloat(moveXParameter, targetLocomotionBlend.x, locomotionBlendDampTime, Time.deltaTime);
             animator.SetFloat(moveYParameter, targetLocomotionBlend.y, locomotionBlendDampTime, Time.deltaTime);
             animator.SetFloat(animSpeedParameter, animSpeed);
+            if (!string.IsNullOrEmpty(crouchParameter))
+                animator.SetBool(crouchParameter, _isCrouching);
         }
 
         UpdatePickupPrompt();
@@ -861,6 +899,79 @@ public partial class PlayerController : MonoBehaviour
         }
 
         return targetSpeed > _currentHorizontalSpeed ? acceleration : deceleration;
+    }
+
+    /// <summary>
+    /// Crouch is a stationary pose: hold the crouch input while still to crouch; any movement input stands
+    /// the player back up so they walk normally (there is no crouch-walk). When standing still, releasing
+    /// under a low ceiling keeps the player crouched until there is room to stand.
+    /// </summary>
+    void UpdateCrouchState(bool crouchHeld, bool isMoving)
+    {
+        bool wantCrouch = crouchHeld && !isMoving;
+
+        // Only block standing on headroom while stationary; moving always uncrouches so the player can
+        // walk out from under a low ceiling instead of getting stuck crouched in place.
+        if (_isCrouching && !wantCrouch && !isMoving && !HasHeadroomToStand())
+            wantCrouch = true;
+
+        if (wantCrouch == _isCrouching)
+            return;
+
+        _isCrouching = wantCrouch;
+        ApplyCrouchCollider(_isCrouching);
+    }
+
+    void ApplyCrouchCollider(bool crouched)
+    {
+        if (characterController == null)
+            return;
+
+        if (crouched)
+        {
+            float feetY = _standingCenter.y - _standingHeight * 0.5f;
+            float height = Mathf.Min(crouchHeight, _standingHeight);
+            characterController.height = height;
+            Vector3 center = _standingCenter;
+            center.y = feetY + height * 0.5f; // keep the feet planted; shrink from the top down
+            characterController.center = center;
+        }
+        else
+        {
+            characterController.height = _standingHeight;
+            characterController.center = _standingCenter;
+        }
+    }
+
+    /// <summary>True when the full standing capsule has clearance above the current crouched capsule.</summary>
+    bool HasHeadroomToStand()
+    {
+        if (characterController == null)
+            return true;
+
+        float radius = Mathf.Max(0.01f, characterController.radius * 0.95f);
+        float standTopY = _standingCenter.y + _standingHeight * 0.5f - characterController.radius;
+        float crouchTopY = characterController.center.y + characterController.height * 0.5f - characterController.radius;
+        float distance = standTopY - crouchTopY;
+        if (distance <= 0.001f)
+            return true;
+
+        Vector3 origin = transform.TransformPoint(new Vector3(characterController.center.x, crouchTopY, characterController.center.z));
+        int mask = standUpBlockingMask.value != 0 ? standUpBlockingMask.value : _standUpMaskFallback;
+        return !Physics.SphereCast(origin, radius, Vector3.up, out _, distance, mask, QueryTriggerInteraction.Ignore);
+    }
+
+    void BuildStandUpMaskFallback()
+    {
+        int mask = Physics.AllLayers;
+        mask &= ~(1 << gameObject.layer);
+        int ignoreRaycast = LayerMask.NameToLayer("Ignore Raycast");
+        if (ignoreRaycast >= 0)
+            mask &= ~(1 << ignoreRaycast);
+        int enemyLayer = LayerMask.NameToLayer(EnemyLayerName);
+        if (enemyLayer >= 0)
+            mask &= ~(1 << enemyLayer);
+        _standUpMaskFallback = mask;
     }
 
     void RefreshStaminaUI()
@@ -1029,6 +1140,7 @@ public partial class PlayerController : MonoBehaviour
         _dropAction?.Disable();
         _flashlightAction?.Enable();
         _attackAction?.Disable();
+        _crouchAction?.Disable();
         _lookAction?.Enable();
         ApplyCursorLock();
     }
@@ -1095,6 +1207,7 @@ public partial class PlayerController : MonoBehaviour
         _dropAction ??= _playerMap.FindAction("Drop");
         _flashlightAction ??= _playerMap.FindAction("Flashlight");
         _attackAction ??= _playerMap.FindAction("Attack");
+        _crouchAction ??= _playerMap.FindAction("Crouch");
 
         if (!_playerMap.enabled)
             _playerMap.Enable();
@@ -2246,6 +2359,16 @@ public partial class PlayerController : MonoBehaviour
 
         Gamepad pad = Gamepad.current;
         return pad != null && pad.leftStickButton.isPressed;
+    }
+
+    static bool IsCrouchHeldFallback()
+    {
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null && (keyboard.cKey.isPressed || keyboard.leftCtrlKey.isPressed))
+            return true;
+
+        Gamepad pad = Gamepad.current;
+        return pad != null && pad.buttonEast.isPressed;
     }
 
     static bool WasInteractPressedFallback()
