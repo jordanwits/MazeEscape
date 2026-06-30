@@ -184,6 +184,15 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] LayerMask standUpBlockingMask;
 
     bool _isCrouching;
+    /// <summary>
+    /// Server-safe crouch state. Reads the replicated <c>Crouching</c> animator bool so it is valid on the
+    /// server's copy of a remote player (where the owner-local <see cref="_isCrouching"/> input field is never
+    /// set). Falls back to the local field when the animator/param is unavailable (e.g. offline play).
+    /// </summary>
+    public bool IsCrouching =>
+        animator != null && !string.IsNullOrEmpty(crouchParameter)
+            ? animator.GetBool(crouchParameter)
+            : _isCrouching;
     float _standingHeight;
     Vector3 _standingCenter;
     int _standUpMaskFallback = Physics.DefaultRaycastLayers;
@@ -2591,6 +2600,27 @@ public partial class PlayerController : MonoBehaviour
 
             _meleeHits[i] = null;
 
+            // Wind-up monkey: a short collider near the floor. Handle it BEFORE the shared cone gate below —
+            // that gate measures the full 3D angle to the target, which is steep for such a low object and can
+            // reject it. Use a horizontal-plane facing test instead, and require crouch so a standing punch
+            // (too high to reach the toy) passes over it. A crouched hit tips it over, silencing the Clown lure.
+            WindupMonkeyAI monkey = col.GetComponentInParent<WindupMonkeyAI>();
+            if (monkey != null)
+            {
+                if (monkey.IsKnockedOver || !IsCrouching)
+                    continue;
+                Vector3 flatDir = col.transform.position - origin;
+                flatDir.y = 0f;
+                Vector3 flatForward = new Vector3(forward.x, 0f, forward.z);
+                if (flatDir.sqrMagnitude > 0.0001f && Vector3.Angle(flatForward, flatDir) > meleeAngle)
+                    continue;
+                // Topple it away from the punch (fall direction = player -> monkey, else the player's facing).
+                Vector3 knockDir = flatDir.sqrMagnitude > 0.0001f ? flatDir : flatForward;
+                monkey.ServerKnockOver(knockDir);
+                damagedAny = true;   // plays the regular punch impact thud
+                continue;
+            }
+
             Vector3 dirToTarget = (col.transform.position - origin).normalized;
             float angle = Vector3.Angle(forward, dirToTarget);
             if (angle > meleeAngle)
@@ -2622,6 +2652,7 @@ public partial class PlayerController : MonoBehaviour
                 }
                 continue;
             }
+
         }
 
         return damagedAny;

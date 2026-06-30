@@ -51,10 +51,26 @@ public class WindupMonkeyAI : NetworkBehaviour
     [Tooltip("If true, each cymbal clap commands every Clown to run to this monkey, regardless of distance.")]
     [SerializeField] bool lureClownOnClap = true;
 
+    [Header("Knock-over (crouched player punch)")]
+    [Tooltip("When a crouched player punches it over the monkey switches from its kinematic CharacterController " +
+             "to a real Rigidbody and topples under gravity. This is its rigid mass.")]
+    [SerializeField] float knockOverMass = 3f;
+    [Tooltip("Impulse (applied near the top, in the punch direction) that shoves it over. Bigger = harder fall.")]
+    [SerializeField] float knockOverImpulse = 14f;
+    [Tooltip("Linear/angular drag on the toppled body so it rocks to rest quickly instead of sliding/spinning.")]
+    [SerializeField] float knockOverLinearDrag = 0.4f;
+    [SerializeField] float knockOverAngularDrag = 0.6f;
+
     ServerNetworkAnimator _serverNetworkAnimator;
     readonly NetworkVariable<bool> _activated = new(false);
+    readonly NetworkVariable<bool> _knockedOver = new(false);
+    bool _knockedOverApplied;
+    bool _physicsToppleStarted;
     float _verticalVelocity;
     float _stepMultiplier;
+
+    /// <summary>True once a crouched punch has tipped the monkey over. Latched for good across all peers.</summary>
+    public bool IsKnockedOver => _knockedOverApplied || _knockedOver.Value;
 
     void Awake()
     {
@@ -76,13 +92,18 @@ public class WindupMonkeyAI : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         _activated.OnValueChanged += HandleActivatedChanged;
+        _knockedOver.OnValueChanged += HandleKnockedOverChanged;
         ApplyAuthorityState();
         ApplyActivatedVisual(_activated.Value);
+        // Applied after the activated visual so a late-joiner seeing an already-toppled monkey wins (freeze + tip).
+        if (_knockedOver.Value)
+            ApplyKnockedOverVisual(true);
     }
 
     public override void OnNetworkDespawn()
     {
         _activated.OnValueChanged -= HandleActivatedChanged;
+        _knockedOver.OnValueChanged -= HandleKnockedOverChanged;
     }
 
     bool ShouldSimulate =>
@@ -104,10 +125,102 @@ public class WindupMonkeyAI : NetworkBehaviour
             animator.SetBool(activeBoolParam, active);
     }
 
+    /// <summary>
+    /// Server/offline: knock the monkey over and silence it permanently. A crouched player punch routes here
+    /// (via <see cref="PlayerController"/>). It freezes the march/clap animation, stops the wind-up key and the
+    /// cymbal SFX, and replaces the kinematic CharacterController with a real Rigidbody so the toy topples under
+    /// gravity (shoved in <paramref name="hitDirection"/>) and settles on the floor. NetworkTransform replicates
+    /// the server's physics to clients. Any Clown lure already issued by earlier claps still stands — the Clown
+    /// keeps investigating the last clap position; we only stop the monkey from making more noise.
+    /// </summary>
+    public void ServerKnockOver(Vector3 hitDirection)
+    {
+        if (!ShouldSimulate || IsKnockedOver)
+            return;
+
+        if (IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            _knockedOver.Value = true;       // replicates + fires HandleKnockedOverChanged on every peer
+        else
+            ApplyKnockedOverVisual(true);    // offline / not networked
+
+        // Physics runs on the server (or offline host) only; clients just follow the replicated transform.
+        StartPhysicsTopple(hitDirection);
+    }
+
+    void HandleKnockedOverChanged(bool previousValue, bool currentValue)
+    {
+        if (currentValue)
+            ApplyKnockedOverVisual(true);
+    }
+
+    // Freeze + silence the toy on every peer (driven by the replicated _knockedOver bool). The physical fall
+    // itself is server-only (see StartPhysicsTopple) and reaches clients through NetworkTransform.
+    void ApplyKnockedOverVisual(bool knocked)
+    {
+        if (!knocked || _knockedOverApplied)
+            return;
+        _knockedOverApplied = true;
+
+        // Freeze the toy: the same Active bool drives the march, the cymbal claps and the wind-up key spinner.
+        if (animator != null && !string.IsNullOrEmpty(activeBoolParam))
+            animator.SetBool(activeBoolParam, false);
+
+        // Silence the cymbal one-shot if it is still ringing.
+        if (clapAudioSource != null)
+            clapAudioSource.Stop();
+    }
+
+    // Server/offline: swap the kinematic CharacterController for a Rigidbody and shove the toy over so it
+    // tumbles under real gravity and comes to rest on the ground. Idempotent (latched by _physicsToppleStarted).
+    void StartPhysicsTopple(Vector3 hitDirection)
+    {
+        if (_physicsToppleStarted || !ShouldSimulate || characterController == null)
+            return;
+        _physicsToppleStarted = true;
+
+        // Capture the CharacterController capsule (local dims) before disabling it — the Rigidbody needs a real
+        // collider to rest on the floor (a CharacterController can't act as a dynamic Rigidbody collider).
+        float ccHeight = characterController.height;
+        float ccRadius = characterController.radius;
+        Vector3 ccCenter = characterController.center;
+        characterController.enabled = false;
+
+        var box = gameObject.GetComponent<BoxCollider>();
+        if (box == null)
+            box = gameObject.AddComponent<BoxCollider>();
+        box.center = ccCenter;
+        box.size = new Vector3(ccRadius * 2f, ccHeight, ccRadius * 2f);
+
+        var rb = gameObject.GetComponent<Rigidbody>();
+        if (rb == null)
+            rb = gameObject.AddComponent<Rigidbody>();
+        rb.mass = knockOverMass;
+        rb.useGravity = true;
+        rb.isKinematic = false;
+        rb.linearDamping = knockOverLinearDrag;
+        rb.angularDamping = knockOverAngularDrag;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+
+        // Shove near the top of the capsule, horizontally in the punch direction, so it both slides a little and
+        // rotates over (torque from the off-centre force) — a natural topple rather than a snap.
+        Vector3 dir = new Vector3(hitDirection.x, 0f, hitDirection.z);
+        dir = dir.sqrMagnitude > 0.0001f ? dir.normalized : transform.forward;
+        Vector3 topLocal = ccCenter + Vector3.up * (ccHeight * 0.45f);
+        Vector3 topWorld = transform.TransformPoint(topLocal);
+        rb.AddForceAtPosition(dir * knockOverImpulse, topWorld, ForceMode.Impulse);
+    }
+
     void Update()
     {
         if (!ShouldSimulate)
             return;
+
+        if (IsKnockedOver)
+        {
+            // Toppled for good: the Rigidbody (server-only) now owns the body — never walk, clap or re-activate.
+            return;
+        }
 
         bool active = _activated.Value;
         if (!active && AnyLivingPlayerWithin(activationRadius))
@@ -199,6 +312,10 @@ public class WindupMonkeyAI : NetworkBehaviour
     /// </summary>
     public void HandleCymbalClap()
     {
+        // Toppled monkeys are silent — no SFX, no further Clown lures (belt-and-suspenders; the clip is frozen too).
+        if (IsKnockedOver)
+            return;
+
         if (clapAudioSource != null && clapClip != null)
             clapAudioSource.PlayOneShot(clapClip);
 
