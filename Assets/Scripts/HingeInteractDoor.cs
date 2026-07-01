@@ -361,6 +361,9 @@ public class HingeInteractDoor : NetworkBehaviour
         {
             RefreshClosedLocalBasisFromRestPose();
             StartMoveToState(_isOpenOffline, true);
+            // A door built after the replicated store already synced pulls its current state here so a late joiner
+            // (or a door rebuilt on a section advance) snaps to the authoritative open/locked pose.
+            DoorNetworkStateStore.ApplyCurrentStateToDoor(this);
             return;
         }
 
@@ -664,6 +667,61 @@ public class HingeInteractDoor : NetworkBehaviour
                     pairedLeaf._skipProceduralOpenPair = false;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Client-side apply of replicated door state from <see cref="DoorNetworkStateStore"/> for an unspawned
+    /// procedural door. Unlike the old best-effort <see cref="ApplyProceduralRemoteOpenState"/> ClientRpc mirror,
+    /// this never drops on <see cref="IsBusy"/> — it stops any in-progress swing and moves to the authoritative
+    /// target — so a missed/late/mid-swing update can no longer strand host and client in different states.
+    /// Each leaf is published and applied independently, so paired leaves are not recursed here.
+    /// </summary>
+    public void ApplyReplicatedDoorState(bool locked, bool open, bool animate)
+    {
+        // The store only drives unspawned procedural doors. The server drives its own doors directly through the
+        // Server* paths and must never re-apply replicated state to them.
+        if (IsSpawned || hinge == null || IsServer)
+            return;
+
+        if (IsBusy)
+            StopDoorMoveRoutine();
+
+        if (useKeyToUnlock)
+        {
+            bool wasLocked = _lockedOffline;
+            _lockedOffline = locked;
+            if (wasLocked && !locked)
+            {
+                _mayOpenUnlockedTime = animate
+                    ? Time.unscaledTime + Mathf.Max(0f, openAfterUnlockDelay)
+                    : 0f;
+                if (animate)
+                    PlayDoorUnlockSfx();
+                OnJailUnlockedByPlayerKey?.Invoke(this);
+            }
+            else if (!wasLocked && locked)
+            {
+                _mayOpenUnlockedTime = 0f;
+            }
+        }
+
+        bool wasOpen = _isOpenOffline;
+        _isOpenOffline = open;
+        if (open)
+            _openPromptOffline = false;
+
+        if (wasOpen != open)
+        {
+            if (animate)
+                PlayDoorOpenSfx(open);
+            StartMoveToState(open, !animate);
+        }
+        else if (!animate)
+        {
+            // Initial sync: guarantee the visual matches the authoritative state even when the local build default
+            // already agreed (so a snap can correct a mid-build interpolation).
+            StartMoveToState(open, true);
         }
     }
 

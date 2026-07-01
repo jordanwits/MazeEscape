@@ -490,6 +490,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         ValidateConfiguredPieceSetup();
 
         DespawnAllSpawnedZombieEnemies();
+        EnsureDoorStateStoreSpawnedAndCleared();
 
         GameObject root = GetOrCreateRoot(scene);
         ClearRoot(root.transform);
@@ -824,6 +825,59 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         return _lastServerMazeBuildSeed == seed
             && !string.IsNullOrEmpty(_lastServerMazeBuildSceneName)
             && string.Equals(_lastServerMazeBuildSceneName, scene.name, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Server-only. Ensures the singleton <see cref="DoorNetworkStateStore"/> (which replicates procedural door
+    /// open/locked state to clients, including late joiners) is spawned, then clears its entries so door state is
+    /// scoped per level. The store persists across the NGO scene switch as infrastructure; clearing on each build
+    /// prevents a previous level's door states from bleeding into the next.
+    /// </summary>
+    void EnsureDoorStateStoreSpawnedAndCleared()
+    {
+        if (!IsServerListening())
+            return;
+
+        if (DoorNetworkStateStore.Instance == null)
+        {
+            GameObject prefab = FindRegisteredNetworkPrefabWithComponent<DoorNetworkStateStore>();
+            if (prefab == null)
+            {
+                LogMazeWarningOnce(
+                    "door-state-store-prefab-missing",
+                    "[Maze] DoorStateStore network prefab not found in the NetworkManager prefab list. Procedural jail/key door open state will not replicate to clients. Add DoorStateStore.prefab (with DoorNetworkStateStore + NetworkObject) to Resources/DefaultNetworkPrefabs.",
+                    this);
+                return;
+            }
+
+            GameObject instance = Instantiate(prefab);
+            if (instance.TryGetComponent(out NetworkObject storeNetObj))
+                storeNetObj.Spawn();
+            else
+                Destroy(instance);
+        }
+
+        DoorNetworkStateStore.ServerClear();
+    }
+
+    GameObject FindRegisteredNetworkPrefabWithComponent<T>() where T : Component
+    {
+        NetworkConfig config = _networkManager != null ? _networkManager.NetworkConfig : null;
+        if (config == null || config.Prefabs == null || config.Prefabs.NetworkPrefabsLists == null)
+            return null;
+
+        foreach (NetworkPrefabsList list in config.Prefabs.NetworkPrefabsLists)
+        {
+            if (list == null || list.PrefabList == null)
+                continue;
+            foreach (NetworkPrefab entry in list.PrefabList)
+            {
+                if (entry != null && entry.Prefab != null && entry.Prefab.GetComponent<T>() != null)
+                    return entry.Prefab;
+            }
+        }
+
+        return null;
     }
 
     void DespawnAllSpawnedZombieEnemies()

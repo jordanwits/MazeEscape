@@ -1239,7 +1239,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
                     return;
                 if (!ServerTryConsumeKeyItem())
                     return;
-                ApplyProceduralDoorUnlockClientRpc(doorId, hintPosition);
+                DoorNetworkStateStore.ServerPublish(door);
                 return;
             }
 
@@ -1297,7 +1297,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
                 return;
 
             door.ApplyProceduralRemoteOpenState(open);
-            ApplyProceduralDoorOpenStateClientRpc(doorId, hintPosition, open);
+            DoorNetworkStateStore.ServerPublish(door);
             return;
         }
 
@@ -1364,7 +1364,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
         if (!ServerTryConsumeKeyItem())
             return;
-        ApplyProceduralDoorUnlockClientRpc(door.DoorId, door.IdentityHintPosition);
+        DoorNetworkStateStore.ServerPublish(door);
     }
 
     [ServerRpc]
@@ -1391,163 +1391,42 @@ public class NetworkPlayerInventory : NetworkBehaviour
             return;
 
         door.ApplyProceduralRemoteOpenState(open);
-        ApplyProceduralDoorOpenStateClientRpc(door.DoorId, door.IdentityHintPosition, open);
+        DoorNetworkStateStore.ServerPublish(door);
     }
 
-    [ClientRpc]
-    void ApplyProceduralDoorUnlockClientRpc(ulong doorId, Vector3 hintPosition)
-    {
-        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
-            return;
-
-        door.ApplyProceduralRemoteUnlock();
-    }
-
-    [ClientRpc]
-    void ApplyProceduralDoorOpenStateClientRpc(ulong doorId, Vector3 hintPosition, bool open)
-    {
-        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
-            return;
-
-        door.ApplyProceduralRemoteOpenState(open);
-    }
-
-    /// <summary>
-    /// Procedural maze <see cref="HingeInteractDoor"/> copies are identical on host and clients but not Netcode-spawned,
-    /// so NetworkVariables never sync — mirror jury-rig jailor-driven state via ClientRpc after the server applies local changes.
-    /// Double doors: if only one leaf has a spawned <see cref="NetworkObject"/>, the other still uses offline fields on clients
-    /// unless this Rpc runs (host runs server-side offline updates for both leaves).
-    /// </summary>
+    // Procedural maze HingeInteractDoors are built locally on every peer from the deterministic seed and are not
+    // Netcode-spawned, so their NetworkVariables never go live. Their open/locked state is replicated through
+    // DoorNetworkStateStore's NetworkList (persistent, late-join-safe, drop-proof) rather than the old best-effort
+    // ClientRpc mirror + one-shot snapshot. These Server* entry points are kept so HingeInteractDoor's call sites
+    // don't change; each simply publishes the door's current authoritative state to the store.
     public static void ServerBroadcastProceduralJailSealIfNeeded(HingeInteractDoor door)
     {
-        if (door == null)
-            return;
-        NetworkManager nm = NetworkManager.Singleton;
-        if (nm == null || !nm.IsListening || !nm.IsServer)
-            return;
-
-        if (!AnyJailDoorLeafNeedsProceduralMirrorRpc(door))
-            return;
-
-        NetworkPlayerInventory relay = ResolveServerRelayInventory();
-        if (relay == null)
-            return;
-
-        relay.ProceduralJailSealFromJailDoorClientRpc(door.DoorId, door.IdentityHintPosition);
+        DoorNetworkStateStore.ServerPublish(door);
     }
 
     /// <seealso cref="ServerBroadcastProceduralJailSealIfNeeded"/>
     public static void ServerBroadcastProceduralJailorOpenEntryIfNeeded(HingeInteractDoor door)
     {
-        if (door == null)
-            return;
-        NetworkManager nm = NetworkManager.Singleton;
-        if (nm == null || !nm.IsListening || !nm.IsServer)
-            return;
-
-        if (!AnyJailDoorLeafNeedsProceduralMirrorRpc(door))
-            return;
-
-        NetworkPlayerInventory relay = ResolveServerRelayInventory();
-        if (relay == null)
-            return;
-
-        relay.ProceduralJailorOpenForEntryMirrorClientRpc(door.DoorId, door.IdentityHintPosition);
+        DoorNetworkStateStore.ServerPublish(door);
     }
 
     public static void ServerBroadcastProceduralDoorUnlockIfNeeded(HingeInteractDoor door)
     {
-        if (door == null)
-            return;
-        NetworkManager nm = NetworkManager.Singleton;
-        if (nm == null || !nm.IsListening || !nm.IsServer)
-            return;
-
-        NetworkPlayerInventory relay = ResolveServerRelayInventory();
-        if (relay == null)
-            return;
-
-        relay.ApplyProceduralDoorUnlockClientRpc(door.DoorId, door.IdentityHintPosition);
+        DoorNetworkStateStore.ServerPublish(door);
     }
 
     public static void ServerBroadcastProceduralDoorOpenStateIfNeeded(HingeInteractDoor door, bool open)
     {
-        if (door == null)
-            return;
-        NetworkManager nm = NetworkManager.Singleton;
-        if (nm == null || !nm.IsListening || !nm.IsServer)
-            return;
-
-        NetworkPlayerInventory relay = ResolveServerRelayInventory();
-        if (relay == null)
-            return;
-
-        relay.ApplyProceduralDoorOpenStateClientRpc(door.DoorId, door.IdentityHintPosition, open);
-    }
-
-    public static void ServerSendProceduralJailDoorSnapshotsToClient(ulong targetClientId)
-    {
-        NetworkManager nm = NetworkManager.Singleton;
-        if (nm == null || !nm.IsListening || !nm.IsServer)
-            return;
-
-        if (!nm.ConnectedClients.ContainsKey(targetClientId))
-            return;
-
-        NetworkPlayerInventory relay = ResolveServerRelayInventory();
-        if (relay == null)
-            return;
-
-        HingeInteractDoor[] doors = Object.FindObjectsByType<HingeInteractDoor>(
-            FindObjectsInactive.Include,
-            FindObjectsSortMode.None);
-        if (doors == null || doors.Length == 0)
-            return;
-
-        ClientRpcParams targetClient = new ClientRpcParams
-        {
-            Send = new ClientRpcSendParams
-            {
-                TargetClientIds = new[] { targetClientId }
-            }
-        };
-
-        for (int i = 0; i < doors.Length; i++)
-        {
-            HingeInteractDoor door = doors[i];
-            if (door == null || !door.UseKeyToUnlock)
-                continue;
-            if (!AnyJailDoorLeafNeedsProceduralMirrorRpc(door))
-                continue;
-
-            relay.ProceduralJailDoorStateSnapshotClientRpc(
-                door.DoorId,
-                door.IdentityHintPosition,
-                door.IsLocked,
-                door.IsOpen,
-                targetClient);
-        }
+        DoorNetworkStateStore.ServerPublish(door);
     }
 
     /// <summary>
-    /// True when any referenced door leaf is missing a spawned <see cref="NetworkObject"/> (procedural / offline replicated path).
-    /// When both leaves are spawned, <see cref="HingeInteractDoor"/> NetworkVariables carry state and Rpc mirroring is skipped.
+    /// Late-join door sync is now handled automatically by <see cref="DoorNetworkStateStore"/>'s replicated
+    /// NetworkList — a joining client receives the current contents on spawn — so this explicit per-client snapshot
+    /// is no longer needed. Kept as a no-op so existing callers stay valid.
     /// </summary>
-    static bool AnyJailDoorLeafNeedsProceduralMirrorRpc(HingeInteractDoor door)
+    public static void ServerSendProceduralJailDoorSnapshotsToClient(ulong targetClientId)
     {
-        if (!IsHingeDoorLeafNetworkSpawned(door))
-            return true;
-
-        HingeInteractDoor paired = door.PairedLeaf;
-        return paired != null && !IsHingeDoorLeafNetworkSpawned(paired);
-    }
-
-    static bool IsHingeDoorLeafNetworkSpawned(HingeInteractDoor leaf)
-    {
-        return leaf != null
-            && leaf.TryGetComponent(out NetworkObject netObj)
-            && netObj != null
-            && netObj.IsSpawned;
     }
 
     static NetworkPlayerInventory ResolveServerRelayInventory()
@@ -1570,38 +1449,6 @@ public class NetworkPlayerInventory : NetworkBehaviour
         }
 
         return null;
-    }
-
-    [ClientRpc]
-    void ProceduralJailSealFromJailDoorClientRpc(ulong doorId, Vector3 hintPosition)
-    {
-        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
-            return;
-
-        door.ApplyProceduralRemoteJailSealFromServer();
-    }
-
-    [ClientRpc]
-    void ProceduralJailorOpenForEntryMirrorClientRpc(ulong doorId, Vector3 hintPosition)
-    {
-        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
-            return;
-
-        door.ApplyProceduralRemoteJailorOpenForEntryIncludingPaired();
-    }
-
-    [ClientRpc]
-    void ProceduralJailDoorStateSnapshotClientRpc(
-        ulong doorId,
-        Vector3 hintPosition,
-        bool locked,
-        bool open,
-        ClientRpcParams clientRpcParams = default)
-    {
-        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) || door == null)
-            return;
-
-        door.ApplyProceduralRemoteJailDoorStateSnapshot(locked, open);
     }
 
     bool TryGetConnectedPlayerPosition(ulong clientId, out Vector3 playerPosition)
