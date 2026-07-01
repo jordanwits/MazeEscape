@@ -282,7 +282,10 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
             return;
         if (po.OwnerClientId != expectedOwnerClientId)
             return;
-        if (!WithinInteractRange(po.transform.position))
+        // Leave is always allowed regardless of range. A player killed while seated respawns at level start
+        // (far from the table) but the overlay stays up and freezes their movement until the seat is freed; if
+        // the range gate rejected their Leave they'd be stranded. Every other action still requires proximity.
+        if (action != SeatAction.Leave && !WithinInteractRange(po.transform.position))
             return;
 
         switch (action)
@@ -800,7 +803,13 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
         }
     }
 
-    /// <summary>Vacate (and mid-round forfeit) seats whose occupant NetworkObject no longer exists (disconnect).</summary>
+    /// <summary>
+    /// Vacate (and mid-round forfeit) seats whose occupant is no longer able to hold the seat: the
+    /// NetworkObject no longer exists (disconnect), or the occupant has died (killed by the Clown/a trap
+    /// while seated). A dead occupant that kept its seat would strand the respawned player — the overlay
+    /// stays interactive and freezes their movement (see <see cref="BlackjackOverlayController.IsInteractive"/>)
+    /// — and would let a ragdolled player keep hitting/standing. Vacating auto-forfeits any live stake.
+    /// </summary>
     void ServerScanForLostOccupants()
     {
         NetworkManager nm = NetworkManager.Singleton;
@@ -811,10 +820,18 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
             SeatState s = GetSeat(i);
             if (!s.IsOccupied)
                 continue;
-            if (nm.SpawnManager.SpawnedObjects.ContainsKey(s.OccupantNetObjId))
+            if (!nm.SpawnManager.SpawnedObjects.TryGetValue(s.OccupantNetObjId, out NetworkObject po) || po == null)
+            {
+                // Occupant is gone (disconnect). If mid-round their stake is already forfeit; just vacate.
+                ServerVacateSeat(i);
                 continue;
-            // Occupant is gone. If mid-round their stake is already forfeit; just vacate.
-            ServerVacateSeat(i);
+            }
+            PlayerHealth health = po.GetComponent<PlayerHealth>();
+            if (health != null && health.IsDead)
+            {
+                // Occupant died while seated. Free the seat so their respawn is mobile and others can sit.
+                ServerVacateSeat(i);
+            }
         }
     }
 
