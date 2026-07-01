@@ -93,6 +93,19 @@ public class SwingingAxeTrap : NetworkBehaviour
     readonly Collider[] _overlap = new Collider[OverlapBufferSize];
     AudioSource _audio;
 
+    // Client-side interpolation of the server-replicated swing angle. The server writes _netAngleDeg every frame but
+    // it only replicates at the network tick rate, so reading it raw makes the blade step between ticks on observers.
+    // We interpolate from the last displayed angle toward each newly received value over the measured update interval,
+    // giving continuous motion a few ms behind the server. Damage is server-authoritative regardless of this visual.
+    float _netDisplayAngleDeg;
+    float _netFromAngleDeg;
+    float _netToAngleDeg;
+    float _netSegStartTime;
+    float _netSegDuration = 0.05f;
+    float _lastNetAngleChangeTime = -1f;
+    float _smoothedNetInterval = 0.05f;
+    bool _netInterpPrimed;
+
     static bool IsNetworkActive =>
         NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
 
@@ -207,11 +220,64 @@ public class SwingingAxeTrap : NetworkBehaviour
         }
         else
         {
-            angle = _netAngleDeg.Value;
+            angle = UpdateInterpolatedNetworkAngle();
             ApplyRotation(angle);
         }
 
         MaybePlaySwoosh(angle);
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        // Only pure clients interpolate; the server/host drives the swing directly and is the authority.
+        if (IsNetworkActive && !IsServer)
+        {
+            _netDisplayAngleDeg = _netFromAngleDeg = _netToAngleDeg = _netAngleDeg.Value;
+            _netAngleDeg.OnValueChanged += OnNetAngleChanged;
+        }
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        _netAngleDeg.OnValueChanged -= OnNetAngleChanged;
+    }
+
+    void OnNetAngleChanged(float previous, float current)
+    {
+        float now = Time.time;
+        if (_lastNetAngleChangeTime >= 0f)
+        {
+            // Track the actual replication interval (tick rate) so the interpolation segment matches how often new
+            // values arrive; clamp to sane bounds so a hitch/first sample can't stretch or collapse the segment.
+            float interval = now - _lastNetAngleChangeTime;
+            if (interval > 0.0001f && interval < 0.5f)
+                _smoothedNetInterval = Mathf.Lerp(_smoothedNetInterval, interval, 0.2f);
+        }
+        _lastNetAngleChangeTime = now;
+
+        _netFromAngleDeg = _netInterpPrimed ? _netDisplayAngleDeg : current;
+        _netToAngleDeg = current;
+        _netSegStartTime = now;
+        _netSegDuration = Mathf.Max(0.0166f, _smoothedNetInterval);
+        _netInterpPrimed = true;
+    }
+
+    /// <summary>Client-only: smoothly advance the displayed swing angle toward the latest replicated value.</summary>
+    float UpdateInterpolatedNetworkAngle()
+    {
+        if (!_netInterpPrimed)
+        {
+            _netDisplayAngleDeg = _netAngleDeg.Value;
+            return _netDisplayAngleDeg;
+        }
+
+        float t = _netSegDuration > 0.0001f
+            ? Mathf.Clamp01((Time.time - _netSegStartTime) / _netSegDuration)
+            : 1f;
+        // Plain lerp (not LerpAngle): the pendulum angle is a continuous 0..arc value, and consecutive samples are
+        // only a few degrees apart, so there is no wraparound to resolve.
+        _netDisplayAngleDeg = Mathf.Lerp(_netFromAngleDeg, _netToAngleDeg, t);
+        return _netDisplayAngleDeg;
     }
 
     /// <summary>
