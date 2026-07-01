@@ -437,24 +437,9 @@ public class PivotSwingTrap : NetworkBehaviour
         return Vector3.Dot(forward, toTarget) >= maxDot;
     }
 
-    /// <summary>
-    /// Client-side relay so trap hits on clients still kill zombies on the host.
-    /// </summary>
-    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-    public void RequestZombieTrapKillServerRpc(ulong zombieNetworkObjectId)
-    {
-        if (!IsServer)
-            return;
-
-        if (!NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(zombieNetworkObjectId, out NetworkObject netObj))
-            return;
-
-        ZombieHealth zh = netObj.GetComponent<ZombieHealth>();
-        if (zh == null || zh.IsDead)
-            return;
-
-        zh.Die();
-    }
+    // NOTE: trap-vs-zombie kills are now adjudicated server-only in RagdollTrap.TryHit (the server's OnTrigger runs
+    // against its authoritative blade pose). The former client relay RequestZombieTrapKillServerRpc — where a client's
+    // late/interpolated blade authored the kill — has been removed to keep trap hitboxes consistent across peers.
 
     float ComputeTargetBlendAuthoritative(float currentBlend)
     {

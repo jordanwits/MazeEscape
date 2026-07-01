@@ -171,32 +171,26 @@ public class RagdollTrap : MonoBehaviour
         if (playerHealth != null && IsCarriedByJailor(playerHealth))
             return;
 
+        NetworkManager nm = NetworkManager.Singleton;
+        bool networked = nm != null && nm.IsListening;
+
+        // Server-authoritative hit detection. In multiplayer ONLY the server detects and applies trap hits, tested
+        // against its authoritative collider poses. A client's late/interpolated blade collider must never author or
+        // request a hit — that let the non-authoritative victim's own diverged collider decide the hit and was the
+        // host/client hitbox inconsistency. Clients still play a local impact cue for responsiveness (the blade they
+        // see is within interpolation of the server's) but apply nothing.
+        if (networked && !nm.IsServer)
+        {
+            ZombieHealth zClient = other.GetComponentInParent<ZombieHealth>();
+            if ((playerHealth != null && !playerHealth.IsDead) || (zClient != null && !zClient.IsDead))
+                TryPlayTrapHitMetallic(other);
+            return;
+        }
+
+        // From here on: server (networked) or fully local (offline / single player).
         ZombieHealth zombieHealth = other.GetComponentInParent<ZombieHealth>();
         if (zombieHealth != null && !zombieHealth.IsDead)
         {
-            NetworkManager networkManager = NetworkManager.Singleton;
-            if (networkManager != null && networkManager.IsListening)
-            {
-                if (networkManager.IsServer)
-                {
-                    TryPlayTrapHitMetallic(other);
-                    zombieHealth.Die();
-                    return;
-                }
-
-                PivotSwingTrap pivot = swingTrapDamageGate != null
-                    ? swingTrapDamageGate
-                    : GetComponentInParent<PivotSwingTrap>();
-                NetworkObject zombieNetObj = other.GetComponentInParent<NetworkObject>();
-                if (pivot != null && zombieNetObj != null)
-                {
-                    TryPlayTrapHitMetallic(other);
-                    pivot.RequestZombieTrapKillServerRpc(zombieNetObj.NetworkObjectId);
-                }
-
-                return;
-            }
-
             TryPlayTrapHitMetallic(other);
             zombieHealth.Die();
             return;
@@ -218,23 +212,11 @@ public class RagdollTrap : MonoBehaviour
             force += Vector3.up * upwardImpulse;
         Vector3 hitPoint = hitCenter;
 
-        NetworkManager net = NetworkManager.Singleton;
-        if (net != null && net.IsListening && netRagdoll != null)
+        if (networked && netRagdoll != null)
         {
-            if (net.IsServer)
-            {
-                TryPlayTrapHitMetallic(other);
-                netRagdoll.RequestTrapHitFromServer(force, hitPoint, TrapDamageAmount, forceMode);
-                return;
-            }
-
-            NetworkObject playerNetObj = other.GetComponentInParent<NetworkObject>();
-            if (playerNetObj != null && playerNetObj.IsOwner)
-            {
-                TryPlayTrapHitMetallic(other);
-                netRagdoll.RequestTrapHitServerRpc(force, hitPoint, TrapDamageAmount, (byte)forceMode);
-            }
-
+            // networked here implies IsServer (clients returned above); the server relays the ragdoll to the owner.
+            TryPlayTrapHitMetallic(other);
+            netRagdoll.RequestTrapHitFromServer(force, hitPoint, TrapDamageAmount, forceMode);
             return;
         }
 

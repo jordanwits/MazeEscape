@@ -226,26 +226,10 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         BeginRagdollFromServer(worldForce, worldForcePosition, forceMode, allowAutoRecovery: true);
     }
 
-    /// <summary>
-    /// Call from a client-owned collider (e.g. trap trigger on the joining player). Server relays to owner via ClientRpc.
-    /// </summary>
-    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
-    public void RequestTrapHitServerRpc(Vector3 worldForce, Vector3 worldForcePosition, float damageAmount, byte forceMode)
-    {
-        // The damage and force here are client-supplied. The existing per-client cooldown in
-        // RequestTrapHitFromServer limits the *rate*, but a malicious client could still send arbitrary
-        // values; clamp them to safe bounds (well above any legitimate trap config) so a hit never deals
-        // more than a real trap could.
-        const float ServerMaxTrapDamage = 50f;
-        const float ServerMaxTrapForce = 50f;
-        if (damageAmount < 0f) damageAmount = 0f;
-        if (damageAmount > ServerMaxTrapDamage) damageAmount = ServerMaxTrapDamage;
-        float maxSqr = ServerMaxTrapForce * ServerMaxTrapForce;
-        if (worldForce.sqrMagnitude > maxSqr)
-            worldForce = worldForce.normalized * ServerMaxTrapForce;
-
-        RequestTrapHitFromServer(worldForce, worldForcePosition, damageAmount, (ForceMode)forceMode);
-    }
+    // NOTE: trap hits are now adjudicated server-only (see RagdollTrap.TryHit). The former owner-invoke
+    // RequestTrapHitServerRpc — where a non-authoritative client authored its own trap hit and the server merely
+    // clamped the client-supplied force/damage — has been removed to eliminate the host/client hitbox desync.
+    // The sole trap-hit entry point is now the server-only RequestTrapHitFromServer above.
 
     [ClientRpc]
     void StartRagdollClientRpc(Vector3 worldForce, Vector3 worldForcePosition, byte forceMode, bool allowAutoRecovery)
