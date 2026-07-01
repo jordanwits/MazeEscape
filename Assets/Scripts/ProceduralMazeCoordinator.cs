@@ -489,7 +489,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         _placedCellPrefabs.Clear();
         ValidateConfiguredPieceSetup();
 
-        DespawnAllSpawnedZombieEnemies();
+        ServerDespawnAllLevelNetworkObjects();
         EnsureDoorStateStoreSpawnedAndCleared();
 
         GameObject root = GetOrCreateRoot(scene);
@@ -880,7 +880,20 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         return null;
     }
 
-    void DespawnAllSpawnedZombieEnemies()
+    /// <summary>
+    /// Server-only. Despawns EVERY runtime-spawned level NetworkObject — enemies (incl. the Jailor), traps, chests,
+    /// carnival props, keyed-door objects, thrown/held items, etc. — so nothing from the previous section bleeds into
+    /// the next. NGO does NOT destroy dynamically-spawned NetworkObjects on a <see cref="LoadSceneMode.Single"/>
+    /// switch when they were spawned with the default <c>destroyWithScene=false</c>; it migrates them into the new
+    /// scene, so level content must be despawned explicitly by the server. Player objects (kept across the
+    /// connection) and the <see cref="DoorNetworkStateStore"/> singleton (infrastructure) are preserved.
+    ///
+    /// Enumerating the live spawn set (rather than a hand-maintained type list) makes this exhaustive and
+    /// automatically correct as new enemy/trap/prop types are added across all four maze sections. Running it at the
+    /// start of every server maze build also guarantees <see cref="MazePieceNetworkRigidbodySpawn"/>'s dedup runs
+    /// against a genuinely clean scene.
+    /// </summary>
+    public void ServerDespawnAllLevelNetworkObjects()
     {
         if (_networkManager == null || !_networkManager.IsListening || !_networkManager.IsServer)
             return;
@@ -896,10 +909,13 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             if (networkObject == null || !networkObject.IsSpawned)
                 continue;
 
-            if (networkObject.gameObject.GetComponent<NetworkZombieAvatar>() != null
-                || networkObject.gameObject.GetComponent<NetworkSkeletonAvatar>() != null
-                || networkObject.gameObject.GetComponent<WindupMonkeyAI>() != null)
-                toDespawn.Add(networkObject);
+            // Preserve the per-connection player objects and the door-state infrastructure singleton.
+            if (networkObject.IsPlayerObject)
+                continue;
+            if (networkObject.GetComponent<DoorNetworkStateStore>() != null)
+                continue;
+
+            toDespawn.Add(networkObject);
         }
 
         for (int i = 0; i < toDespawn.Count; i++)

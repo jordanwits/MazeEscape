@@ -222,6 +222,13 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
             NetworkManager nm = NetworkManager.Singleton;
             if (nm != null && nm.SceneManager != null)
             {
+                // Despawn all runtime-spawned level content BEFORE the synchronized scene switch. A
+                // LoadSceneMode.Single load migrates dynamically-spawned NetworkObjects (destroyWithScene=false)
+                // into the next scene rather than destroying them, so without this the previous section's Jailor,
+                // traps and props would bleed into the next section.
+                if (nm.TryGetComponent(out ProceduralMazeCoordinator mazeCoordinator))
+                    mazeCoordinator.ServerDespawnAllLevelNetworkObjects();
+
                 SceneEventProgressStatus status = nm.SceneManager.LoadScene(nextScene, LoadSceneMode.Single);
                 if (status == SceneEventProgressStatus.Started)
                     return;
