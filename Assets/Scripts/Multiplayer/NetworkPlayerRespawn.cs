@@ -198,6 +198,40 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         bool isDead = playerHealth != null ? playerHealth.IsDead : _isDead.Value;
         if (characterController != null && !isDead)
             characterController.enabled = true;
+
+        // After THIS client's own player respawns (ragdoll exit + CharacterController teleport above), the
+        // OwnerNetworkTransform interpolators for every OTHER (remote) player on this client can be left seated at a
+        // stale Y, so remote players render "floating" above the ground even though they are grounded on their own
+        // machines. Re-seat every observer transform to its latest replicated state — the same resync
+        // ProceduralMazeCoordinator applies after a maze build. Gated on IsOwner so it only runs on the client whose
+        // local player actually respawned.
+        if (IsOwner && isActiveAndEnabled)
+            StartCoroutine(ResyncRemoteObserverTransformsAfterRespawn());
+    }
+
+    IEnumerator ResyncRemoteObserverTransformsAfterRespawn()
+    {
+        // Repeat over a couple of frames so it corrects the stale interpolation whenever it settles during the
+        // respawn transition (ragdoll exit, health/life-state replication, CharacterController re-enable).
+        for (int i = 0; i < 3; i++)
+        {
+            ResnapRemoteObserverTransforms();
+            yield return null;
+        }
+    }
+
+    static void ResnapRemoteObserverTransforms()
+    {
+        // SnapObserverToLatestNetworkState self-guards to non-authoritative (observer) instances, so the local
+        // player's own transform is left untouched and only remote players are re-seated.
+        OwnerNetworkTransform[] transforms = FindObjectsByType<OwnerNetworkTransform>();
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            if (transforms[i] != null)
+                transforms[i].SnapObserverToLatestNetworkState();
+        }
+
+        Physics.SyncTransforms();
     }
 
     void BeginRespawnPitKillGrace()
