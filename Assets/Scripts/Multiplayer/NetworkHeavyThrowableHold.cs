@@ -813,6 +813,34 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         return null;
     }
 
+    /// <summary>
+    /// Server-side force-release used when the holding player is torn down by a client disconnect. The body is a
+    /// spawned NetworkObject currently parented under the disconnecting avatar, so it must be un-held and returned
+    /// to the world before that avatar hierarchy is destroyed (otherwise it is destroyed as a child on every
+    /// machine). Clears the replicated holder, drops the server/host copy in place, and mirrors the released world
+    /// state to the remaining clients through a surviving relay inventory. NGO reassigns ownership back to the
+    /// server on its own (the prefab is DontDestroyWithOwner), and the FixedUpdate settle path then rests it.
+    /// </summary>
+    public void ServerForceReleaseForHolderDisconnect()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer || _item == null)
+            return;
+
+        Vector3 worldPosition = _item.transform.position;
+        Quaternion worldRotation = _item.transform.rotation;
+        worldPosition.y += 0.05f;
+
+        if (IsSpawned)
+            _holderNetworkObjectId.Value = 0UL;
+
+        // Server/host copy: un-hold + re-enable world physics synchronously so it survives the avatar teardown.
+        _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, Vector3.zero, Vector3.zero);
+
+        // Mirror to the remaining clients so their copies un-parent before the avatar despawn destroys them.
+        NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, false, 0UL, worldPosition, worldRotation);
+    }
+
     public bool ServerTryDropFromRelay(ulong playerNetworkObjectId, ulong senderClientId)
     {
         if (!TryResolveRelayHolder(playerNetworkObjectId, senderClientId, out PlayerController pc))

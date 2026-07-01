@@ -15,6 +15,11 @@ public class NetworkPlayerInventory : NetworkBehaviour
     NetworkPlayerAvatar _avatar;
     uint _runtimeDropSequence;
 
+    // True on the server only while a synchronized Single scene switch (e.g. the elevator to the next section)
+    // is tearing down players. Distinguishes those bulk player despawns from a genuine client disconnect in
+    // OnNetworkDespawn so the disconnect item-scatter path does not fire during level transitions.
+    static bool s_serverLevelSceneSwitchInProgress;
+
     readonly NetworkVariable<ulong> _slot0ItemId = new NetworkVariable<ulong>(
         0UL,
         NetworkVariableReadPermission.Everyone,
@@ -232,6 +237,13 @@ public class NetworkPlayerInventory : NetworkBehaviour
 
     public override void OnNetworkDespawn()
     {
+        // NGO has already flipped IsSpawned to false by the time this runs, and on a genuine client disconnect the
+        // owning player object — with every held/stashed item parented under its avatar — is destroyed immediately
+        // afterward on every machine. Scatter those items into the world first so they are not destroyed with the
+        // avatar hierarchy (which would delete e.g. the jail-door key and soft-lock the run).
+        if (IsServer)
+            ServerHandleDisconnectTeardownDrop();
+
         SceneManager.sceneLoaded -= HandleGameplaySceneLoadedForPresentationRefresh;
         _slot0ItemId.OnValueChanged -= OnSlot0Changed;
         _slot1ItemId.OnValueChanged -= OnSlot1Changed;
@@ -727,6 +739,100 @@ public class NetworkPlayerInventory : NetworkBehaviour
         }
     }
 
+    void ServerHandleDisconnectTeardownDrop()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsServer)
+            return;
+
+        // Only a real client disconnect should scatter this player's items. A full-session teardown (host stop /
+        // return to menu) sets ShutdownInProgress and discards everything anyway, and a synchronized Single scene
+        // switch (elevator to the next section) despawns every player as it rebuilds the level from scratch. In
+        // both cases dropping is pointless, and the relay mirror below could even reposition a fresh next-scene
+        // item via its nearest-match fallback, so skip them.
+        if (nm.ShutdownInProgress || s_serverLevelSceneSwitchInProgress)
+            return;
+
+        ServerScatterHeldItemsForDisconnect();
+        ServerForceReleaseHeldHeavyThrowableForDisconnect();
+    }
+
+    /// <summary>
+    /// Drops every held/stashed hotbar item into the world at the disconnect spot. Applies the resting world pose
+    /// directly on the server/host copy (so it survives the avatar destruction that follows this callback) and
+    /// mirrors that pose to the other clients through a surviving relay inventory — this inventory is already
+    /// un-spawned here, so it can no longer deliver its own RPCs (see <see cref="ResolveServerRelayInventory"/>).
+    /// </summary>
+    void ServerScatterHeldItemsForDisconnect()
+    {
+        Vector3 basePosition = transform.position;
+        Vector3 forward = transform.forward.sqrMagnitude > 0.0001f ? transform.forward.normalized : Vector3.forward;
+
+        for (int i = 0; i < 3; i++)
+        {
+            ulong id = GetSlotItemId(i);
+            byte typeId = GetSlotItemTypeId(i);
+            if (id == 0UL && typeId == GrabbableInventoryItem.TypeIdNone)
+                continue;
+
+            GrabbableInventoryItem g = null;
+            bool found = id != 0UL && GrabbableInventoryItem.TryGetRegistered(id, out g) && g != null;
+            if (!found && typeId != GrabbableInventoryItem.TypeIdNone)
+                found = GrabbableInventoryItem.TryResolveForStateByType(id, basePosition, typeId, out g);
+            if (!found || g == null)
+                continue;
+
+            // Small forward fan so multiple slots do not land exactly on top of one another.
+            Vector3 dropPosition = basePosition + forward * (0.35f + 0.2f * i);
+            dropPosition.y = basePosition.y + 0.1f;
+            Quaternion dropRotation = g.transform.rotation;
+
+            if (g is FlashlightItem flashlight)
+            {
+                flashlight.ApplyNetworkWorldState(dropPosition, dropRotation, flashlight.IsLightOn, default);
+            }
+            else
+            {
+                if (g is GlowstickItem glowstick)
+                    glowstick.SetStackCount(Mathf.Max(1, GetSlotStackCount(i)));
+                g.ApplyNetworkWorldState(dropPosition, dropRotation, default);
+                if (g is GlowstickItem glowstickVisual)
+                    glowstickVisual.SetWorldDroppedVisual();
+            }
+
+            ServerBroadcastDroppedItemWorldStateViaRelay(g, dropPosition, dropRotation);
+        }
+    }
+
+    /// <summary>
+    /// The one carry slot that lives outside the hotbar: a heavy throwable (StarBall / ring) held via
+    /// <see cref="NetworkHeavyThrowableHold"/> is a spawned NetworkObject parented under the avatar, so it too
+    /// would be destroyed with the avatar hierarchy. Force it back into the world before the teardown completes.
+    /// </summary>
+    void ServerForceReleaseHeldHeavyThrowableForDisconnect()
+    {
+        NetworkHeavyThrowableHold hold = NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(NetworkObjectId);
+        if (hold != null)
+            hold.ServerForceReleaseForHolderDisconnect();
+    }
+
+    /// <summary>
+    /// Bracket a synchronized <see cref="LoadSceneMode.Single"/> level switch (e.g. the elevator to the next
+    /// section) so the player-object despawns it performs are not mistaken for client disconnects by
+    /// <see cref="OnNetworkDespawn"/>. Call <see cref="BeginServerLevelSceneSwitch"/> immediately before
+    /// NetworkSceneManager.LoadScene and <see cref="EndServerLevelSceneSwitch"/> immediately after; the player
+    /// despawns happen synchronously inside that call.
+    /// </summary>
+    public static void BeginServerLevelSceneSwitch()
+    {
+        s_serverLevelSceneSwitchInProgress = true;
+    }
+
+    public static void EndServerLevelSceneSwitch()
+    {
+        s_serverLevelSceneSwitchInProgress = false;
+    }
+
     void SendItemSnapshotToOwner()
     {
         ClientRpcParams targetOwner = new ClientRpcParams
@@ -1170,6 +1276,38 @@ public class NetworkPlayerInventory : NetworkBehaviour
             }
         };
         return true;
+    }
+
+    /// <summary>
+    /// Mirror a disconnect-scattered hotbar item's resting world pose to every client except the host (which has
+    /// already applied it directly). Routed through a surviving relay inventory because the owning inventory is
+    /// mid-despawn and can no longer send its own RPCs.
+    /// </summary>
+    static void ServerBroadcastDroppedItemWorldStateViaRelay(GrabbableInventoryItem item, Vector3 worldPosition, Quaternion worldRotation)
+    {
+        if (item == null)
+            return;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return;
+
+        NetworkPlayerInventory relay = ResolveServerRelayInventory();
+        if (relay == null)
+            return;
+
+        if (!TryBuildNonServerClientRpcTarget(nm, out ClientRpcParams clientsExcludingHost))
+            return;
+
+        relay.ApplyItemStateWithTypeClientRpc(
+            item.ItemId,
+            item.ItemTypeId,
+            false,
+            0UL,
+            worldPosition,
+            worldRotation,
+            default,
+            clientsExcludingHost);
     }
 
     public static void ServerBroadcastRigidbodyImpactSfx(RigidbodyImpactSfx impactSfx, float volume01)
