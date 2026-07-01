@@ -229,7 +229,18 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
                 if (nm.TryGetComponent(out ProceduralMazeCoordinator mazeCoordinator))
                     mazeCoordinator.ServerDespawnAllLevelNetworkObjects();
 
-                SceneEventProgressStatus status = nm.SceneManager.LoadScene(nextScene, LoadSceneMode.Single);
+                // Bracket the synchronized load: it despawns every player as it tears down this scene, and those
+                // despawns must not be mistaken for client disconnects (which scatter the player's held items).
+                NetworkPlayerInventory.BeginServerLevelSceneSwitch();
+                SceneEventProgressStatus status;
+                try
+                {
+                    status = nm.SceneManager.LoadScene(nextScene, LoadSceneMode.Single);
+                }
+                finally
+                {
+                    NetworkPlayerInventory.EndServerLevelSceneSwitch();
+                }
                 if (status == SceneEventProgressStatus.Started)
                     return;
 
