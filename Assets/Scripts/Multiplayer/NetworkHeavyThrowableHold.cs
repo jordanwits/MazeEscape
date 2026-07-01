@@ -12,7 +12,18 @@ using UnityEngine.Serialization;
 /// simulates locally — eliminating roundtrip lag on the throw arc. The server reclaims ownership
 /// once the body settles, so an idle ball is server-owned again (consistent state for bumps and
 /// future pickups). Release uses ClientRpc + <see cref="HeavyThrowableHoldItem.ApplyReleasedWorldStateWithVelocityDelta"/>
-/// only on the current owner; non-owners snap to the release pose and follow the owner via NGO.
+/// only on the releasing owner; non-owners snap to the release pose and follow the owner via NGO.
+/// <para>
+/// The NetworkTransform must stay ENABLED while carried. A disabled NetworkTransform keeps
+/// committing states each tick (NGO's tick registration ignores <c>enabled</c>) but stops
+/// refreshing the state's NetworkTick, so non-owner interpolators drop every carry update as
+/// stale and stay parked at the pre-pickup pose — which made thrown objects dip toward their old
+/// resting spot on observer screens before correcting onto the arc. While held, the rendered pose
+/// is overridden anyway by the hand attach in <see cref="GrabbableInventoryItem"/>.LateUpdate, so
+/// the live replication is cosmetically irrelevant until release, where the owner
+/// <see cref="NetworkTransform.Teleport"/>s to the release pose so every non-owner clears its
+/// interpolation buffer and picks up the arc cleanly.
+/// </para>
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
@@ -131,7 +142,6 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     void ApplySpawnHolderState()
     {
         ulong holder = _holderNetworkObjectId.Value;
-        SetPhysicsNetworkingEnabled(holder == 0UL);
         if (holder != 0UL)
         {
             _item.ApplyNetworkHeldState(holder);
@@ -142,14 +152,7 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     void OnHolderChanged(ulong previous, ulong current)
     {
         if (current != 0UL)
-        {
-            SetPhysicsNetworkingEnabled(false);
             _item.ApplyNetworkHeldState(current);
-        }
-        else if (previous != 0UL)
-        {
-            SetPhysicsNetworkingEnabled(true);
-        }
 
         if (previous != 0UL)
             NotifyHolderInventoryRefresh(previous);
@@ -173,12 +176,6 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             return;
 
         pc.RefreshInventoryViewFromNetwork();
-    }
-
-    void SetPhysicsNetworkingEnabled(bool worldPhysics)
-    {
-        if (_networkTransform != null)
-            _networkTransform.enabled = worldPhysics;
     }
 
     public void TryPickupOffline(PlayerController player)
@@ -673,16 +670,28 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         Vector3 angularVelocity,
         ulong releasingOwnerClientId)
     {
-        // The current NetworkObject owner runs the rigidbody locally; everyone else mirrors pose
-        // and lets NetworkTransform replicate the rest from the owner. This makes the throw arc
-        // smooth for the thrower regardless of whether they are host or a joined client.
-        bool simulateLocally = IsOwner;
+        // The releasing owner runs the rigidbody locally; everyone else mirrors pose and lets the
+        // owner-authority NetworkTransform replicate the rest. Match against the client id captured
+        // at release rather than IsOwner alone: if ownership changed while this RPC was in flight
+        // (thrower disconnect → server auto-reclaim), the late RPC must not make the new owner
+        // re-apply the throw velocity.
+        bool simulateLocally = releasingOwnerClientId == ulong.MaxValue
+            ? IsOwner
+            : IsOwner && NetworkManager != null && NetworkManager.LocalClientId == releasingOwnerClientId;
         if (simulateLocally)
+        {
             _item.ApplyReleasedWorldStateWithVelocityDelta(worldPosition, worldRotation, velocityDelta, angularVelocity);
-        else
-            ApplyReleasedMirrorState(worldPosition, worldRotation);
 
-        SetPhysicsNetworkingEnabled(true);
+            // Re-base every non-owner at the release pose: the teleport flag makes them clear their
+            // position/rotation interpolation buffers (any carry-time or pre-pickup samples) so the
+            // replicated arc starts exactly here instead of blending from a stale pose.
+            if (_networkTransform != null && _networkTransform.IsSpawned)
+                _networkTransform.Teleport(worldPosition, worldRotation, transform.localScale);
+        }
+        else
+        {
+            ApplyReleasedMirrorState(worldPosition, worldRotation);
+        }
     }
 
     void ApplyReleasedMirrorState(Vector3 worldPosition, Quaternion worldRotation)
@@ -695,7 +704,13 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
             rb.isKinematic = true;
-            rb.useGravity = false;
+            // Move the physics body too (NetworkRigidbody.UseRigidBodyForMotion reads/writes rb pose,
+            // and assigning rb.position clears the physics interpolation history like the owner path).
+            rb.position = worldPosition;
+            rb.rotation = worldRotation;
+            // Gravity stays ON: a kinematic mirror ignores it, and NGO's AutoUpdateKinematicState only
+            // restores isKinematic — not useGravity — when the server reclaims simulation authority
+            // after the body settles. Turning it off here left server-owned balls floating when bumped.
         }
     }
 

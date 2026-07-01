@@ -55,6 +55,10 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhGlow;
     static Sprite s_hudPhKey;
     static Sprite s_hudPhBandage;
+    static Sprite s_hudPhStarBall;
+    static Sprite s_hudPhRingBlue;
+    static Sprite s_hudPhRingGreen;
+    static Sprite s_hudPhRingYellow;
 
     /// <summary>Inspector <see cref="_slotIcon"/> if set; otherwise a simple circular runtime glyph (transparent outside the disk).</summary>
     public Sprite GetEffectiveSlotIconForHud()
@@ -96,10 +100,10 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdGlowstick => s_hudPhGlow ??= CreatePlaceholderSprite(0.35f, 1f, 0.35f),
             TypeIdKey => KeyItem.SharedHudSlotIcon ?? (s_hudPhKey ??= CreatePlaceholderSprite(0.92f, 0.75f, 0.2f)),
             TypeIdBandage => BandageItem.SharedHudSlotIcon ?? (s_hudPhBandage ??= CreatePlaceholderSprite(0.95f, 0.35f, 0.35f)),
-            TypeIdStarBall => CreatePlaceholderSprite(0.95f, 0.55f, 0.2f),
-            TypeIdRingBlue => CreatePlaceholderSprite(0.25f, 0.45f, 0.95f),
-            TypeIdRingGreen => CreatePlaceholderSprite(0.25f, 0.85f, 0.35f),
-            TypeIdRingYellow => CreatePlaceholderSprite(0.95f, 0.85f, 0.25f),
+            TypeIdStarBall => s_hudPhStarBall ??= CreatePlaceholderSprite(0.95f, 0.55f, 0.2f),
+            TypeIdRingBlue => s_hudPhRingBlue ??= CreatePlaceholderSprite(0.25f, 0.45f, 0.95f),
+            TypeIdRingGreen => s_hudPhRingGreen ??= CreatePlaceholderSprite(0.25f, 0.85f, 0.35f),
+            TypeIdRingYellow => s_hudPhRingYellow ??= CreatePlaceholderSprite(0.95f, 0.85f, 0.25f),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
     }
@@ -190,7 +194,12 @@ public class GrabbableInventoryItem : MonoBehaviour
     /// </summary>
     public Vector3 GetInteractAimPointClosestTo(Vector3 worldObserver)
     {
-        Collider[] cols = GetComponentsInChildren<Collider>(true);
+        // Reuse the collider array cached in Awake rather than re-allocating a GetComponentsInChildren
+        // result every call — this runs per registered item, per frame in the player's interact-prompt
+        // fallback scan.
+        Collider[] cols = itemColliders != null && itemColliders.Length > 0
+            ? itemColliders
+            : GetComponentsInChildren<Collider>(true);
         if (cols == null || cols.Length == 0)
             return transform.position;
 
@@ -224,6 +233,8 @@ public class GrabbableInventoryItem : MonoBehaviour
     bool _hasCachedItemId;
     bool _hasExplicitItemId;
     ulong _explicitItemId;
+    ulong _lastHashedNetworkObjectId;
+    bool _hasHashedNetworkObjectId;
     Vector3 _identityHintPosition;
     Quaternion _identityHintRotation;
     Vector3 _authoredLocalScale;
@@ -238,12 +249,24 @@ public class GrabbableInventoryItem : MonoBehaviour
         return Registered.TryGetValue(itemId, out item);
     }
 
+    /// <summary>
+    /// Resolve the exact item the client aimed at for a pickup. Item ids are deterministic across peers
+    /// (network-object id, or a stable hierarchy-path hash), so a pickup must resolve to that specific id
+    /// or fail — we intentionally do NOT fall back to the nearest registered item. That fallback used to
+    /// hand the player whatever unheld item was closest to the client-supplied hint <b>of any type</b>, so
+    /// two players lunging for the same pickup could leave the loser holding an unrelated item (e.g. the
+    /// key instead of the contested glowstick), because the exact-id lookup fails the moment the other
+    /// player's grab flips <see cref="IsHeld"/>. Failing is the correct outcome there: the aimed item is
+    /// gone/held, the client gets no pickup and can simply try again. <paramref name="hintPosition"/> is
+    /// retained for signature stability but no longer used.
+    /// </summary>
     public static bool TryResolveForPickup(ulong itemId, Vector3 hintPosition, out GrabbableInventoryItem item)
     {
         if (TryGetRegistered(itemId, out item) && item != null && !item.IsHeld)
             return true;
 
-        return TryFindNearestRegistered(hintPosition, false, out item);
+        item = null;
+        return false;
     }
 
     public static bool TryResolveForState(ulong itemId, Vector3 hintPosition, out GrabbableInventoryItem item)
@@ -276,6 +299,7 @@ public class GrabbableInventoryItem : MonoBehaviour
         _cachedItemId = itemId;
         _hasCachedItemId = true;
         Registered[itemId] = this;
+        SuppressIfConsumedGhost(itemId);
     }
 
     protected virtual void Awake()
@@ -301,6 +325,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     {
         TryUseSpawnedNetworkObjectId();
         Registered[ItemId] = this;
+        SuppressIfConsumedGhost(ItemId);
     }
 
     protected void OnDisable()
@@ -639,7 +664,15 @@ public class GrabbableInventoryItem : MonoBehaviour
         if (_networkObject == null || !_networkObject.IsSpawned)
             return;
 
-        ulong networkItemId = ComputeHash($"network-object:{_networkObject.NetworkObjectId}");
+        // Called every LateUpdate for network-spawned items. Skip the interpolated-string hash entirely
+        // when the NetworkObjectId hasn't changed (the common case) instead of allocating a string per frame.
+        ulong netId = _networkObject.NetworkObjectId;
+        if (_hasCachedItemId && _hasHashedNetworkObjectId && _lastHashedNetworkObjectId == netId)
+            return;
+
+        ulong networkItemId = ComputeHash($"network-object:{netId}");
+        _lastHashedNetworkObjectId = netId;
+        _hasHashedNetworkObjectId = true;
         if (_hasCachedItemId && _cachedItemId == networkItemId)
             return;
 
@@ -647,6 +680,29 @@ public class GrabbableInventoryItem : MonoBehaviour
         _cachedItemId = networkItemId;
         _hasCachedItemId = true;
         Registered[networkItemId] = this;
+        SuppressIfConsumedGhost(networkItemId);
+    }
+
+    /// <summary>
+    /// Client-side ghost suppression. Consumable world items (chest loot, seed pickups) are plain LOCAL
+    /// copies rebuilt identically on every peer from the deterministic seed. If a copy was already consumed
+    /// this level, a late joiner would otherwise rebuild a dead ghost of it (an interactable whose pickup
+    /// fails server-side). Destroy ourselves when the replicated <see cref="ConsumedItemNetworkStore"/> says
+    /// this id is consumed. No-op on the server/host (it destroyed the real item and never rebuilds it) and
+    /// offline. Ids are unique per level and tombstones are cleared each build, so this never hits a
+    /// legitimate item.
+    /// </summary>
+    void SuppressIfConsumedGhost(ulong itemId)
+    {
+        if (itemId == 0UL)
+            return;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || nm.IsServer)
+            return;
+
+        if (ConsumedItemNetworkStore.IsConsumed(itemId))
+            Destroy(gameObject);
     }
 
     void UnregisterCurrentItemId()

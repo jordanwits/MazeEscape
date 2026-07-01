@@ -55,6 +55,10 @@ public class NetworkJailorAvatar : NetworkBehaviour
 
         if (characterController != null)
             characterController.enabled = shouldSimulate;
+
+        // Observer clients disable the CC (server drives movement) — keep the enemy solid for remote
+        // players and client-thrown props via a mirrored kinematic capsule.
+        EnemyClientCollisionProxy.Apply(characterController, shouldSimulate);
     }
 
     void EnsureAnimationSync()

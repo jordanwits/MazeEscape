@@ -1930,42 +1930,33 @@ public partial class PlayerController : MonoBehaviour
             return;
         }
 
-        if (cam != null
-            && TryFindInteractableHingeDoor(cam, out HingeInteractDoor wantUnlockDoor)
-            && wantUnlockDoor != null
-            && wantUnlockDoor.UseKeyToUnlock
-            && wantUnlockDoor.IsLocked
-            && PlayerHasKeyInInventory())
+        // All three door prompts key off the same aimed door; cast once and evaluate the conditions on that
+        // single result rather than repeating the spherecast + sort three times per frame.
+        if (cam != null && TryFindInteractableHingeDoor(cam, out HingeInteractDoor aimedDoor) && aimedDoor != null)
         {
-            SetPickupPromptVisible(true, doorUnlockPromptMessage);
-            return;
-        }
+            if (aimedDoor.UseKeyToUnlock && aimedDoor.IsLocked && PlayerHasKeyInInventory())
+            {
+                SetPickupPromptVisible(true, doorUnlockPromptMessage);
+                return;
+            }
 
-        if (cam != null
-            && TryFindInteractableHingeDoor(cam, out HingeInteractDoor openDoor)
-            && openDoor != null
-            && !openDoor.IsLocked
-            && !openDoor.IsOpen
-            && !openDoor.IsPostUnlockOpenDelayActive
-            && openDoor.ShowOpenInteractionPrompt)
-        {
-            SetPickupPromptVisible(true, doorOpenPromptMessage);
-            return;
-        }
+            if (!aimedDoor.IsLocked && !aimedDoor.IsOpen && !aimedDoor.IsPostUnlockOpenDelayActive && aimedDoor.ShowOpenInteractionPrompt)
+            {
+                SetPickupPromptVisible(true, doorOpenPromptMessage);
+                return;
+            }
 
-        if (cam != null
-            && TryFindInteractableHingeDoor(cam, out HingeInteractDoor elevatorDoor)
-            && elevatorDoor != null
-            && !elevatorDoor.IsLocked
-            && elevatorDoor.IsOpen
-            && !elevatorDoor.IsBusy
-            && elevatorDoor.TryGetElevatorFinishController(out ElevatorFinishController elevatorFinish))
-        {
-            SetElevatorClosePromptVisible(
-                true,
-                elevatorFinish.LivingInsideDisplay,
-                elevatorFinish.LivingRequiredDisplay);
-            return;
+            if (!aimedDoor.IsLocked
+                && aimedDoor.IsOpen
+                && !aimedDoor.IsBusy
+                && aimedDoor.TryGetElevatorFinishController(out ElevatorFinishController elevatorFinish))
+            {
+                SetElevatorClosePromptVisible(
+                    true,
+                    elevatorFinish.LivingInsideDisplay,
+                    elevatorFinish.LivingRequiredDisplay);
+                return;
+            }
         }
 
         if (cam != null && TryGetCarnivalPromptForCurrentAim(cam, out string carnivalMessage))
@@ -2104,12 +2095,17 @@ public partial class PlayerController : MonoBehaviour
             triggerInteraction);
     }
 
+    static readonly IComparer<RaycastHit> s_InteractHitDistanceComparer =
+        Comparer<RaycastHit>.Create((a, b) => a.distance.CompareTo(b.distance));
+
     void SortInteractHitsByDistance(int count)
     {
         if (count <= 1)
             return;
 
-        Array.Sort(_interactCastHitBuffer, 0, count, Comparer<RaycastHit>.Create((a, b) => a.distance.CompareTo(b.distance)));
+        // Hoisted comparer: Comparer.Create allocated a new wrapper on every sort, and this runs several
+        // times per frame across the chest/door/grabbable prompt casts.
+        Array.Sort(_interactCastHitBuffer, 0, count, s_InteractHitDistanceComparer);
     }
 
     /// <summary>
@@ -2152,6 +2148,14 @@ public partial class PlayerController : MonoBehaviour
                 continue;
 
             if (!PassHeavyThrowableInteractPromptHint(g))
+                continue;
+
+            // Broad-phase reject on the item's transform before the precise, collider-scanning aim point.
+            // The margin generously covers item size + any collider offset, so an in-range item is never
+            // wrongly dropped; distant items (the common case) bail here without touching their colliders.
+            Vector3 toItem = g.transform.position - o;
+            float itemAlong = Vector3.Dot(toItem, d);
+            if (itemAlong < -2f || itemAlong > maxAlong + 2f)
                 continue;
 
             Vector3 aim = GetFallbackAimPointForGrabbable(g, o);

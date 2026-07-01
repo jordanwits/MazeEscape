@@ -34,10 +34,17 @@ public class MovementViewBob : MonoBehaviour
     [SerializeField] int upperBodyLayerIndexFallback = 1;
     [SerializeField] string meleeStateNameOnUpperLayer = "RightHook";
 
+    int _speedParamHash;
+    int _groundedParamHash;
+    int _meleeLayerIndexCache = int.MinValue; // sentinel: layer not yet resolved
+
     void Awake()
     {
         if (animator == null)
             animator = GetComponentInChildren<Animator>();
+
+        _speedParamHash = Animator.StringToHash(speedParameter);
+        _groundedParamHash = Animator.StringToHash(groundedParameter);
     }
 
     void LateUpdate()
@@ -49,8 +56,8 @@ public class MovementViewBob : MonoBehaviour
         if (hips == null)
             return;
 
-        bool grounded = animator.GetBool(groundedParameter);
-        float speed = animator.GetFloat(speedParameter);
+        bool grounded = animator.GetBool(_groundedParamHash);
+        float speed = animator.GetFloat(_speedParamHash);
 
         if (!grounded || speed < minimumSpeed)
             return;
@@ -95,15 +102,27 @@ public class MovementViewBob : MonoBehaviour
 
     int ResolveMeleeLayerIndex()
     {
+        // The animator's layer set is fixed for the controller's lifetime, so resolve the name→index once.
+        // GetLayerName allocates a managed string per call, and this ran every frame while the player moved.
+        if (_meleeLayerIndexCache != int.MinValue)
+            return _meleeLayerIndexCache;
+
         if (!meleeLayerByName || string.IsNullOrEmpty(upperBodyLayerName))
-            return upperBodyLayerIndexFallback;
+        {
+            _meleeLayerIndexCache = upperBodyLayerIndexFallback;
+            return _meleeLayerIndexCache;
+        }
 
         for (int i = 0; i < animator.layerCount; i++)
         {
             if (animator.GetLayerName(i) == upperBodyLayerName)
+            {
+                _meleeLayerIndexCache = i;
                 return i;
+            }
         }
 
-        return upperBodyLayerIndexFallback;
+        _meleeLayerIndexCache = upperBodyLayerIndexFallback;
+        return _meleeLayerIndexCache;
     }
 }

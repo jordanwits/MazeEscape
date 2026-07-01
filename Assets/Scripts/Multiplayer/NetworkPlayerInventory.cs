@@ -417,6 +417,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
             }
             if (w <= 0)
             {
+                ConsumedItemNetworkStore.ServerMarkConsumed(pickup.ItemId);
                 RemoveWorldItemClientRpc(pickup.ItemId);
                 Object.Destroy(pickup.gameObject);
                 return;
@@ -903,6 +904,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
         SetSlotStackCount(sel, 0);
         _selectedFlashlightLightOn.Value = false;
         ulong consumeId = g.ItemId;
+        ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
         ConsumeItemClientRpc(consumeId);
         Object.Destroy(g.gameObject);
         SelectAfterDrop();
@@ -939,6 +941,7 @@ public class NetworkPlayerInventory : NetworkBehaviour
             SetSlotStackCount(i, 0);
             if (g != null)
             {
+                ConsumedItemNetworkStore.ServerMarkConsumed(id);
                 ConsumeItemClientRpc(id);
                 Object.Destroy(g.gameObject);
             }
