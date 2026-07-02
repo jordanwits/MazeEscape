@@ -526,6 +526,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
     {
         fx = MenuWidgets.CreatePlate(_root.transform, "Btn_" + label, label, () => onClick?.Invoke(),
             style, size.y, fontSize);
+        fx.suppressHoverAudio = true;
         RectTransform r = (RectTransform)fx.transform;
         r.anchorMin = pivotAnchor;
         r.anchorMax = pivotAnchor;

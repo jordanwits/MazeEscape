@@ -14,39 +14,43 @@ public sealed class GameAudioManager : MonoBehaviour
     public const string ExposedMusicVolume = "MusicVolume";
     public const string ExposedSfxVolume = "SfxVolume";
     public const string ExposedVoiceVolume = "VoiceVolume";
+    public const string ExposedUiVolume = "UiVolume";
 
     const string PrefsMaster = "GameAudio.MasterLinear";
     const string PrefsMusic = "GameAudio.MusicLinear";
     const string PrefsSfx = "GameAudio.SfxLinear";
     const string PrefsVoice = "GameAudio.VoiceLinear";
-    const string PrefsClownBreathing = "GameAudio.ClownBreathingLinear";
 
     public static GameAudioManager Instance { get; private set; }
 
     [Tooltip("If set, used instead of Resources.Load(GameAudio/MainMixer).")]
     [SerializeField] AudioMixer mainMixerOverride;
 
+    [Header("UI Sounds")]
+    [Tooltip("Editor-only volume for the mixer's Ui bus (all click/hover sounds, menus + blackjack). Drives the 'UiVolume' exposed mixer parameter directly — not exposed to players in game.")]
+    [SerializeField, Range(0f, 1f)] float uiSoundVolume = 1f;
+
     AudioMixer _mixer;
     AudioMixerGroup _musicGroup;
     AudioMixerGroup _sfxGroup;
     AudioMixerGroup _voiceGroup;
+    AudioMixerGroup _uiGroup;
 
     float _masterLinear = 1f;
     float _musicLinear = 1f;
     float _sfxLinear = 1f;
     float _voiceLinear = 1f;
-    float _clownBreathingLinear = 1f;
 
     public AudioMixer MainMixer => _mixer;
     public AudioMixerGroup MusicGroup => _musicGroup;
     public AudioMixerGroup SfxGroup => _sfxGroup;
     public AudioMixerGroup VoiceGroup => _voiceGroup;
+    public AudioMixerGroup UiGroup => _uiGroup;
 
     public float MasterVolumeLinear => _masterLinear;
     public float MusicVolumeLinear => _musicLinear;
     public float SfxVolumeLinear => _sfxLinear;
     public float VoiceVolumeLinear => _voiceLinear;
-    public float ClownBreathingVolumeLinear => _clownBreathingLinear;
 
     void Awake()
     {
@@ -70,6 +74,13 @@ public sealed class GameAudioManager : MonoBehaviour
         CacheGroups();
         LoadPrefs();
         ApplyAllToMixer();
+        ApplyBus(ExposedUiVolume, uiSoundVolume);
+    }
+
+    void OnValidate()
+    {
+        // Let the editor slider tune the Ui bus live in play mode.
+        ApplyBus(ExposedUiVolume, uiSoundVolume);
     }
 
     void OnDestroy()
@@ -83,6 +94,7 @@ public sealed class GameAudioManager : MonoBehaviour
         _musicGroup = FindGroup("Music");
         _sfxGroup = FindGroup("Sfx");
         _voiceGroup = FindGroup("Voice");
+        _uiGroup = FindGroup("Ui");
     }
 
     AudioMixerGroup FindGroup(string name)
@@ -100,7 +112,6 @@ public sealed class GameAudioManager : MonoBehaviour
         _musicLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsMusic, 1f));
         _sfxLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsSfx, 1f));
         _voiceLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsVoice, 1f));
-        _clownBreathingLinear = Mathf.Clamp01(PlayerPrefs.GetFloat(PrefsClownBreathing, 1f));
     }
 
     void SavePrefs()
@@ -109,7 +120,6 @@ public sealed class GameAudioManager : MonoBehaviour
         PlayerPrefs.SetFloat(PrefsMusic, _musicLinear);
         PlayerPrefs.SetFloat(PrefsSfx, _sfxLinear);
         PlayerPrefs.SetFloat(PrefsVoice, _voiceLinear);
-        PlayerPrefs.SetFloat(PrefsClownBreathing, _clownBreathingLinear);
         PlayerPrefs.Save();
     }
 
@@ -139,12 +149,6 @@ public sealed class GameAudioManager : MonoBehaviour
         _voiceLinear = Mathf.Clamp01(linear01);
         SavePrefs();
         ApplyBus(ExposedVoiceVolume, _voiceLinear);
-    }
-
-    public void SetClownBreathingVolumeLinear(float linear01)
-    {
-        _clownBreathingLinear = Mathf.Clamp01(linear01);
-        SavePrefs();
     }
 
     void ApplyAllToMixer()
@@ -183,6 +187,15 @@ public sealed class GameAudioManager : MonoBehaviour
             return;
 
         source.outputAudioMixerGroup = Instance._voiceGroup;
+    }
+
+    /// <summary>Routes UI click/hover sounds through the Ui bus so the editor's UI Sound Volume slider affects them.</summary>
+    public static void RouteUiSource(AudioSource source)
+    {
+        if (source == null || Instance == null || Instance._uiGroup == null)
+            return;
+
+        source.outputAudioMixerGroup = Instance._uiGroup;
     }
 
     public static float LinearToDecibels(float linear)

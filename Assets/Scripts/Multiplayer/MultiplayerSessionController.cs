@@ -414,7 +414,7 @@ public class MultiplayerSessionController : MonoBehaviour
         SendCharacterRequest(characterIndex);
     }
 
-    public void StartGameFromLobby()
+    public void StartGameFromLobby(string sceneName = null)
     {
         if (_networkManager == null || !_networkManager.IsHost)
         {
@@ -434,15 +434,20 @@ public class MultiplayerSessionController : MonoBehaviour
             return;
         }
 
+        // Only maze gameplay scenes have a matching ProceduralMazeConfig; fall back to the default.
+        string targetScene = MultiplayerSceneFlow.IsMazeGameplayScene(sceneName)
+            ? sceneName
+            : MultiplayerSceneFlow.GameSceneName;
+
         _gameStartRequested = true;
         LobbyStateChanged?.Invoke();
         SceneEventProgressStatus status = _networkManager.SceneManager.LoadScene(
-            MultiplayerSceneFlow.GameSceneName,
+            targetScene,
             LoadSceneMode.Single);
 
         if (status == SceneEventProgressStatus.Started)
         {
-            UpdateStatus($"Starting {MultiplayerSceneFlow.GameSceneName} for all ready players...");
+            UpdateStatus($"Starting {targetScene} for all ready players...");
             return;
         }
 

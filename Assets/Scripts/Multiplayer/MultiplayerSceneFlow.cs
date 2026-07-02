@@ -154,12 +154,12 @@ public class MultiplayerSceneFlow : MonoBehaviour
         session.JoinSteamLobby(lobbyId);
     }
 
-    public void RequestStartGameFromLobby()
+    public void RequestStartGameFromLobby(string sceneName = null)
     {
         if (_sceneOpInProgress || session == null)
             return;
 
-        session.StartGameFromLobby();
+        session.StartGameFromLobby(sceneName);
     }
 
     public void ReturnToMainMenu()

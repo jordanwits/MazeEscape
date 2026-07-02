@@ -15,13 +15,11 @@ public sealed class MenuSettingsPanel : MonoBehaviour
     Slider _master;
     Slider _music;
     Slider _sfx;
-    Slider _clownBreathing;
     Slider _voice;
     Slider _brightness;
     TextMeshProUGUI _masterValue;
     TextMeshProUGUI _musicValue;
     TextMeshProUGUI _sfxValue;
-    TextMeshProUGUI _clownBreathingValue;
     TextMeshProUGUI _voiceValue;
     TextMeshProUGUI _brightnessValue;
     MenuSegmented _voiceMode;
@@ -78,16 +76,6 @@ public sealed class MenuSettingsPanel : MonoBehaviour
         {
             if (GameAudioManager.Instance != null)
                 GameAudioManager.Instance.SetSfxVolumeLinear(v);
-            UpdateValueLabels();
-        });
-
-        MenuWidgets.LabeledSlider clownBreathing = MenuWidgets.CreateLabeledSlider(_content, "Clown Breathing");
-        _clownBreathing = clownBreathing.Slider;
-        _clownBreathingValue = clownBreathing.ValueLabel;
-        _clownBreathing.onValueChanged.AddListener(v =>
-        {
-            if (GameAudioManager.Instance != null)
-                GameAudioManager.Instance.SetClownBreathingVolumeLinear(v);
             UpdateValueLabels();
         });
 
@@ -215,7 +203,6 @@ public sealed class MenuSettingsPanel : MonoBehaviour
             _master.SetValueWithoutNotify(GameAudioManager.Instance.MasterVolumeLinear);
             _music.SetValueWithoutNotify(GameAudioManager.Instance.MusicVolumeLinear);
             _sfx.SetValueWithoutNotify(GameAudioManager.Instance.SfxVolumeLinear);
-            _clownBreathing.SetValueWithoutNotify(GameAudioManager.Instance.ClownBreathingVolumeLinear);
             _voice.SetValueWithoutNotify(GameAudioManager.Instance.VoiceVolumeLinear);
         }
 
@@ -248,7 +235,6 @@ public sealed class MenuSettingsPanel : MonoBehaviour
         SetPercent(_masterValue, _master);
         SetPercent(_musicValue, _music);
         SetPercent(_sfxValue, _sfx);
-        SetPercent(_clownBreathingValue, _clownBreathing);
         SetPercent(_voiceValue, _voice);
         SetPercent(_brightnessValue, _brightness);
         SetPercent(_renderScaleValue, _renderScale);

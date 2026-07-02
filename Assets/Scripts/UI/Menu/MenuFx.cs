@@ -207,10 +207,17 @@ public sealed class MenuScreenFader : MonoBehaviour
     }
 }
 
-/// <summary>Shared click/hover sounds for menu widgets. Routed through the game's SFX mixer group.</summary>
+/// <summary>
+/// Shared click/hover sounds for menu widgets. Routed through the game's Ui mixer group — volume is
+/// controlled entirely by the "UiVolume" exposed parameter on that bus (see GameAudioManager's UI Sound
+/// Volume slider), not by a code-side multiplier.
+/// </summary>
 public static class MenuUiAudio
 {
     const string ClipResourcePath = "UI/UIClick";
+
+    const float HoverBaseVolume = 0.07f;
+    const float ClickBaseVolume = 0.275f;
 
     static AudioSource _source;
     static AudioClip _clip;
@@ -231,7 +238,7 @@ public static class MenuUiAudio
                 _source.spatialBlend = 0f;
                 _source.dopplerLevel = 0f;
                 if (GameAudioManager.Instance != null)
-                    GameAudioManager.RouteSfxSource(_source);
+                    GameAudioManager.RouteUiSource(_source);
             }
             return _source;
         }
@@ -255,7 +262,7 @@ public static class MenuUiAudio
         if (Clip == null)
             return;
         Source.pitch = 1.55f;
-        Source.PlayOneShot(Clip, 0.07f);
+        Source.PlayOneShot(Clip, HoverBaseVolume);
     }
 
     public static void PlayClick()
@@ -263,6 +270,6 @@ public static class MenuUiAudio
         if (Clip == null)
             return;
         Source.pitch = 1f;
-        Source.PlayOneShot(Clip, 0.55f);
+        Source.PlayOneShot(Clip, ClickBaseVolume);
     }
 }

@@ -23,10 +23,10 @@ public static class MenuTheme
     public static readonly Color Mist = Hex("A69F8F");          // secondary text
     public static readonly Color Faint = Hex("6E6759");         // tertiary text
 
-    public static readonly Color Amber = Hex("D9A62B");         // mustard accent / selected
-    public static readonly Color AmberBright = Hex("F3C44E");
-    public static readonly Color AmberDeep = Hex("6E5310");     // edge on mustard plates
-    public static readonly Color InkOnAccent = Hex("191307");   // text on mustard
+    public static readonly Color Amber = Hex("C06E38");         // muted orange accent / selected
+    public static readonly Color AmberBright = Hex("D98A4E");
+    public static readonly Color AmberDeep = Hex("5C3211");     // edge on orange plates
+    public static readonly Color InkOnAccent = Hex("1A1007");   // text on orange
     public static readonly Color Blood = Hex("A23A33");         // destructive accent
     public static readonly Color BloodBright = Hex("C75A50");
     public static readonly Color Moss = Hex("8C9C5A");          // ready / positive

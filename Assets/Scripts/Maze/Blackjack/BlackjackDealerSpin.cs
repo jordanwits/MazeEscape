@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using UnityEngine.Serialization;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -21,9 +22,11 @@ public sealed class BlackjackDealerSpin : MonoBehaviour
     [SerializeField] BlackjackGameController controller;
 
     [Header("Spin")]
-    [Tooltip("SFX played while the head spins; the spin lasts exactly as long as this clip.")]
-    [SerializeField] AudioClip spinClip;
-    [SerializeField, Range(0f, 1f)] float volume = 1f;
+    [Tooltip("Jackpot SFX played while the head spins; the spin lasts exactly as long as this clip.")]
+    [FormerlySerializedAs("spinClip")]
+    [SerializeField] AudioClip jackpotClip;
+    [FormerlySerializedAs("volume")]
+    [SerializeField, Range(0f, 1f)] float jackpotVolume = 1f;
     [Tooltip("Whole revolutions to complete over the clip (rounded, so the head lands back on its start pose).")]
     [SerializeField, Min(1f)] float revolutions = 3f;
     [Tooltip("Fallback spin duration (seconds) if no clip is assigned.")]
@@ -103,11 +106,11 @@ public sealed class BlackjackDealerSpin : MonoBehaviour
 
     IEnumerator SpinRoutine()
     {
-        float duration = (spinClip != null && spinClip.length > 0.01f) ? spinClip.length : fallbackDuration;
+        float duration = (jackpotClip != null && jackpotClip.length > 0.01f) ? jackpotClip.length : fallbackDuration;
 
         EnsureAudio();
-        if (spinClip != null && _audio != null)
-            _audio.PlayOneShot(spinClip, Mathf.Clamp01(volume));
+        if (jackpotClip != null && _audio != null)
+            _audio.PlayOneShot(jackpotClip, Mathf.Clamp01(jackpotVolume));
 
         // A whole number of turns over the clip => the head lands back on its starting orientation (no snap).
         float revs = Mathf.Max(1f, Mathf.Round(revolutions));
@@ -129,8 +132,8 @@ public sealed class BlackjackDealerSpin : MonoBehaviour
 #if UNITY_EDITOR
     void OnValidate()
     {
-        if (spinClip == null)
-            spinClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Carnival/BlackJack.wav");
+        if (jackpotClip == null)
+            jackpotClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Carnival/BlackJack.wav");
     }
 #endif
 }

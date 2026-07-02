@@ -14,6 +14,9 @@ public sealed class MenuButtonFx : MonoBehaviour,
 {
     public Button button;
     public TMP_Text label;
+
+    /// <summary>When true, hover no longer plays <see cref="MenuUiAudio.PlayHover"/> (e.g. blackjack overlay buttons).</summary>
+    public bool suppressHoverAudio;
     public Image fill;
     public Image frame;
     public RawImage grunge;
@@ -77,7 +80,7 @@ public sealed class MenuButtonFx : MonoBehaviour,
     public void OnPointerEnter(PointerEventData eventData)
     {
         _pointerInside = true;
-        if (Interactable)
+        if (Interactable && !suppressHoverAudio)
             MenuUiAudio.PlayHover();
     }
 

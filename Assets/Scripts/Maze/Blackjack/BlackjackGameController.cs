@@ -76,7 +76,7 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
     [SerializeField, Min(2f)] float bettingWindowSeconds = 12f;
     [SerializeField, Min(3f)] float turnTimeoutSeconds = 15f;
     [SerializeField, Min(0.1f)] float dealerDrawInterval = 0.8f;
-    [SerializeField, Min(1f)] float resultHoldSeconds = 5f;
+    [SerializeField, Min(1f)] float resultHoldSeconds = 3f;
 
     [Header("Anti-cheat range gate (vs table root)")]
     [SerializeField, Min(1f)] float maxInteractHorizontal = 9f;

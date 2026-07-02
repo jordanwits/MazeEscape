@@ -257,7 +257,7 @@ public partial class PlayerController : MonoBehaviour
     Image[] _inventorySlotFlashlightBatteryFillImages;
     RectTransform[] _inventorySlotFlashlightBatteryFillRects;
     GameObject[] _inventorySlotFlashlightBatteryBarRoots;
-    static readonly Color FlashlightBatteryBarFill = new Color(0.85f, 0.65f, 0.17f, 0.95f);
+    static readonly Color FlashlightBatteryBarFill = new Color(0.75f, 0.43f, 0.22f, 0.95f);
     float _footstepTimer;
     bool _playFootstep1Next = true;
     bool _hasLocalControl = true;

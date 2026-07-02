@@ -72,6 +72,8 @@ public sealed class MainMenuController : MonoBehaviour
     TextMeshProUGUI _readyLabel;
     Button _startButton;
     GameObject _startSection;
+    MenuSegmented _levelSelect;
+    string _selectedScene = MultiplayerSceneFlow.GameSceneName;
     TextMeshProUGUI _lobbySteamIdValue;
     TextMeshProUGUI _lobbySteamLobbyValue;
     GameObject _lobbySteamIdRow;
@@ -491,7 +493,11 @@ public sealed class MainMenuController : MonoBehaviour
         var startSection = MenuWidgets.CreateRect("StartSection", card);
         _startSection = startSection.gameObject;
         MenuWidgets.AddVertical(startSection.gameObject, new RectOffset(0, 0, 0, 0), 8f);
+
+        BuildLevelSelect(startSection);
+
         _startButton = MenuWidgets.CreatePrimaryButton(startSection, "START", OnStartClicked, 58f);
+        MenuWidgets.CreateSpacer(startSection, 8f);
         _lobbyGateLabel = MenuWidgets.CreateText(startSection, "Gate", string.Empty,
             14f, MenuTheme.Faint, MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 4f);
 
@@ -509,6 +515,38 @@ public sealed class MainMenuController : MonoBehaviour
         }, true, 48f);
 
         return fader;
+    }
+
+    /// <summary>
+    /// Host-only maze-section picker shown above START. The chosen scene is handed to the session
+    /// on start; every entry maps 1:1 to <see cref="MultiplayerSceneFlow.MazeSectionSceneNames"/>.
+    /// </summary>
+    void BuildLevelSelect(Transform startSection)
+    {
+        string[] scenes = MultiplayerSceneFlow.MazeSectionSceneNames;
+        if (scenes == null || scenes.Length <= 1)
+            return;
+
+        MenuWidgets.CreateSection(startSection, "START LEVEL");
+
+        var labels = new string[scenes.Length];
+        for (int i = 0; i < scenes.Length; i++)
+            labels[i] = (i + 1).ToString();
+
+        _levelSelect = MenuWidgets.CreateSegmented(startSection, labels, 46f);
+
+        int startIndex = System.Array.IndexOf(scenes, _selectedScene);
+        if (startIndex < 0)
+            startIndex = 0;
+        _selectedScene = scenes[startIndex];
+        _levelSelect.Set(startIndex, false);
+        _levelSelect.Changed += index =>
+        {
+            if (index >= 0 && index < scenes.Length)
+                _selectedScene = scenes[index];
+        };
+
+        MenuWidgets.CreateSpacer(startSection, 4f);
     }
 
     /// <summary>
@@ -804,9 +842,9 @@ public sealed class MainMenuController : MonoBehaviour
         if (_session == null)
             return;
         if (_flow != null)
-            _flow.RequestStartGameFromLobby();
+            _flow.RequestStartGameFromLobby(_selectedScene);
         else
-            _session.StartGameFromLobby();
+            _session.StartGameFromLobby(_selectedScene);
     }
 
     void QuitApplication()

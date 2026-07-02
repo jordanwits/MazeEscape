@@ -177,15 +177,14 @@ public class ClownAI : MonoBehaviour
     [SerializeField] Vector2 clownRunFootstepPhases = new Vector2(0.1f, 0.6f);
 
     /// <summary>Which Clown voice clip a (networked) observer should play — sent over the wire as a byte.</summary>
-    public enum ClownVoice : byte { PatrolLaughA, PatrolLaughB, ChaseLaugh, ChaseBreathing }
+    public enum ClownVoice : byte { PatrolLaughA, PatrolLaughB, ChaseLaugh }
 
-    [Header("Voice (laughs / breathing)")]
+    [Header("Voice (laughs)")]
     [Tooltip("While NOT chasing, these two alternate every patrolLaughInterval seconds (the 'patrol' ambience). Maps to ClownLaugh2 / ClownLaugh3.")]
     [SerializeField] AudioClip clownPatrolLaughA;
     [SerializeField] AudioClip clownPatrolLaughB;
-    [Tooltip("While chasing, ClownLaugh1 plays, then ClownBreathing, looping back-to-back until pursuit ends.")]
+    [Tooltip("While chasing, ClownLaugh1 loops back-to-back until pursuit ends.")]
     [SerializeField] AudioClip clownChaseLaugh;
-    [SerializeField] AudioClip clownChaseBreathing;
     [SerializeField, Range(0f, 1f)] float clownVoiceVolume = 0.7f;
     [SerializeField] AudioSource clownVoiceAudioSource;
     [Tooltip("Seconds between patrol laughs (alternating ClownLaugh2/ClownLaugh3) while not chasing.")]
@@ -321,7 +320,6 @@ public class ClownAI : MonoBehaviour
     float _voiceClipEndTime;
     float _nextPatrolVoiceTime;
     bool _patrolLaughUseB;
-    bool _chaseNextIsBreathing;
     Vector3 _positionBeforeCharacterMove;
     float _propStuckAccumulatedTime;
     float _nextPropStuckRecoveryTime;
@@ -533,8 +531,6 @@ public class ClownAI : MonoBehaviour
             clownPatrolLaughB = FindFirstAudioClipByName("ClownLaugh3");
         if (clownChaseLaugh == null)
             clownChaseLaugh = FindFirstAudioClipByName("ClownLaugh1");
-        if (clownChaseBreathing == null)
-            clownChaseBreathing = FindFirstAudioClipByName("ClownBreathing");
 #endif
     }
 
@@ -812,8 +808,8 @@ public class ClownAI : MonoBehaviour
 
     /// <summary>
     /// Server-side ambience driver (Update is server-gated). While NOT chasing, alternates ClownLaugh2 /
-    /// ClownLaugh3 every <see cref="patrolLaughInterval"/> seconds. While chasing, chains ClownLaugh1 →
-    /// ClownBreathing → ClownLaugh1 … back-to-back until pursuit ends, then falls back to the patrol laughs.
+    /// ClownLaugh3 every <see cref="patrolLaughInterval"/> seconds. While chasing, loops ClownLaugh1
+    /// back-to-back until pursuit ends, then falls back to the patrol laughs.
     /// Each chosen clip is replicated to nearby observers (mirrors the footstep RPC path).
     /// </summary>
     void HandleClownVoice()
@@ -830,8 +826,7 @@ public class ClownAI : MonoBehaviour
             _wasVoiceChasing = chasing;
             if (chasing)
             {
-                // Pursuit always opens with the chase laugh, then breathing, looping.
-                _chaseNextIsBreathing = false;
+                // Pursuit loops the chase laugh back-to-back.
                 PlayNextChaseVoice();
             }
             else
@@ -856,17 +851,11 @@ public class ClownAI : MonoBehaviour
 
     void PlayNextChaseVoice()
     {
-        bool breathing = _chaseNextIsBreathing;
-        _chaseNextIsBreathing = !_chaseNextIsBreathing;
-
-        AudioClip clip = breathing ? clownChaseBreathing : clownChaseLaugh;
-        ClownVoice which = breathing ? ClownVoice.ChaseBreathing : ClownVoice.ChaseLaugh;
-
-        // Schedule the next link off this clip's length so they play back-to-back; if a clip is missing,
+        // Schedule the next laugh off this clip's length so they play back-to-back; if the clip is missing,
         // use a short fallback so the loop still advances instead of stalling.
-        float length = clip != null ? clip.length : 0f;
+        float length = clownChaseLaugh != null ? clownChaseLaugh.length : 0f;
         _voiceClipEndTime = Time.time + Mathf.Max(0.15f, length);
-        NotifyVoiceSfx(which);
+        NotifyVoiceSfx(ClownVoice.ChaseLaugh);
     }
 
     void PlayNextPatrolVoice()
@@ -903,12 +892,9 @@ public class ClownAI : MonoBehaviour
 
         // clip + Play (not PlayOneShot) so a new line cleanly interrupts the previous one — e.g. the chase
         // laugh cutting off a patrol laugh the instant pursuit starts.
-        float breathingMult = (ClownVoice)clipId == ClownVoice.ChaseBreathing && GameAudioManager.Instance != null
-            ? GameAudioManager.Instance.ClownBreathingVolumeLinear
-            : 1f;
         clownVoiceAudioSource.Stop();
         clownVoiceAudioSource.clip = clip;
-        clownVoiceAudioSource.volume = Mathf.Clamp01(clownVoiceVolume * breathingMult);
+        clownVoiceAudioSource.volume = Mathf.Clamp01(clownVoiceVolume);
         clownVoiceAudioSource.Play();
     }
 
@@ -919,7 +905,6 @@ public class ClownAI : MonoBehaviour
             case ClownVoice.PatrolLaughA: return clownPatrolLaughA;
             case ClownVoice.PatrolLaughB: return clownPatrolLaughB;
             case ClownVoice.ChaseLaugh: return clownChaseLaugh;
-            case ClownVoice.ChaseBreathing: return clownChaseBreathing;
             default: return null;
         }
     }
