@@ -22,7 +22,11 @@ using UnityEngine.Serialization;
 /// is overridden anyway by the hand attach in <see cref="GrabbableInventoryItem"/>.LateUpdate, so
 /// the live replication is cosmetically irrelevant until release, where the owner
 /// <see cref="NetworkTransform.Teleport"/>s to the release pose so every non-owner clears its
-/// interpolation buffer and picks up the arc cleanly.
+/// interpolation buffer and picks up the arc cleanly. While those first replicated samples are
+/// still in flight (owner RTT + interpolation buffer ≈ 100–300 ms), non-owners hide the gap by
+/// flying a locally-integrated ballistic arc from the same release data (observer arc fields
+/// below), then crossfade onto the replicated pose. Presentation only — the owner's simulation
+/// stays the single authority for bounces and the landing spot.
 /// </para>
 /// </summary>
 [DisallowMultipleComponent]
@@ -67,6 +71,16 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     [SerializeField, Min(0f)] float serverReclaimSpeedThreshold = 0.35f;
     [SerializeField, Min(0.1f)] float serverSettleSecondsBeforeReturn = 1.25f;
 
+    [Header("Observer arc presentation")]
+    [Tooltip("Non-owners fly the object along a locally-integrated ballistic arc the moment the release RPC arrives, instead of waiting frozen at the release pose for replicated samples (owner RTT + interpolation buffer). Cosmetic only — replication remains authoritative for bounces and the landing spot.")]
+    [SerializeField] bool observerLocalArcEnabled = true;
+    [Tooltip("Seconds to crossfade the rendered pose from the local arc onto the replicated pose once fresh replicated motion arrives.")]
+    [SerializeField, Min(0.05f)] float observerArcBlendSeconds = 0.22f;
+    [Tooltip("Replicated motion counts as arrived once the replicated body has moved this far (meters) from the release position.")]
+    [SerializeField, Min(0.01f)] float observerArcFreshDataDistance = 0.2f;
+    [Tooltip("Hard cap on the local-arc override so the rendered pose can never stray from the replicated pose for long if replication stalls.")]
+    [SerializeField, Min(0.2f)] float observerArcMaxSeconds = 1.5f;
+
     readonly NetworkVariable<ulong> _holderNetworkObjectId = new NetworkVariable<ulong>(
         0UL,
         NetworkVariableReadPermission.Everyone,
@@ -81,6 +95,22 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
     float _serverSettleAccumulator;
     bool _serverWatchingForSettle;
+
+    // Observer arc presentation (non-owner cosmetic override; see class doc).
+    bool _observerArcActive;
+    bool _observerArcBlending;
+    bool _observerArcHitObstruction;
+    float _observerArcElapsed;
+    float _observerArcBlendElapsed;
+    float _observerArcStepAccumulator;
+    float _observerArcCastRadius;
+    float _observerArcLinearDamping;
+    float _observerArcAngularDamping;
+    Vector3 _observerArcReleasePosition;
+    Vector3 _observerArcPosition;
+    Vector3 _observerArcVelocity;
+    Vector3 _observerArcAngularVelocity;
+    Quaternion _observerArcRotation;
 
     public ulong HolderNetworkObjectId => _holderNetworkObjectId.Value;
 
@@ -113,6 +143,7 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     public override void OnNetworkDespawn()
     {
         _holderNetworkObjectId.OnValueChanged -= OnHolderChanged;
+        _observerArcActive = false;
     }
 
     /// <summary>
@@ -152,7 +183,10 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
     void OnHolderChanged(ulong previous, ulong current)
     {
         if (current != 0UL)
+        {
+            _observerArcActive = false;
             _item.ApplyNetworkHeldState(current);
+        }
 
         if (previous != 0UL)
             NotifyHolderInventoryRefresh(previous);
@@ -690,11 +724,11 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         }
         else
         {
-            ApplyReleasedMirrorState(worldPosition, worldRotation);
+            ApplyReleasedMirrorState(worldPosition, worldRotation, velocityDelta, angularVelocity);
         }
     }
 
-    void ApplyReleasedMirrorState(Vector3 worldPosition, Quaternion worldRotation)
+    void ApplyReleasedMirrorState(Vector3 worldPosition, Quaternion worldRotation, Vector3 velocityDelta, Vector3 angularVelocity)
     {
         // Non-owner peer: snap to release pose hint; owner-authority NetworkTransform takes over from there.
         _item.ApplyNetworkWorldState(worldPosition, worldRotation, default);
@@ -711,6 +745,185 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
             // Gravity stays ON: a kinematic mirror ignores it, and NGO's AutoUpdateKinematicState only
             // restores isKinematic — not useGravity — when the server reclaims simulation authority
             // after the body settles. Turning it off here left server-owned balls floating when bumped.
+        }
+
+        BeginObserverLocalArc(worldPosition, worldRotation, velocityDelta, angularVelocity);
+    }
+
+    /// <summary>
+    /// Arm the cosmetic local arc: until the owner's replicated samples reach this peer, LateUpdate
+    /// renders the object along a locally-integrated projectile path started from the exact release
+    /// state (already server-computed and identical to what the owner applies), so the object leaves
+    /// the hand instantly instead of hanging at the release pose for owner-RTT + buffer time.
+    /// </summary>
+    void BeginObserverLocalArc(Vector3 worldPosition, Quaternion worldRotation, Vector3 velocity, Vector3 angularVelocity)
+    {
+        _observerArcActive = false;
+        if (!observerLocalArcEnabled || _item == null)
+            return;
+        // Near-zero velocity (force-release drops) has no gap worth covering.
+        if (velocity.sqrMagnitude < 0.25f)
+            return;
+
+        Rigidbody rb = _item.ItemRigidbody != null ? _item.ItemRigidbody : _rb;
+        _observerArcLinearDamping = rb != null ? rb.linearDamping : 0f;
+        _observerArcAngularDamping = rb != null ? rb.angularDamping : 0.05f;
+        _observerArcCastRadius = ComputeObserverArcCastRadius();
+        _observerArcReleasePosition = worldPosition;
+        _observerArcPosition = worldPosition;
+        _observerArcRotation = worldRotation;
+        _observerArcVelocity = velocity;
+        _observerArcAngularVelocity = angularVelocity;
+        _observerArcElapsed = 0f;
+        _observerArcBlendElapsed = 0f;
+        _observerArcStepAccumulator = 0f;
+        _observerArcBlending = false;
+        _observerArcHitObstruction = false;
+        _observerArcActive = true;
+    }
+
+    float ComputeObserverArcCastRadius()
+    {
+        // Half the smallest combined-bounds dimension: a ball sweeps its radius, a flat ring its
+        // thickness. Under-sweeping just ends the override a touch late; the crossfade absorbs it.
+        Collider[] colliders = GetComponentsInChildren<Collider>(false);
+        bool hasBounds = false;
+        Bounds combined = default;
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            Collider c = colliders[i];
+            if (c == null || c.isTrigger)
+                continue;
+            if (!hasBounds)
+            {
+                combined = c.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                combined.Encapsulate(c.bounds);
+            }
+        }
+
+        if (!hasBounds)
+            return 0.08f;
+
+        Vector3 e = combined.extents;
+        return Mathf.Clamp(Mathf.Min(e.x, Mathf.Min(e.y, e.z)), 0.03f, 0.5f);
+    }
+
+    void LateUpdate()
+    {
+        if (!_observerArcActive)
+            return;
+
+        // Runs after NGO's pose application (same LateUpdate-wins pattern as the held hand-attach).
+        // Any state that hands rendering to another system ends the override immediately.
+        if (_item == null || _item.IsHeld || IsOwner || !IsSpawned || _holderNetworkObjectId.Value != 0UL)
+        {
+            _observerArcActive = false;
+            return;
+        }
+
+        float dt = Time.deltaTime;
+        _observerArcElapsed += dt;
+
+        // Integrate in fixed steps mirroring PhysX (gravity, then damping) so the local arc tracks
+        // the owner's real simulation to within centimeters until first contact.
+        if (!_observerArcHitObstruction)
+        {
+            _observerArcStepAccumulator += dt;
+            float step = Time.fixedDeltaTime;
+            while (_observerArcStepAccumulator >= step)
+            {
+                _observerArcStepAccumulator -= step;
+                StepObserverLocalArc(step);
+                if (_observerArcHitObstruction)
+                    break;
+            }
+        }
+
+        // The replicated pose lives on the rigidbody (NGO drives it on non-owners; this override
+        // only ever writes the transform, so reading rb never sees our own output).
+        Rigidbody rb = _item.ItemRigidbody != null ? _item.ItemRigidbody : _rb;
+        Vector3 replicatedPos = rb != null ? rb.position : transform.position;
+        Quaternion replicatedRot = rb != null ? rb.rotation : transform.rotation;
+
+        bool freshReplicatedMotion =
+            (replicatedPos - _observerArcReleasePosition).sqrMagnitude
+            >= observerArcFreshDataDistance * observerArcFreshDataDistance;
+
+        if (!_observerArcBlending && (freshReplicatedMotion || _observerArcElapsed >= observerArcMaxSeconds))
+            _observerArcBlending = true;
+
+        float replicatedWeight = 0f;
+        if (_observerArcBlending)
+        {
+            _observerArcBlendElapsed += dt;
+            replicatedWeight = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(_observerArcBlendElapsed / observerArcBlendSeconds));
+            if (replicatedWeight >= 1f)
+            {
+                transform.SetPositionAndRotation(replicatedPos, replicatedRot);
+                _observerArcActive = false;
+                return;
+            }
+        }
+
+        // Fractional-step extrapolation keeps the render smooth between fixed integration steps.
+        Vector3 localPos = _observerArcPosition + _observerArcVelocity * _observerArcStepAccumulator;
+        transform.SetPositionAndRotation(
+            Vector3.Lerp(localPos, replicatedPos, replicatedWeight),
+            Quaternion.Slerp(_observerArcRotation, replicatedRot, replicatedWeight));
+
+        // Unity syncs transform writes into kinematic bodies at the next physics step, which would
+        // leak this cosmetic pose into rb and fool the fresh-data check above into reading our own
+        // output. Re-assert the replicated pose we just sampled so rb stays NGO's alone.
+        if (rb != null && rb.isKinematic)
+        {
+            rb.position = replicatedPos;
+            rb.rotation = replicatedRot;
+        }
+    }
+
+    void StepObserverLocalArc(float step)
+    {
+        Vector3 v = _observerArcVelocity + Physics.gravity * step;
+        v *= Mathf.Clamp01(1f - _observerArcLinearDamping * step);
+        Vector3 displacement = v * step;
+        float distance = displacement.magnitude;
+
+        if (distance > 1e-6f)
+        {
+            Vector3 direction = displacement / distance;
+            if (Physics.SphereCast(
+                    _observerArcPosition,
+                    _observerArcCastRadius,
+                    direction,
+                    out RaycastHit hit,
+                    distance,
+                    Physics.DefaultRaycastLayers,
+                    QueryTriggerInteraction.Ignore)
+                && hit.rigidbody != (_item != null ? _item.ItemRigidbody : _rb)
+                && !hit.collider.transform.IsChildOf(transform))
+            {
+                // The arc reaches something solid before replication caught up. Don't guess the
+                // bounce — park at the contact and wait for the crossfade to the authoritative pose.
+                _observerArcPosition += direction * Mathf.Max(0f, hit.distance - 0.01f);
+                _observerArcVelocity = Vector3.zero;
+                _observerArcHitObstruction = true;
+                return;
+            }
+        }
+
+        _observerArcVelocity = v;
+        _observerArcPosition += displacement;
+
+        if (_observerArcAngularVelocity.sqrMagnitude > 1e-8f)
+        {
+            _observerArcAngularVelocity *= Mathf.Clamp01(1f - _observerArcAngularDamping * step);
+            float angleDegrees = _observerArcAngularVelocity.magnitude * Mathf.Rad2Deg * step;
+            _observerArcRotation =
+                Quaternion.AngleAxis(angleDegrees, _observerArcAngularVelocity.normalized) * _observerArcRotation;
         }
     }
 
