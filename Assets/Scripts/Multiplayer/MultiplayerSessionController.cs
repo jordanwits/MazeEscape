@@ -225,7 +225,7 @@ public class MultiplayerSessionController : MonoBehaviour
         if (started)
             EnsureLobbyMessageHandlersRegistered();
         UpdateStatus(started
-            ? $"Direct IP lobby started on port {port}. Ready up, then host can start."
+            ? $"Hosting on port {port}."
             : "Host start failed. Check the Unity console for details.");
     }
 
@@ -644,8 +644,8 @@ public class MultiplayerSessionController : MonoBehaviour
         {
             EnsureLobbyMessageHandlersRegistered();
             UpdateStatus(_transportMode == MultiplayerTransportMode.SteamP2P
-                ? "Connected to Steam lobby host. Ready up when everyone is in."
-                : $"Connected to lobby at {defaultAddress}:{defaultPort}. Ready up when everyone is in.");
+                ? "Connected."
+                : $"Connected to {defaultAddress}:{defaultPort}.");
         }
     }
 

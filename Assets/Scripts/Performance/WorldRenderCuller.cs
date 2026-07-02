@@ -7,14 +7,22 @@ using UnityEngine;
 /// carnival booths, decorations). Previously every level rendered its entire geometry at
 /// all times; in a maze you only ever see a handful of cells at once, so the rest is wasted
 /// draw calls. This component buckets all static <see cref="MeshRenderer"/>s into a coarse
-/// spatial grid and toggles <c>Renderer.enabled</c> per bucket by distance to the local view
-/// camera, so far-away geometry stops drawing (and stops casting shadows) until the player
-/// approaches.
+/// spatial grid and toggles <c>Renderer.enabled</c> per bucket, so geometry the player can't
+/// see stops drawing (and stops casting shadows) until it comes into view.
 ///
-/// Companion to <see cref="MazeLightCuller"/> (which does the same for lights). Like that
-/// one it is:
+/// Visibility is a <b>view cone</b>, not a plain radius: a bucket renders only when it is
+/// within the cull distance AND inside the camera's field of view (with a margin), so
+/// geometry behind and to the sides of the player is culled even when it's close by. A short
+/// <see cref="nearRadius"/> around the camera stays visible regardless of facing so walls
+/// right beside/behind you don't pop as you turn on the spot. The cone is sized to fully
+/// contain the camera frustum (out to its corners) before the margin is added, so nothing
+/// actually on screen is culled.
+///
+/// Companion to <see cref="MazeLightCuller"/> (which culls lights by distance — lights stay
+/// radius-based because a light just off-screen still illuminates surfaces that ARE on screen).
+/// Like that one it is:
 ///   * Non-destructive — only flips the runtime enabled flag, never edits meshes/materials
-///     or the scene/prefab assets. Geometry re-appears automatically as the player nears.
+///     or the scene/prefab assets. Geometry re-appears automatically as it comes into view.
 ///   * Self-discovering — rescans on an interval so it works with the procedural maze that
 ///     spawns its cells in at runtime.
 ///   * Client-side visual only — toggling a renderer has no effect on Netcode replication.
@@ -38,20 +46,35 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public class WorldRenderCuller : MonoBehaviour
 {
-    [Header("Distance")]
-    [Tooltip("Metres from the local camera at which a bucket of geometry switches off. The bucket's own radius is added on top, so large props still cull at a sane edge.")]
-    [SerializeField] float cullDistance = 48f;
+    [Header("View cone")]
+    [Tooltip("Length of the view cone in metres. Buckets beyond this distance switch off. The bucket's own radius is added on top, so large props still cull at a sane edge.")]
+    [SerializeField] float cullDistance = 60f;
 
-    [Tooltip("Extra metres a bucket must move BEYOND its on-distance before it switches back off. Prevents on/off flicker for geometry hovering right at the cull edge.")]
+    [Tooltip("Extra degrees added on top of the camera's field of view when building the cull cone. The cone is first sized to fully contain the camera frustum (to its corners), THEN this margin is added. Larger = geometry at the screen edge fades in earlier and survives faster turns between updates (less edge pop-in), but more stays drawn.")]
+    [SerializeField] float coneMarginDegrees = 15f;
+
+    [Tooltip("Geometry within this radius of the camera stays visible regardless of facing, so walls right beside/behind you don't pop as you spin on the spot. Keep it around 1-2 maze cells.")]
+    [SerializeField] float nearRadius = 10f;
+
+    [Tooltip("Extra metres a bucket must move BEYOND its on-distance, and extra degrees it must swing BEYOND the cone edge, before it switches back off. Prevents on/off flicker for geometry hovering right at the cull edge.")]
     [SerializeField] float hysteresis = 4f;
+
+    [Tooltip("Extra degrees of angular hysteresis at the cone edge (paired with the metres of distance hysteresis above).")]
+    [SerializeField] float coneEdgeHysteresisDegrees = 5f;
 
     [Header("Bucketing")]
     [Tooltip("Edge length (metres) of each spatial bucket. Renderers are grouped by which bucket their centre falls in and toggled together. ~2 maze cells is a good default: small enough to cull tightly, large enough that the per-bucket loop stays cheap.")]
     [SerializeField] float bucketSize = 12f;
 
     [Header("Timing")]
-    [Tooltip("Seconds between distance evaluations. Walking speed doesn't need an every-frame pass.")]
+    [Tooltip("Seconds between visibility evaluations while the view is steady. A fast turn or dash forces an immediate pass regardless (see the re-evaluate triggers below), so this only governs the idle/walking cadence.")]
     [SerializeField] float updateInterval = 0.15f;
+
+    [Tooltip("If the camera rotates more than this many degrees since the last visibility pass, re-evaluate immediately instead of waiting for the update interval. This is what stops a fast spin from briefly revealing the skybox — during a quick turn it fires every frame, so geometry is enabled the same frame it swings into view. Keep it well below the cone margin.")]
+    [SerializeField] float reevaluateOnTurnDegrees = 5f;
+
+    [Tooltip("If the camera moves more than this many metres since the last visibility pass, re-evaluate immediately (covers sprinting/teleporting toward the far cull edge).")]
+    [SerializeField] float reevaluateOnMoveMetres = 3f;
 
     [Tooltip("Seconds between rescans that pick up newly spawned maze geometry. Set to 0 to scan once and never again (use for fully authored static scenes).")]
     [SerializeField] float rescanInterval = 4f;
@@ -61,23 +84,32 @@ public class WorldRenderCuller : MonoBehaviour
     {
         public readonly List<Renderer> Renderers = new();
         public Vector3 Center;
-        public float OnSqr;   // (cullDistance + radius)^2
-        public float OffSqr;  // (cullDistance + radius + hysteresis)^2
+        public float Radius;     // reach from Center to the furthest managed geometry.
+        public float OnSqr;      // (cullDistance + radius)^2                — inside this, distance passes.
+        public float OffSqr;     // (cullDistance + radius + hysteresis)^2   — past this, distance fails.
+        public float NearOnSqr;  // (nearRadius + radius)^2                  — inside this, facing is ignored.
+        public float NearOffSqr; // (nearRadius + radius + hysteresis)^2     — near-field with hysteresis.
         public bool On = true;
     }
 
     readonly List<Bucket> _buckets = new();
     readonly Dictionary<Vector3Int, Bucket> _bucketByCoord = new();
 
-    Transform _viewpoint;
+    Camera _viewCamera;
     float _nextUpdate;
     float _nextRescan;
     int _lastRendererCount = -1;
+
+    // View state at the last visibility pass, so a fast turn/dash can force an early re-evaluation.
+    Vector3 _lastEvalForward;
+    Vector3 _lastEvalPosition;
+    bool _hasEvaluated;
 
     void OnEnable()
     {
         _nextUpdate = 0f;
         _nextRescan = 0f;
+        _hasEvaluated = false;
         Rescan();
     }
 
@@ -96,22 +128,76 @@ public class WorldRenderCuller : MonoBehaviour
                 Rescan();
         }
 
-        if (now < _nextUpdate)
-            return;
-        _nextUpdate = now + Mathf.Max(0.02f, updateInterval);
-
-        Transform vp = ResolveViewpoint();
-        if (vp == null)
+        Camera cam = ResolveViewpoint();
+        if (cam == null)
             return; // no local camera yet (or headless server) — leave geometry as authored.
 
-        Vector3 eye = vp.position;
+        Vector3 eye = cam.transform.position;
+        Vector3 forward = cam.transform.forward;
+
+        // Decide whether to run the (cheap) visibility pass this frame. It's normally throttled to
+        // updateInterval, but a fast turn or dash must re-evaluate immediately — otherwise geometry
+        // that swings into view stays disabled until the next tick and the player sees the skybox.
+        // During a quick turn the rotation test trips every frame, so what you're looking at is
+        // enabled the same frame it becomes visible (LateUpdate runs before rendering).
+        bool due = now >= _nextUpdate;
+        if (!due && _hasEvaluated)
+        {
+            float turnCos = Mathf.Cos(Mathf.Max(0f, reevaluateOnTurnDegrees) * Mathf.Deg2Rad);
+            float moveSqr = reevaluateOnMoveMetres * reevaluateOnMoveMetres;
+            if (Vector3.Dot(forward, _lastEvalForward) < turnCos ||
+                (eye - _lastEvalPosition).sqrMagnitude > moveSqr)
+                due = true;
+        }
+        if (!due)
+            return;
+
+        _nextUpdate = now + Mathf.Max(0.02f, updateInterval);
+        _lastEvalForward = forward;
+        _lastEvalPosition = eye;
+        _hasEvaluated = true;
+
+        // Half-angle of the cull cone, sized to fully contain the camera frustum plus the margin.
+        float coneHalf = ComputeConeHalfAngle(cam);
+        float angleHysteresis = Mathf.Max(0f, coneEdgeHysteresisDegrees) * Mathf.Deg2Rad;
+
         for (int i = 0; i < _buckets.Count; i++)
         {
             Bucket b = _buckets[i];
-            float distSqr = (b.Center - eye).sqrMagnitude;
+            Vector3 toBucket = b.Center - eye;
+            float distSqr = toBucket.sqrMagnitude;
 
-            // Hysteresis: switch on when inside OnSqr, only switch off once past OffSqr.
-            bool shouldBeOn = b.On ? distSqr <= b.OffSqr : distSqr <= b.OnSqr;
+            bool shouldBeOn;
+
+            // 1) Distance gate — past the cone's length, nothing else matters. Hysteresis: use the
+            //    looser OffSqr while already on, the tighter OnSqr while off.
+            float maxDistSqr = b.On ? b.OffSqr : b.OnSqr;
+            if (distSqr > maxDistSqr)
+            {
+                shouldBeOn = false;
+            }
+            // 2) Near field — close enough to stay visible no matter which way we're facing, so
+            //    turning on the spot never pops the walls immediately around the player.
+            else if (distSqr <= (b.On ? b.NearOffSqr : b.NearOnSqr))
+            {
+                shouldBeOn = true;
+            }
+            // 3) Cone test — is the bucket inside the field of view? Widen the cone by the bucket's
+            //    own angular size (so a bucket only partly on screen still renders) plus the angular
+            //    hysteresis while already on.
+            else
+            {
+                float dist = Mathf.Sqrt(distSqr);
+                Vector3 dir = toBucket / dist;
+                float cosAngle = Vector3.Dot(dir, forward);
+
+                float angularRadius = Mathf.Asin(Mathf.Clamp01(b.Radius / dist));
+                float allowed = coneHalf + angularRadius + (b.On ? angleHysteresis : 0f);
+
+                // allowed >= 180° means the whole sphere is inside the widened cone — always on.
+                shouldBeOn = allowed >= Mathf.PI || cosAngle >= Mathf.Cos(allowed);
+            }
+
             if (shouldBeOn == b.On)
                 continue;
 
@@ -124,6 +210,22 @@ public class WorldRenderCuller : MonoBehaviour
                     rend.enabled = shouldBeOn;
             }
         }
+    }
+
+    /// <summary>
+    /// Half-angle (radians) of the cull cone. Sized to the frustum corner — the widest point on
+    /// screen — so everything actually visible is inside the cone before <see cref="coneMarginDegrees"/>
+    /// is added on top.
+    /// </summary>
+    float ComputeConeHalfAngle(Camera cam)
+    {
+        float tanV = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+        float aspect = cam.aspect > 0f ? cam.aspect : 16f / 9f;
+        float tanH = tanV * aspect;
+        // atan of the diagonal reach gives the angle from forward to the frustum corner.
+        float diagonalHalf = Mathf.Atan(Mathf.Sqrt(tanV * tanV + tanH * tanH));
+        float half = diagonalHalf + Mathf.Max(0f, coneMarginDegrees) * Mathf.Deg2Rad;
+        return Mathf.Clamp(half, 1f * Mathf.Deg2Rad, 89f * Mathf.Deg2Rad);
     }
 
     /// <summary>Rebuilds the bucket grid from the current scene's static renderers.</summary>
@@ -177,12 +279,19 @@ public class WorldRenderCuller : MonoBehaviour
                 combined.Encapsulate(b.Renderers[r].bounds);
 
             b.Center = combined.center;
-            float radius = combined.extents.magnitude;
-            float on = cullDistance + radius;
+            b.Radius = combined.extents.magnitude;
+
+            float on = cullDistance + b.Radius;
             float off = on + Mathf.Max(0f, hysteresis);
             b.OnSqr = on * on;
             b.OffSqr = off * off;
-            b.On = true; // start visible; the next update pass culls what's out of range.
+
+            float nearOn = nearRadius + b.Radius;
+            float nearOff = nearOn + Mathf.Max(0f, hysteresis);
+            b.NearOnSqr = nearOn * nearOn;
+            b.NearOffSqr = nearOff * nearOff;
+
+            b.On = true; // start visible; the next update pass culls what's out of view.
         }
     }
 
@@ -214,10 +323,10 @@ public class WorldRenderCuller : MonoBehaviour
         return true;
     }
 
-    Transform ResolveViewpoint()
+    Camera ResolveViewpoint()
     {
-        if (_viewpoint != null && _viewpoint.gameObject.activeInHierarchy)
-            return _viewpoint;
+        if (_viewCamera != null && _viewCamera.isActiveAndEnabled && _viewCamera.gameObject.activeInHierarchy)
+            return _viewCamera;
 
         // Camera.main is null in this project (PlayerView is Untagged), so fall back to the
         // enabled Game camera — on a client that's the local player's view camera.
@@ -235,7 +344,7 @@ public class WorldRenderCuller : MonoBehaviour
             }
         }
 
-        _viewpoint = cam != null ? cam.transform : null;
-        return _viewpoint;
+        _viewCamera = cam;
+        return _viewCamera;
     }
 }

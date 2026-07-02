@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Serialization;
@@ -251,11 +252,12 @@ public partial class PlayerController : MonoBehaviour
     /// <summary>Parallel to <see cref="_localInventorySlots"/>; 0 for empty, 1 for flashlight, 1–5 for glowstick.</summary>
     int[] _localSlotStacks = new int[3];
     int _localSelectedSlot;
-    Text[] _inventorySlotCountTexts;
+    TMP_Text[] _inventorySlotCountTexts;
+    HudPrompt _hudPrompt;
     Image[] _inventorySlotFlashlightBatteryFillImages;
     RectTransform[] _inventorySlotFlashlightBatteryFillRects;
     GameObject[] _inventorySlotFlashlightBatteryBarRoots;
-    static readonly Color FlashlightBatteryBarFill = new Color(0.95f, 0.88f, 0.2f, 0.95f);
+    static readonly Color FlashlightBatteryBarFill = new Color(0.85f, 0.65f, 0.17f, 0.95f);
     float _footstepTimer;
     bool _playFootstep1Next = true;
     bool _hasLocalControl = true;
@@ -405,8 +407,9 @@ public partial class PlayerController : MonoBehaviour
         if (firstPersonLook)
             SyncLookAnglesFromTransforms();
 
-        if (pickupPromptText == null && pickupPromptRoot != null)
-            pickupPromptText = pickupPromptRoot.GetComponentInChildren<Text>(true);
+        // the authored prompt root is retired: prompts render through the runtime HudPrompt chip
+        if (pickupPromptRoot != null)
+            pickupPromptRoot.SetActive(false);
 
         SetPickupPromptVisible(false);
         _currentStamina = maxStamina;
@@ -1108,6 +1111,9 @@ public partial class PlayerController : MonoBehaviour
         if (_crosshairRoot != null)
             _crosshairRoot.SetActive(visible);
 
+        if (_ticketCounterRoot != null)
+            _ticketCounterRoot.SetActive(visible);
+
         if (!visible)
             SetPickupPromptVisible(false);
     }
@@ -1278,68 +1284,36 @@ public partial class PlayerController : MonoBehaviour
 
     void CreateCrosshairUI()
     {
-        Canvas canvas = FindAnyObjectByType<Canvas>();
-        if (canvas == null)
-        {
-            GameObject canvasGo = new GameObject("CrosshairCanvas");
-            canvas = canvasGo.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 10;
-            canvasGo.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            canvasGo.GetComponent<CanvasScaler>().referenceResolution = new Vector2(1920, 1080);
-            canvasGo.AddComponent<GraphicRaycaster>();
-        }
+        Canvas canvas = HudKit.EnsureHudCanvas();
 
         GameObject dot = new GameObject("Crosshair");
+        dot.layer = 5;
         dot.transform.SetParent(canvas.transform, false);
         RectTransform rt = dot.AddComponent<RectTransform>();
         rt.anchorMin = new Vector2(0.5f, 0.5f);
         rt.anchorMax = new Vector2(0.5f, 0.5f);
         rt.pivot = new Vector2(0.5f, 0.5f);
         rt.anchoredPosition = Vector2.zero;
-        rt.sizeDelta = new Vector2(8f, 8f);
+        rt.sizeDelta = new Vector2(6f, 6f);
         Image img = dot.AddComponent<Image>();
-        img.sprite = CreateCircleSprite(64);
-        img.color = new Color(0.78f, 0.78f, 0.78f, 0.5f);
+        img.sprite = MenuTheme.Circle();
+        img.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.42f);
         img.raycastTarget = false;
         _crosshairRoot = dot;
-    }
-
-    Sprite CreateCircleSprite(int resolution)
-    {
-        Texture2D tex = new Texture2D(resolution, resolution, TextureFormat.RGBA32, false);
-        Color[] pixels = new Color[resolution * resolution];
-        Vector2 center = new Vector2(resolution * 0.5f - 0.5f, resolution * 0.5f - 0.5f);
-        float radius = resolution * 0.5f - 1f;
-        for (int y = 0; y < resolution; y++)
-            for (int x = 0; x < resolution; x++)
-                pixels[y * resolution + x] = Vector2.Distance(new Vector2(x, y), center) <= radius ? Color.white : Color.clear;
-        tex.SetPixels(pixels);
-        tex.Apply();
-        return Sprite.Create(tex, new Rect(0, 0, resolution, resolution), new Vector2(0.5f, 0.5f));
     }
 
     Image CreateStaminaBarUI()
     {
         const float invSlotRowHeight = 96f;
         const float invSlotBorder = 2.5f;
-        const float invSlotBottomPad = 4f;
-        const float invSlotStaminaGap = 6f;
+        const float invSlotBottomPad = 6f;
+        const float invSlotStaminaGap = 8f;
         float staminaBarBottomY = invSlotBottomPad + invSlotRowHeight + invSlotStaminaGap;
 
-        Canvas canvas = FindAnyObjectByType<Canvas>();
-        if (canvas == null)
-        {
-            GameObject canvasGo = new GameObject("StaminaCanvas");
-            canvas = canvasGo.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 10;
-            canvasGo.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            canvasGo.GetComponent<CanvasScaler>().referenceResolution = new Vector2(1920, 1080);
-            canvasGo.AddComponent<GraphicRaycaster>();
-        }
+        Canvas canvas = HudKit.EnsureHudCanvas();
 
         GameObject invRow = new GameObject("InventorySlotRow");
+        invRow.layer = 5;
         invRow.transform.SetParent(canvas.transform, false);
         RectTransform invRowRect = invRow.AddComponent<RectTransform>();
         invRowRect.anchorMin = new Vector2(0.5f, 0f);
@@ -1348,37 +1322,47 @@ public partial class PlayerController : MonoBehaviour
         invRowRect.anchoredPosition = new Vector2(0f, invSlotBottomPad);
         invRowRect.sizeDelta = new Vector2(304f, invSlotRowHeight);
         HorizontalLayoutGroup invLayout = invRow.AddComponent<HorizontalLayoutGroup>();
-        invLayout.spacing = 6f;
+        invLayout.spacing = 8f;
         invLayout.childAlignment = TextAnchor.MiddleCenter;
         invLayout.childControlWidth = true;
         invLayout.childControlHeight = true;
         invLayout.childForceExpandWidth = true;
         invLayout.childForceExpandHeight = true;
-        // Border was nearly opaque; it dominates the look—keep alpha low for a see-through frame.
-        _inventoryDefaultBorderColor = new Color(0.15f, 0.15f, 0.17f, 0.35f);
-        _inventoryDefaultFillColor = new Color(0.4f, 0.4f, 0.42f, 0.12f);
-        _inventorySelectedBorderColor = new Color(0.65f, 0.44f, 0.24f, 0.6f);
+        // dark plate slots with a bone frame; the selected slot flips its frame mustard
+        _inventoryDefaultBorderColor = MenuTheme.WithAlpha(MenuTheme.Bone, 0.28f);
+        _inventoryDefaultFillColor = MenuTheme.WithAlpha(MenuTheme.Ink, 0.60f);
+        _inventorySelectedBorderColor = MenuTheme.WithAlpha(MenuTheme.Amber, 0.95f);
         _inventorySlotBorderImages = new Image[3];
         _inventorySlotIconImages = new Image[3];
-        _inventorySlotCountTexts = new Text[3];
+        _inventorySlotCountTexts = new TMP_Text[3];
         _inventorySlotFlashlightBatteryFillImages = new Image[3];
         _inventorySlotFlashlightBatteryFillRects = new RectTransform[3];
         _inventorySlotFlashlightBatteryBarRoots = new GameObject[3];
         for (int i = 0; i < 3; i++)
         {
             GameObject slot = new GameObject("InventorySlot" + (i + 1));
+            slot.layer = 5;
             slot.transform.SetParent(invRow.transform, false);
+            // the slot root draws only the frame ring; the dark plate is the inset fill child
             Image border = slot.AddComponent<Image>();
+            border.sprite = MenuTheme.RoundedOutline(2, 2f);
+            border.type = Image.Type.Sliced;
             border.color = _inventoryDefaultBorderColor;
+            border.raycastTarget = false;
             _inventorySlotBorderImages[i] = border;
             LayoutElement le = slot.AddComponent<LayoutElement>();
             le.flexibleWidth = 1f;
             le.minHeight = invSlotRowHeight;
 
             GameObject invSlotFillGo = new GameObject("Fill");
+            invSlotFillGo.layer = 5;
             invSlotFillGo.transform.SetParent(slot.transform, false);
+            invSlotFillGo.transform.SetAsFirstSibling();
             Image invSlotFillImage = invSlotFillGo.AddComponent<Image>();
+            invSlotFillImage.sprite = MenuTheme.RoundedRect(2);
+            invSlotFillImage.type = Image.Type.Sliced;
             invSlotFillImage.color = _inventoryDefaultFillColor;
+            invSlotFillImage.raycastTarget = false;
             RectTransform invSlotFillRect = invSlotFillGo.GetComponent<RectTransform>();
             invSlotFillRect.anchorMin = Vector2.zero;
             invSlotFillRect.anchorMax = Vector2.one;
@@ -1387,6 +1371,7 @@ public partial class PlayerController : MonoBehaviour
             invSlotFillRect.offsetMax = new Vector2(-invSlotBorder, -invSlotBorder);
 
             GameObject iconGo = new GameObject("Icon");
+            iconGo.layer = 5;
             iconGo.transform.SetParent(invSlotFillGo.transform, false);
             Image icon = iconGo.AddComponent<Image>();
             icon.color = Color.white;
@@ -1402,6 +1387,7 @@ public partial class PlayerController : MonoBehaviour
             _inventorySlotIconImages[i] = icon;
 
             GameObject batteryBarGo = new GameObject("FlashlightBattery");
+            batteryBarGo.layer = 5;
             batteryBarGo.transform.SetParent(invSlotFillGo.transform, false);
             _inventorySlotFlashlightBatteryBarRoots[i] = batteryBarGo;
             RectTransform batteryBarRt = batteryBarGo.AddComponent<RectTransform>();
@@ -1411,10 +1397,11 @@ public partial class PlayerController : MonoBehaviour
             batteryBarRt.offsetMin = Vector2.zero;
             batteryBarRt.offsetMax = Vector2.zero;
             GameObject trackGo = new GameObject("Track");
+            trackGo.layer = 5;
             trackGo.transform.SetParent(batteryBarGo.transform, false);
             Image trackImg = trackGo.AddComponent<Image>();
             trackImg.raycastTarget = false;
-            trackImg.color = new Color(0.06f, 0.06f, 0.07f, 0.9f);
+            trackImg.color = MenuTheme.WithAlpha(MenuTheme.Ink, 0.9f);
             RectTransform trackRect = trackGo.GetComponent<RectTransform>();
             trackRect.anchorMin = Vector2.zero;
             trackRect.anchorMax = Vector2.one;
@@ -1422,6 +1409,7 @@ public partial class PlayerController : MonoBehaviour
             trackRect.offsetMin = Vector2.zero;
             trackRect.offsetMax = Vector2.zero;
             GameObject batteryFillGo = new GameObject("Fill");
+            batteryFillGo.layer = 5;
             batteryFillGo.transform.SetParent(batteryBarGo.transform, false);
             Image batteryFill = batteryFillGo.AddComponent<Image>();
             batteryFill.raycastTarget = false;
@@ -1437,12 +1425,13 @@ public partial class PlayerController : MonoBehaviour
             batteryBarGo.SetActive(false);
 
             GameObject countGo = new GameObject("StackCount");
+            countGo.layer = 5;
             countGo.transform.SetParent(invSlotFillGo.transform, false);
-            Text countText = countGo.AddComponent<Text>();
-            countText.alignment = TextAnchor.LowerRight;
-            countText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            countText.fontSize = 20;
-            countText.color = new Color(1f, 1f, 1f, 0.95f);
+            TextMeshProUGUI countText = countGo.AddComponent<TextMeshProUGUI>();
+            countText.font = MenuTheme.DisplayFont;
+            countText.alignment = TextAlignmentOptions.BottomRight;
+            countText.fontSize = 17f;
+            countText.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.95f);
             countText.raycastTarget = false;
             countText.text = string.Empty;
             _inventorySlotCountTexts[i] = countText;
@@ -1451,14 +1440,18 @@ public partial class PlayerController : MonoBehaviour
             countRect.anchorMax = new Vector2(1f, 0.45f);
             countRect.pivot = new Vector2(1f, 0f);
             countRect.offsetMin = new Vector2(2f, 2f);
-            countRect.offsetMax = new Vector2(-4f, 0f);
+            countRect.offsetMax = new Vector2(-5f, 0f);
         }
         _inventorySlotsRoot = invRow;
 
         GameObject bg = new GameObject("StaminaBarBG");
+        bg.layer = 5;
         bg.transform.SetParent(canvas.transform, false);
         Image bgImage = bg.AddComponent<Image>();
-        bgImage.color = new Color(0f, 0f, 0f, 0.6f);
+        bgImage.sprite = MenuTheme.RoundedRect(2);
+        bgImage.type = Image.Type.Sliced;
+        bgImage.color = MenuTheme.WithAlpha(MenuTheme.Ink, 0.72f);
+        bgImage.raycastTarget = false;
         RectTransform bgRect = bg.GetComponent<RectTransform>();
         bgRect.anchorMin = new Vector2(0.5f, 0f);
         bgRect.anchorMax = new Vector2(0.5f, 0f);
@@ -1468,16 +1461,32 @@ public partial class PlayerController : MonoBehaviour
         _staminaBarRoot = bg;
 
         GameObject fill = new GameObject("StaminaBarFill");
+        fill.layer = 5;
         fill.transform.SetParent(bg.transform, false);
         Image fillImage = fill.AddComponent<Image>();
-        fillImage.color = new Color(0.2f, 0.75f, 1f, 0.9f);
+        fillImage.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.62f);
+        fillImage.raycastTarget = false;
         RectTransform fillRect = fill.GetComponent<RectTransform>();
         fillRect.anchorMin = Vector2.zero;
         fillRect.anchorMax = Vector2.one;
         fillRect.pivot = new Vector2(0f, 0.5f);
-        fillRect.offsetMin = new Vector2(2f, 2f);
-        fillRect.offsetMax = new Vector2(-2f, -2f);
+        fillRect.offsetMin = new Vector2(2.5f, 2.5f);
+        fillRect.offsetMax = new Vector2(-2.5f, -2.5f);
         _staminaFillRect = fillRect;
+
+        GameObject frameGo = new GameObject("Frame");
+        frameGo.layer = 5;
+        frameGo.transform.SetParent(bg.transform, false);
+        Image frame = frameGo.AddComponent<Image>();
+        frame.sprite = MenuTheme.RoundedOutline(2, 1.6f);
+        frame.type = Image.Type.Sliced;
+        frame.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.20f);
+        frame.raycastTarget = false;
+        RectTransform frameRect = frame.rectTransform;
+        frameRect.anchorMin = Vector2.zero;
+        frameRect.anchorMax = Vector2.one;
+        frameRect.offsetMin = Vector2.zero;
+        frameRect.offsetMax = Vector2.zero;
 
         return fillImage;
     }
@@ -1487,30 +1496,23 @@ public partial class PlayerController : MonoBehaviour
         // Sit directly above the stamina bar (which sits above the inventory row), matching its
         // width and styling. Mirrors the constants used by CreateStaminaBarUI for placement.
         const float invSlotRowHeight = 96f;
-        const float invSlotBottomPad = 4f;
-        const float invSlotStaminaGap = 6f;
+        const float invSlotBottomPad = 6f;
+        const float invSlotStaminaGap = 8f;
         const float staminaBarHeight = 24f;
         const float chargeBarHeight = 18f;
         const float chargeBarGap = 6f;
         float staminaBarBottomY = invSlotBottomPad + invSlotRowHeight + invSlotStaminaGap;
         float chargeBarBottomY = staminaBarBottomY + staminaBarHeight + chargeBarGap;
 
-        Canvas canvas = FindAnyObjectByType<Canvas>();
-        if (canvas == null)
-        {
-            GameObject canvasGo = new GameObject("StaminaCanvas");
-            canvas = canvasGo.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 10;
-            canvasGo.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            canvasGo.GetComponent<CanvasScaler>().referenceResolution = new Vector2(1920, 1080);
-            canvasGo.AddComponent<GraphicRaycaster>();
-        }
+        Canvas canvas = HudKit.EnsureHudCanvas();
 
         GameObject bg = new GameObject("ThrowChargeBarBG");
+        bg.layer = 5;
         bg.transform.SetParent(canvas.transform, false);
         Image bgImage = bg.AddComponent<Image>();
-        bgImage.color = new Color(0f, 0f, 0f, 0.6f);
+        bgImage.sprite = MenuTheme.RoundedRect(2);
+        bgImage.type = Image.Type.Sliced;
+        bgImage.color = MenuTheme.WithAlpha(MenuTheme.Ink, 0.72f);
         bgImage.raycastTarget = false;
         RectTransform bgRect = bg.GetComponent<RectTransform>();
         bgRect.anchorMin = new Vector2(0.5f, 0f);
@@ -1521,17 +1523,32 @@ public partial class PlayerController : MonoBehaviour
         _throwChargeBarRoot = bg;
 
         GameObject fill = new GameObject("ThrowChargeBarFill");
+        fill.layer = 5;
         fill.transform.SetParent(bg.transform, false);
         Image fillImage = fill.AddComponent<Image>();
-        fillImage.color = new Color(1f, 0.6f, 0.15f, 0.95f);
+        fillImage.color = MenuTheme.WithAlpha(MenuTheme.Amber, 0.95f);
         fillImage.raycastTarget = false;
         RectTransform fillRect = fill.GetComponent<RectTransform>();
         fillRect.anchorMin = Vector2.zero;
         fillRect.anchorMax = Vector2.one;
         fillRect.pivot = new Vector2(0f, 0.5f);
-        fillRect.offsetMin = new Vector2(2f, 2f);
-        fillRect.offsetMax = new Vector2(-2f, -2f);
+        fillRect.offsetMin = new Vector2(2.5f, 2.5f);
+        fillRect.offsetMax = new Vector2(-2.5f, -2.5f);
         _throwChargeFillRect = fillRect;
+
+        GameObject frameGo = new GameObject("Frame");
+        frameGo.layer = 5;
+        frameGo.transform.SetParent(bg.transform, false);
+        Image frame = frameGo.AddComponent<Image>();
+        frame.sprite = MenuTheme.RoundedOutline(2, 1.6f);
+        frame.type = Image.Type.Sliced;
+        frame.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.20f);
+        frame.raycastTarget = false;
+        RectTransform frameRect = frame.rectTransform;
+        frameRect.anchorMin = Vector2.zero;
+        frameRect.anchorMax = Vector2.one;
+        frameRect.offsetMin = Vector2.zero;
+        frameRect.offsetMax = Vector2.zero;
     }
 
     void LateUpdate()
@@ -2255,56 +2272,44 @@ public partial class PlayerController : MonoBehaviour
 
     void SetPickupPromptVisible(bool visible, string messageForText = null)
     {
-        if (pickupPromptRoot == null)
-            return;
-
-        if (_pickupPromptVisible != visible)
-        {
-            _pickupPromptVisible = visible;
-            pickupPromptRoot.SetActive(visible);
-        }
+        _pickupPromptVisible = visible;
 
         if (!visible)
         {
-            if (pickupPromptPlayerIcon != null)
-                pickupPromptPlayerIcon.enabled = false;
+            if (_hudPrompt != null)
+                _hudPrompt.Hide();
             return;
         }
 
-        if (pickupPromptPlayerIcon != null)
-            pickupPromptPlayerIcon.enabled = false;
-
-        if (pickupPromptText == null)
+        if (!_hasLocalControl)
             return;
 
-        string msg = messageForText ?? pickupPromptMessage;
-        if (!string.IsNullOrEmpty(msg))
-            pickupPromptText.text = msg;
+        EnsureHudPrompt().ShowMessage(messageForText ?? pickupPromptMessage);
     }
 
     void SetElevatorClosePromptVisible(bool visible, int insideLiving, int requiredLiving)
     {
-        if (pickupPromptRoot == null)
-            return;
-
-        if (_pickupPromptVisible != visible)
-        {
-            _pickupPromptVisible = visible;
-            pickupPromptRoot.SetActive(visible);
-        }
+        _pickupPromptVisible = visible;
 
         if (!visible)
         {
-            if (pickupPromptPlayerIcon != null)
-                pickupPromptPlayerIcon.enabled = false;
+            if (_hudPrompt != null)
+                _hudPrompt.Hide();
             return;
         }
 
-        if (pickupPromptText != null)
-            pickupPromptText.text = $"{insideLiving}/{requiredLiving}";
+        if (!_hasLocalControl)
+            return;
 
-        if (pickupPromptPlayerIcon != null)
-            pickupPromptPlayerIcon.enabled = true;
+        Sprite icon = pickupPromptPlayerIcon != null ? pickupPromptPlayerIcon.sprite : null;
+        EnsureHudPrompt().ShowCount(icon, $"{insideLiving}/{requiredLiving}");
+    }
+
+    HudPrompt EnsureHudPrompt()
+    {
+        if (_hudPrompt == null)
+            _hudPrompt = HudPrompt.Create(HudKit.EnsureHudCanvas().transform);
+        return _hudPrompt;
     }
 
     Vector3 GetFacingDirection(Transform cam, Vector3 groundMove)

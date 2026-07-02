@@ -1,3 +1,4 @@
+using TMPro;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
@@ -466,7 +467,7 @@ public partial class PlayerController
     {
         if (_inventorySlotCountTexts == null || index < 0 || index >= _inventorySlotCountTexts.Length)
             return;
-        Text t = _inventorySlotCountTexts[index];
+        TMP_Text t = _inventorySlotCountTexts[index];
         if (t == null)
             return;
         if (!showForGlowstick)

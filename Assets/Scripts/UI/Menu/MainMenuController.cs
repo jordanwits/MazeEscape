@@ -8,9 +8,8 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Builds and drives the entire main-menu UI at runtime (Menu scene): left-rail navigation with
-/// the title block, and contextual right-side panels for Play Online (LAN + Steam host/join),
-/// the lobby (players, ready-up, start), settings, and the playtest checklist.
-/// Replaces both the old three-button canvas and the F8 IMGUI overlay in the menu scene.
+/// the title block, and contextual right-side panels for Play (LAN + Steam host/join),
+/// the lobby (survivor select, ready-up, start), settings, and the playtest briefing.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class MainMenuController : MonoBehaviour
@@ -58,6 +57,8 @@ public sealed class MainMenuController : MonoBehaviour
         public Image Portrait;
         public TextMeshProUGUI Name;
         public TextMeshProUGUI Owner;
+        public GameObject YouTag;
+        public Image Ledge;
     }
 
     // lobby screen
@@ -94,6 +95,7 @@ public sealed class MainMenuController : MonoBehaviour
 
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
+        MenuTheme.ApplyCursor();
         EnsureEventSystem();
         TuneSceneCamera();
 
@@ -167,10 +169,10 @@ public sealed class MainMenuController : MonoBehaviour
         block.anchorMin = new Vector2(0f, 1f);
         block.anchorMax = new Vector2(0f, 1f);
         block.pivot = new Vector2(0f, 1f);
-        block.anchoredPosition = new Vector2(150f, -145f);
+        block.anchoredPosition = new Vector2(150f, -140f);
         block.sizeDelta = new Vector2(620f, 420f);
 
-        Image glow = MenuWidgets.CreateImage(block, "TitleGlow", MenuTheme.SoftGlow(), MenuTheme.WithAlpha(MenuTheme.Amber, 0.10f));
+        Image glow = MenuWidgets.CreateImage(block, "TitleGlow", MenuTheme.SoftGlow(), MenuTheme.WithAlpha(MenuTheme.Amber, 0.08f));
         RectTransform glowRt = glow.rectTransform;
         glowRt.anchorMin = new Vector2(0f, 1f);
         glowRt.anchorMax = new Vector2(0f, 1f);
@@ -179,40 +181,35 @@ public sealed class MainMenuController : MonoBehaviour
         glowRt.sizeDelta = new Vector2(980f, 760f);
         var glowFlicker = glow.gameObject.AddComponent<UiFlicker>();
         glowFlicker.target = glow;
-        glowFlicker.baseAlpha = 0.10f;
-        glowFlicker.amplitude = 0.045f;
+        glowFlicker.baseAlpha = 0.08f;
+        glowFlicker.amplitude = 0.035f;
         glowFlicker.speed = 0.9f;
 
-        TextMeshProUGUI titleB = MenuWidgets.CreateText(block, "Title", "DETOUR", 108f, MenuTheme.Amber,
-            MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 9f, FontStyles.Bold);
-        SetTop(titleB.rectTransform, -34f, 120f);
-        AddTitleUnderlay(titleB);
-        var titleFlicker = titleB.gameObject.AddComponent<UiFlicker>();
-        titleFlicker.target = titleB;
+        // misprint: a mustard pass sits offset behind the bone pass, like a slipped screen print
+        TextMeshProUGUI misprint = MenuWidgets.CreateText(block, "TitleMisprint", "DETOUR", 118f,
+            MenuTheme.WithAlpha(MenuTheme.Amber, 0.85f), MenuWidgets.FontKind.Display,
+            TextAlignmentOptions.Left, 4f, FontStyles.Bold);
+        SetTop(misprint.rectTransform, -30f, 130f);
+        misprint.rectTransform.anchoredPosition += new Vector2(9f, -7f);
+
+        TextMeshProUGUI title = MenuWidgets.CreateText(block, "Title", "DETOUR", 118f, MenuTheme.Bone,
+            MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 4f, FontStyles.Bold);
+        SetTop(title.rectTransform, -30f, 130f);
+        var titleFlicker = title.gameObject.AddComponent<UiFlicker>();
+        titleFlicker.target = title;
         titleFlicker.baseAlpha = 1f;
-        titleFlicker.amplitude = 0.06f;
+        titleFlicker.amplitude = 0.05f;
         titleFlicker.speed = 0.8f;
 
-        Image rule = MenuWidgets.CreateImage(block, "Rule", MenuTheme.Solid(), MenuTheme.WithAlpha(MenuTheme.Stroke, 1f));
-        RectTransform ruleRt = rule.rectTransform;
-        ruleRt.anchorMin = new Vector2(0f, 1f);
-        ruleRt.anchorMax = new Vector2(0f, 1f);
-        ruleRt.pivot = new Vector2(0f, 1f);
-        ruleRt.anchoredPosition = new Vector2(4f, -286f);
-        ruleRt.sizeDelta = new Vector2(440f, 1f);
-
-    }
-
-    static void AddTitleUnderlay(TextMeshProUGUI text)
-    {
-        Material mat = text.fontMaterial;
-        if (mat == null || !mat.HasProperty(ShaderUtilities.ID_UnderlayColor))
-            return;
-        mat.EnableKeyword(ShaderUtilities.Keyword_Underlay);
-        mat.SetColor(ShaderUtilities.ID_UnderlayColor, new Color(0f, 0f, 0f, 0.65f));
-        mat.SetFloat(ShaderUtilities.ID_UnderlayOffsetX, 0.5f);
-        mat.SetFloat(ShaderUtilities.ID_UnderlayOffsetY, -0.5f);
-        mat.SetFloat(ShaderUtilities.ID_UnderlaySoftness, 0.35f);
+        // torn mustard strike under the wordmark
+        Image strike = MenuWidgets.CreateImage(block, "Strike", MenuTheme.TornBar(), MenuTheme.WithAlpha(MenuTheme.Amber, 0.92f));
+        RectTransform strikeRt = strike.rectTransform;
+        strikeRt.anchorMin = new Vector2(0f, 1f);
+        strikeRt.anchorMax = new Vector2(0f, 1f);
+        strikeRt.pivot = new Vector2(0f, 1f);
+        strikeRt.anchoredPosition = new Vector2(8f, -168f);
+        strikeRt.sizeDelta = new Vector2(300f, 9f);
+        strikeRt.localRotation = Quaternion.Euler(0f, 0f, -0.6f);
     }
 
     static void SetTop(RectTransform rt, float y, float height)
@@ -230,11 +227,11 @@ public sealed class MainMenuController : MonoBehaviour
         nav.anchorMin = new Vector2(0f, 0f);
         nav.anchorMax = new Vector2(0f, 1f);
         nav.pivot = new Vector2(0f, 1f);
-        nav.anchoredPosition = new Vector2(146f, -560f);
-        nav.sizeDelta = new Vector2(460f, 320f);
-        MenuWidgets.AddVertical(nav.gameObject, new RectOffset(0, 0, 0, 0), 6f);
+        nav.anchoredPosition = new Vector2(150f, -400f);
+        nav.sizeDelta = new Vector2(430f, 320f);
+        MenuWidgets.AddVertical(nav.gameObject, new RectOffset(0, 0, 0, 0), 12f);
 
-        MenuWidgets.CreateNavButton(nav, "PLAY ONLINE", () =>
+        MenuWidgets.CreateNavButton(nav, "PLAY", () =>
         {
             if (_session != null && _session.IsSessionActive)
                 ShowScreen(MenuScreen.Lobby);
@@ -242,13 +239,12 @@ public sealed class MainMenuController : MonoBehaviour
                 ShowScreen(MenuScreen.Play);
         }, out _navPlayFx);
 
-        MenuWidgets.CreateNavButton(nav, "HOW TO PLAYTEST", () => ShowScreen(MenuScreen.HowTo), out _navHowToFx);
+        MenuWidgets.CreateNavButton(nav, "BRIEFING", () => ShowScreen(MenuScreen.HowTo), out _navHowToFx);
         MenuWidgets.CreateNavButton(nav, "SETTINGS", () => ShowScreen(MenuScreen.Settings), out _navSettingsFx);
 
         MenuWidgets.CreateNavButton(nav, "QUIT", () =>
         {
-            _modal.Open("LEAVE THE MAZE?", "Quit to desktop. Any active lobby will be abandoned.",
-                "QUIT", true, QuitApplication);
+            _modal.Open("QUIT TO DESKTOP", string.Empty, "QUIT", true, QuitApplication);
         }, out _);
     }
 
@@ -273,7 +269,7 @@ public sealed class MainMenuController : MonoBehaviour
 
         TextMeshProUGUI version = MenuWidgets.CreateText(footer, "Version",
             $"DETOUR — PRE-ALPHA {Application.version}", 12.5f, MenuTheme.Faint,
-            MenuWidgets.FontKind.Body, TextAlignmentOptions.BottomLeft, 3f);
+            MenuWidgets.FontKind.Display, TextAlignmentOptions.BottomLeft, 3f);
         RectTransform versionRt = version.rectTransform;
         versionRt.anchorMin = Vector2.zero;
         versionRt.anchorMax = Vector2.one;
@@ -303,21 +299,17 @@ public sealed class MainMenuController : MonoBehaviour
         RectTransform card = MenuWidgets.CreateCard(screen, "Card", CardWidth);
         CenterCard(card);
 
-        MenuWidgets.CreateText(card, "Title", "PLAY ONLINE", 34f, MenuTheme.Bone,
+        MenuWidgets.CreateText(card, "Title", "PLAY", 34f, MenuTheme.Bone,
             MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 6f);
-        TextMeshProUGUI sub = MenuWidgets.CreateText(card, "Sub",
-            "Host a lobby or join a friend. Everyone readies up in the lobby, then the host starts the descent together.",
-            15.5f, MenuTheme.Mist);
-        sub.lineSpacing = 6f;
 
-        MenuWidgets.CreateSection(card, "LAN  /  DIRECT IP");
+        MenuWidgets.CreateSection(card, "DIRECT IP");
 
         RectTransform hostRow = MenuWidgets.CreateRow(card, "HostRow", 48f, 12f);
         _hostPortInput = MenuWidgets.CreateInputField(hostRow, "HostPort", "PORT", 140f, TMP_InputField.ContentType.IntegerNumber);
-        MenuWidgets.CreatePrimaryButton(hostRow, "HOST LOBBY", OnHostLanClicked, 48f);
+        MenuWidgets.CreatePrimaryButton(hostRow, "HOST", OnHostLanClicked, 48f);
 
         RectTransform joinRow = MenuWidgets.CreateRow(card, "JoinRow", 48f, 12f);
-        _joinAddressInput = MenuWidgets.CreateInputField(joinRow, "Address", "ADDRESS  (e.g. 192.168.1.20)", 300f);
+        _joinAddressInput = MenuWidgets.CreateInputField(joinRow, "Address", "ADDRESS", 300f);
         MenuWidgets.SetLayout(_joinAddressInput, flexibleWidth: 1f, minHeight: 48f, preferredHeight: 48f);
         _joinPortInput = MenuWidgets.CreateInputField(joinRow, "JoinPort", "PORT", 110f, TMP_InputField.ContentType.IntegerNumber);
         Button joinButton = MenuWidgets.CreateGhostButton(joinRow, "JOIN", OnJoinLanClicked, false, 48f);
@@ -325,7 +317,8 @@ public sealed class MainMenuController : MonoBehaviour
 
         MenuWidgets.CreateSection(card, "STEAM");
 
-        _steamStatusLabel = MenuWidgets.CreateText(card, "SteamStatus", "Steam: checking...", 14.5f, MenuTheme.Faint);
+        _steamStatusLabel = MenuWidgets.CreateText(card, "SteamStatus", "CHECKING…", 13.5f, MenuTheme.Faint,
+            MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 2f);
 
         RectTransform steamHostRow = MenuWidgets.CreateRow(card, "SteamHostRow", 48f, 12f);
         _steamHostButton = MenuWidgets.CreatePrimaryButton(steamHostRow, "HOST STEAM LOBBY", OnHostSteamClicked, 48f);
@@ -352,7 +345,7 @@ public sealed class MainMenuController : MonoBehaviour
             if (_session != null && _session.LocalSteamId != 0UL)
             {
                 GUIUtility.systemCopyBuffer = _session.LocalSteamId.ToString();
-                _toast.Show("SteamID copied to clipboard.");
+                _toast.Show("SteamID copied.");
             }
         });
 
@@ -366,7 +359,7 @@ public sealed class MainMenuController : MonoBehaviour
         return fader;
     }
 
-    // ---------------------------------------------------------------- how-to screen
+    // ---------------------------------------------------------------- briefing screen
 
     MenuScreenFader BuildHowToScreen(Transform root)
     {
@@ -374,8 +367,8 @@ public sealed class MainMenuController : MonoBehaviour
         RectTransform card = MenuWidgets.CreateCard(screen, "Card", CardWidth);
         CenterCard(card);
 
-        MenuWidgets.CreateText(card, "Title", "ONLINE PLAYTEST CHECKLIST", 30f, MenuTheme.Bone,
-            MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 5f);
+        MenuWidgets.CreateText(card, "Title", "BRIEFING", 34f, MenuTheme.Bone,
+            MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 6f);
         MenuWidgets.CreateSpacer(card, 6f);
 
         string[] steps = OnlinePlaytestChecklist.Steps;
@@ -390,7 +383,7 @@ public sealed class MainMenuController : MonoBehaviour
             rowLe.flexibleHeight = 0f;
 
             TextMeshProUGUI num = MenuWidgets.CreateText(row, "Num", (i + 1).ToString("00"), 14f,
-                MenuTheme.WithAlpha(MenuTheme.Amber, 0.8f), MenuWidgets.FontKind.Body, TextAlignmentOptions.TopLeft, 2f);
+                MenuTheme.WithAlpha(MenuTheme.Amber, 0.85f), MenuWidgets.FontKind.Display, TextAlignmentOptions.TopLeft, 2f);
             MenuWidgets.SetLayout(num, minWidth: 30f, preferredWidth: 30f);
 
             TextMeshProUGUI body = MenuWidgets.CreateText(row, "Text", steps[i], 14.5f, MenuTheme.Mist,
@@ -429,7 +422,7 @@ public sealed class MainMenuController : MonoBehaviour
             MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineLeft, 6f);
         MenuWidgets.SetLayout(title, flexibleWidth: 1f);
         _lobbyTransportLabel = MenuWidgets.CreateText(titleRow, "Transport", "DIRECT IP", 13.5f,
-            MenuTheme.WithAlpha(MenuTheme.Amber, 0.9f), MenuWidgets.FontKind.Body, TextAlignmentOptions.MidlineRight, 6f);
+            MenuTheme.WithAlpha(MenuTheme.Amber, 0.9f), MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineRight, 5f);
         MenuWidgets.SetLayout(_lobbyTransportLabel, minWidth: 140f, preferredWidth: 140f);
 
         _lobbyStatusLabel = MenuWidgets.CreateText(card, "Status", string.Empty, 14.5f, MenuTheme.Faint);
@@ -457,7 +450,7 @@ public sealed class MainMenuController : MonoBehaviour
             if (_session != null && _session.LocalSteamId != 0UL)
             {
                 GUIUtility.systemCopyBuffer = _session.LocalSteamId.ToString();
-                _toast.Show("SteamID copied to clipboard.");
+                _toast.Show("SteamID copied.");
             }
         });
 
@@ -471,7 +464,7 @@ public sealed class MainMenuController : MonoBehaviour
             if (_session != null && _session.CurrentSteamLobbyId != 0UL)
             {
                 GUIUtility.systemCopyBuffer = _session.CurrentSteamLobbyId.ToString();
-                _toast.Show("Lobby ID copied to clipboard.");
+                _toast.Show("Lobby ID copied.");
             }
         });
 
@@ -487,41 +480,47 @@ public sealed class MainMenuController : MonoBehaviour
         _readyButton = MenuWidgets.CreateGhostButton(card, "READY UP", OnReadyClicked, false, 54f);
         _readyFx = _readyButton.GetComponent<MenuButtonFx>();
         _readyLabel = _readyButton.GetComponentInChildren<TextMeshProUGUI>();
+        if (_readyFx != null)
+        {
+            // ready reads as a locked-in moss plate, not the mustard used for selection
+            _readyFx.fillSelected = MenuTheme.Moss;
+            _readyFx.frameSelected = MenuTheme.WithAlpha(new Color(0.24f, 0.29f, 0.13f, 1f), 0.95f);
+            _readyFx.labelSelected = MenuTheme.InkOnAccent;
+        }
 
         var startSection = MenuWidgets.CreateRect("StartSection", card);
         _startSection = startSection.gameObject;
         MenuWidgets.AddVertical(startSection.gameObject, new RectOffset(0, 0, 0, 0), 8f);
-        _startButton = MenuWidgets.CreatePrimaryButton(startSection, "START GAME", OnStartClicked, 58f);
-        _lobbyGateLabel = MenuWidgets.CreateText(startSection, "Gate", "Waiting for every player to ready up.",
-            14f, MenuTheme.Faint, MenuWidgets.FontKind.Body, TextAlignmentOptions.Center);
+        _startButton = MenuWidgets.CreatePrimaryButton(startSection, "START", OnStartClicked, 58f);
+        _lobbyGateLabel = MenuWidgets.CreateText(startSection, "Gate", string.Empty,
+            14f, MenuTheme.Faint, MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 4f);
 
         MenuWidgets.CreateSpacer(card, 6f);
 
         MenuWidgets.CreateGhostButton(card, "LEAVE LOBBY", () =>
         {
-            _modal.Open("LEAVE LOBBY?", "Disconnect from this lobby and return to the menu.",
-                "LEAVE", true, () =>
-                {
-                    if (_flow != null)
-                        _flow.ReturnToMainMenu();
-                    else if (_session != null)
-                        _session.ShutdownSession();
-                });
+            _modal.Open("LEAVE LOBBY", string.Empty, "LEAVE", true, () =>
+            {
+                if (_flow != null)
+                    _flow.ReturnToMainMenu();
+                else if (_session != null)
+                    _session.ShutdownSession();
+            });
         }, true, 48f);
 
         return fader;
     }
 
     /// <summary>
-    /// One portrait card per lobby character. Each card doubles as the player roster: it shows
-    /// who owns the character and their ready state. Exactly one player may own each character.
+    /// One portrait plate per lobby character. Each plate doubles as the player roster: it shows
+    /// who holds the character and their ready state. Exactly one player may hold each character.
     /// </summary>
     void BuildCharacterSelect(RectTransform card)
     {
-        MenuWidgets.CreateSection(card, "CHOOSE YOUR SURVIVOR");
+        MenuWidgets.CreateSection(card, "SURVIVORS");
 
         int count = _session.LobbyCharacterCount;
-        RectTransform row = MenuWidgets.CreateRow(card, "Characters", 212f, 12f, TextAnchor.UpperLeft);
+        RectTransform row = MenuWidgets.CreateRow(card, "Characters", 216f, 12f, TextAnchor.UpperLeft);
         _characterCards = new CharacterCard[count];
 
         for (int i = 0; i < count; i++)
@@ -532,38 +531,44 @@ public sealed class MainMenuController : MonoBehaviour
             RectTransform root = MenuWidgets.CreateRect("Character_" + i, row);
             MenuWidgets.SetLayout(root, flexibleWidth: 1f, minHeight: 212f, preferredHeight: 212f);
 
-            Image bg = MenuWidgets.CreateImage(root, "Bg", MenuTheme.RoundedRect(10), MenuTheme.WithAlpha(MenuTheme.PanelRaised, 0.92f), true);
-            StretchFull(bg.rectTransform);
+            RectTransform plate = MenuWidgets.CreateStretched("Plate", root);
+            float tilt = ((Mathf.Abs(("survivor" + i).GetHashCode()) % 100) / 100f - 0.5f) * 0.8f;
+            plate.localRotation = Quaternion.Euler(0f, 0f, tilt);
 
-            Image portrait = MenuWidgets.CreateImage(root, "Portrait", character != null ? character.Portrait : null, Color.white);
+            Image bg = MenuWidgets.CreateImage(plate, "Bg", MenuTheme.RoundedRect(2), MenuTheme.WithAlpha(MenuTheme.Tile, 0.92f), true);
+            bg.rectTransform.SetStretch();
+
+            MenuWidgets.CreateGrunge(plate, MenuTheme.WithAlpha(Color.white, 0.05f));
+
+            Image portrait = MenuWidgets.CreateImage(plate, "Portrait", character != null ? character.Portrait : null, Color.white);
             RectTransform portraitRt = portrait.rectTransform;
             portraitRt.anchorMin = new Vector2(0f, 0f);
             portraitRt.anchorMax = new Vector2(1f, 1f);
-            portraitRt.offsetMin = new Vector2(5f, 56f);
-            portraitRt.offsetMax = new Vector2(-5f, -6f);
+            portraitRt.offsetMin = new Vector2(5f, 52f);
+            portraitRt.offsetMax = new Vector2(-5f, -8f);
             portrait.type = Image.Type.Simple;
             portrait.preserveAspect = true;
 
-            Image shade = MenuWidgets.CreateImage(root, "Shade", MenuTheme.VerticalGradient(), MenuTheme.WithAlpha(MenuTheme.Panel, 0.9f));
+            Image shade = MenuWidgets.CreateImage(plate, "Shade", MenuTheme.VerticalGradient(), MenuTheme.WithAlpha(MenuTheme.Ink, 0.9f));
             RectTransform shadeRt = shade.rectTransform;
             shadeRt.anchorMin = new Vector2(0f, 0f);
             shadeRt.anchorMax = new Vector2(1f, 0f);
             shadeRt.pivot = new Vector2(0.5f, 0f);
-            shadeRt.anchoredPosition = new Vector2(0f, 52f);
-            shadeRt.sizeDelta = new Vector2(-10f, 44f);
+            shadeRt.anchoredPosition = new Vector2(0f, 48f);
+            shadeRt.sizeDelta = new Vector2(-8f, 48f);
 
-            TextMeshProUGUI name = MenuWidgets.CreateText(root, "Name",
-                character != null ? character.DisplayName : ("SURVIVOR " + (i + 1)), 15.5f, MenuTheme.Bone,
+            TextMeshProUGUI name = MenuWidgets.CreateText(plate, "Name",
+                character != null ? character.DisplayName : ("SURVIVOR " + (i + 1)), 16.5f, MenuTheme.Bone,
                 MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 4f);
             RectTransform nameRt = name.rectTransform;
             nameRt.anchorMin = new Vector2(0f, 0f);
             nameRt.anchorMax = new Vector2(1f, 0f);
             nameRt.pivot = new Vector2(0.5f, 0f);
-            nameRt.anchoredPosition = new Vector2(0f, 28f);
+            nameRt.anchoredPosition = new Vector2(0f, 27f);
             nameRt.sizeDelta = new Vector2(0f, 24f);
 
-            TextMeshProUGUI owner = MenuWidgets.CreateText(root, "Owner", "AVAILABLE", 11.5f, MenuTheme.Faint,
-                MenuWidgets.FontKind.Body, TextAlignmentOptions.Center, 3f);
+            TextMeshProUGUI owner = MenuWidgets.CreateText(plate, "Owner", "OPEN", 11.5f, MenuTheme.Faint,
+                MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 3f);
             owner.richText = true;
             RectTransform ownerRt = owner.rectTransform;
             ownerRt.anchorMin = new Vector2(0f, 0f);
@@ -572,15 +577,39 @@ public sealed class MainMenuController : MonoBehaviour
             ownerRt.anchoredPosition = new Vector2(0f, 8f);
             ownerRt.sizeDelta = new Vector2(0f, 18f);
 
-            Image outline = MenuWidgets.CreateImage(root, "Outline", MenuTheme.RoundedOutline(10, 1.8f), MenuTheme.Stroke);
-            StretchFull(outline.rectTransform);
+            Image outline = MenuWidgets.CreateImage(plate, "Outline", MenuTheme.RoundedOutline(2, 2f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.30f));
+            outline.rectTransform.SetStretch();
+
+            // torn ledge under the plate — lights up mustard under your pick
+            Image ledge = MenuWidgets.CreateImage(plate, "Ledge", MenuTheme.TornBar(), Color.clear);
+            RectTransform ledgeRt = ledge.rectTransform;
+            ledgeRt.anchorMin = new Vector2(0.05f, 0f);
+            ledgeRt.anchorMax = new Vector2(0.72f, 0f);
+            ledgeRt.pivot = new Vector2(0f, 1f);
+            ledgeRt.anchoredPosition = new Vector2(0f, -2.5f);
+            ledgeRt.sizeDelta = new Vector2(0f, 5f);
+
+            // "YOU" tab pinned to the top-left corner, like a slapped-on sticker
+            RectTransform tag = MenuWidgets.CreateRect("YouTag", plate);
+            tag.anchorMin = new Vector2(0f, 1f);
+            tag.anchorMax = new Vector2(0f, 1f);
+            tag.pivot = new Vector2(0f, 1f);
+            tag.anchoredPosition = new Vector2(-4f, 7f);
+            tag.sizeDelta = new Vector2(52f, 24f);
+            tag.localRotation = Quaternion.Euler(0f, 0f, -3.5f);
+            Image tagBg = MenuWidgets.CreateImage(tag, "Bg", MenuTheme.RoughChip(), MenuTheme.Amber);
+            tagBg.rectTransform.SetStretch();
+            TextMeshProUGUI tagText = MenuWidgets.CreateText(tag, "Text", "YOU", 12.5f, MenuTheme.InkOnAccent,
+                MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 3f);
+            tagText.rectTransform.SetStretch();
+            tag.gameObject.SetActive(false);
 
             var button = root.gameObject.AddComponent<Button>();
             button.targetGraphic = bg;
             button.transition = Selectable.Transition.ColorTint;
             var colors = button.colors;
             colors.normalColor = Color.white;
-            colors.highlightedColor = new Color(1.18f, 1.14f, 1.05f, 1f);
+            colors.highlightedColor = new Color(1.22f, 1.18f, 1.08f, 1f);
             colors.pressedColor = new Color(0.9f, 0.9f, 0.9f, 1f);
             colors.selectedColor = Color.white;
             colors.disabledColor = Color.white;
@@ -601,12 +630,10 @@ public sealed class MainMenuController : MonoBehaviour
                 Portrait = portrait,
                 Name = name,
                 Owner = owner,
+                YouTag = tag.gameObject,
+                Ledge = ledge,
             };
         }
-
-        MenuWidgets.CreateText(card, "SelectHint",
-            "One survivor per player. Picks lock in when the host starts the game.",
-            13f, MenuTheme.Faint, MenuWidgets.FontKind.Body, TextAlignmentOptions.Center);
     }
 
     void RefreshCharacterCards(IReadOnlyList<LobbyPlayerState> players)
@@ -616,7 +643,6 @@ public sealed class MainMenuController : MonoBehaviour
 
         ulong localClientId = NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : ulong.MaxValue;
         bool selectionOpen = _session.CanSelectCharactersNow;
-        string amberHex = ColorUtility.ToHtmlStringRGB(MenuTheme.Amber);
         string mossHex = ColorUtility.ToHtmlStringRGB(MenuTheme.Moss);
         string faintHex = ColorUtility.ToHtmlStringRGB(MenuTheme.Faint);
 
@@ -642,48 +668,47 @@ public sealed class MainMenuController : MonoBehaviour
             }
 
             if (cardUi.Portrait != null)
-                cardUi.Portrait.color = taken && !mine ? new Color(0.5f, 0.5f, 0.54f, 0.95f) : Color.white;
+                cardUi.Portrait.color = taken && !mine ? new Color(0.42f, 0.42f, 0.45f, 0.95f) : Color.white;
 
             if (cardUi.Outline != null)
-                cardUi.Outline.color = mine ? MenuTheme.Amber : MenuTheme.WithAlpha(MenuTheme.Stroke, taken ? 0.6f : 1f);
+                cardUi.Outline.color = mine
+                    ? MenuTheme.Amber
+                    : MenuTheme.WithAlpha(MenuTheme.Bone, taken ? 0.14f : 0.30f);
 
             if (cardUi.Background != null)
                 cardUi.Background.color = mine
-                    ? MenuTheme.WithAlpha(new Color(0.24f, 0.20f, 0.12f, 1f), 0.95f)
-                    : MenuTheme.WithAlpha(MenuTheme.PanelRaised, 0.92f);
+                    ? MenuTheme.WithAlpha(new Color(0.20f, 0.17f, 0.09f, 1f), 0.95f)
+                    : MenuTheme.WithAlpha(MenuTheme.Tile, 0.92f);
 
             if (cardUi.Name != null)
                 cardUi.Name.color = mine ? MenuTheme.AmberBright : (taken ? MenuTheme.Mist : MenuTheme.Bone);
+
+            if (cardUi.YouTag != null && cardUi.YouTag.activeSelf != mine)
+                cardUi.YouTag.SetActive(mine);
+
+            if (cardUi.Ledge != null)
+                cardUi.Ledge.color = mine ? MenuTheme.WithAlpha(MenuTheme.Amber, 0.9f) : Color.clear;
 
             if (cardUi.Owner != null)
             {
                 if (taken)
                 {
                     string dotHex = ownerReady ? mossHex : faintHex;
-                    string who = mine ? "YOU" : "PLAYER " + ownerId;
+                    string who = mine ? "HELD" : "P" + ownerId;
                     if (ownerIsHost)
                         who += " · HOST";
-                    string whoHex = mine ? amberHex : faintHex;
-                    cardUi.Owner.text = $"<color=#{dotHex}>●</color>  <color=#{whoHex}>{who}</color>";
+                    cardUi.Owner.text = $"<color=#{dotHex}>■</color>  <color=#{faintHex}>{who}</color>";
                 }
                 else
                 {
-                    cardUi.Owner.text = "AVAILABLE";
-                    cardUi.Owner.color = MenuTheme.Faint;
+                    cardUi.Owner.text = "OPEN";
+                    cardUi.Owner.color = MenuTheme.WithAlpha(MenuTheme.Faint, 0.8f);
                 }
             }
 
             if (cardUi.Button != null)
                 cardUi.Button.interactable = selectionOpen && !taken;
         }
-    }
-
-    static void StretchFull(RectTransform rt)
-    {
-        rt.anchorMin = Vector2.zero;
-        rt.anchorMax = Vector2.one;
-        rt.offsetMin = Vector2.zero;
-        rt.offsetMax = Vector2.zero;
     }
 
     static void CenterCard(RectTransform cardContent)
@@ -837,9 +862,8 @@ public sealed class MainMenuController : MonoBehaviour
 
     static void SetNavActive(MenuButtonFx fx, bool active)
     {
-        if (fx == null)
-            return;
-        fx.labelNormal = active ? MenuTheme.Bone : MenuTheme.Mist;
+        if (fx != null)
+            fx.SetSelected(active);
     }
 
     void OnStatusChanged(string status)
@@ -875,7 +899,7 @@ public sealed class MainMenuController : MonoBehaviour
         if (_session == null || _steamStatusLabel == null)
             return;
 
-        _steamStatusLabel.text = "Steam: " + _session.SteamStatus;
+        _steamStatusLabel.text = _session.SteamStatus.ToUpperInvariant();
 
         bool steamReady = _session.IsSteamReady;
         if (_steamHostButton != null)
@@ -908,27 +932,24 @@ public sealed class MainMenuController : MonoBehaviour
             _startButton.interactable = _session.CanHostStartGame;
             if (_lobbyGateLabel != null)
             {
-                bool allReady = _session.AreAllLobbyPlayersReady && _session.LobbyPlayers.Count > 0;
-                _lobbyGateLabel.text = allReady
-                    ? "All players ready. Begin when you are."
-                    : "Waiting for every player to ready up.";
+                IReadOnlyList<LobbyPlayerState> players = _session.LobbyPlayers;
+                int readyCount = 0;
+                for (int i = 0; i < players.Count; i++)
+                {
+                    if (players[i].IsReady)
+                        readyCount++;
+                }
+                bool allReady = _session.AreAllLobbyPlayersReady && players.Count > 0;
+                _lobbyGateLabel.text = allReady ? "ALL READY" : $"{readyCount}/{players.Count} READY";
                 _lobbyGateLabel.color = allReady ? MenuTheme.Moss : MenuTheme.Faint;
             }
         }
 
         bool ready = _session.IsLocalReady;
         if (_readyLabel != null)
-            _readyLabel.text = ready ? "READY  —  TAP TO UNREADY" : "READY UP";
+            _readyLabel.text = ready ? "READY" : "READY UP";
         if (_readyFx != null)
-        {
-            _readyFx.labelNormal = ready ? MenuTheme.Moss : MenuTheme.Bone;
-            _readyFx.labelHover = ready ? MenuTheme.Moss : Color.white;
-            _readyFx.outlineNormal = ready ? MenuTheme.Moss : MenuTheme.Stroke;
-            _readyFx.outlineHover = ready ? MenuTheme.Moss : MenuTheme.Amber;
-            _readyFx.backgroundNormal = ready
-                ? MenuTheme.WithAlpha(MenuTheme.Moss, 0.10f)
-                : MenuTheme.WithAlpha(Color.white, 0.02f);
-        }
+            _readyFx.SetSelected(ready);
 
         bool steam = _session.CurrentTransportMode == MultiplayerTransportMode.SteamP2P;
         bool hasSelfId = steam && _session.LocalSteamId != 0UL;
@@ -984,7 +1005,8 @@ public sealed class MainMenuController : MonoBehaviour
 
         if (players.Count == 0)
         {
-            MenuWidgets.CreateText(_playerListRoot, "Empty", "Waiting for lobby state...", 15f, MenuTheme.Faint);
+            MenuWidgets.CreateText(_playerListRoot, "Empty", "SYNCING", 14f, MenuTheme.Faint,
+                MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 4f);
             return;
         }
 
@@ -996,23 +1018,22 @@ public sealed class MainMenuController : MonoBehaviour
             RectTransform row = MenuWidgets.CreateRect("Player_" + p.ClientId, _playerListRoot);
             MenuWidgets.SetLayout(row, minHeight: 50f, preferredHeight: 50f);
 
-            Image bg = MenuWidgets.CreateImage(row, "Bg", MenuTheme.RoundedRect(8), MenuTheme.WithAlpha(MenuTheme.PanelRaised, 0.85f));
-            RectTransform bgRt = bg.rectTransform;
-            bgRt.anchorMin = Vector2.zero;
-            bgRt.anchorMax = Vector2.one;
-            bgRt.offsetMin = Vector2.zero;
-            bgRt.offsetMax = Vector2.zero;
+            Image bg = MenuWidgets.CreateImage(row, "Bg", MenuTheme.RoundedRect(2), MenuTheme.WithAlpha(MenuTheme.Tile, 0.88f));
+            bg.rectTransform.SetStretch();
+            Image frame = MenuWidgets.CreateImage(row, "Frame", MenuTheme.RoundedOutline(2, 1.6f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.18f));
+            frame.rectTransform.SetStretch();
 
-            Image dot = MenuWidgets.CreateImage(row, "Dot", MenuTheme.Circle(), p.IsReady ? MenuTheme.Moss : MenuTheme.Faint);
-            RectTransform dotRt = dot.rectTransform;
-            dotRt.anchorMin = new Vector2(0f, 0.5f);
-            dotRt.anchorMax = new Vector2(0f, 0.5f);
-            dotRt.anchoredPosition = new Vector2(24f, 0f);
-            dotRt.sizeDelta = new Vector2(11f, 11f);
+            Image chip = MenuWidgets.CreateImage(row, "ReadyChip", MenuTheme.Solid(), p.IsReady ? MenuTheme.Moss : MenuTheme.Faint);
+            RectTransform chipRt = chip.rectTransform;
+            chipRt.anchorMin = new Vector2(0f, 0.5f);
+            chipRt.anchorMax = new Vector2(0f, 0.5f);
+            chipRt.anchoredPosition = new Vector2(24f, 0f);
+            chipRt.sizeDelta = new Vector2(10f, 10f);
+            chipRt.localRotation = Quaternion.Euler(0f, 0f, 45f);
             if (!p.IsReady)
             {
-                var pulse = dot.gameObject.AddComponent<UiPulse>();
-                pulse.target = dot;
+                var pulse = chip.gameObject.AddComponent<UiPulse>();
+                pulse.target = chip;
                 pulse.minAlpha = 0.25f;
                 pulse.maxAlpha = 0.8f;
             }
@@ -1024,7 +1045,7 @@ public sealed class MainMenuController : MonoBehaviour
                 who += "   <color=#" + ColorUtility.ToHtmlStringRGB(MenuTheme.Faint) + ">YOU</color>";
 
             TextMeshProUGUI name = MenuWidgets.CreateText(row, "Name", who, 16f, MenuTheme.Bone,
-                MenuWidgets.FontKind.Body, TextAlignmentOptions.MidlineLeft, 2f);
+                MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineLeft, 2.5f);
             RectTransform nameRt = name.rectTransform;
             nameRt.anchorMin = Vector2.zero;
             nameRt.anchorMax = Vector2.one;
@@ -1032,8 +1053,8 @@ public sealed class MainMenuController : MonoBehaviour
             nameRt.offsetMax = new Vector2(-130f, 0f);
             name.richText = true;
 
-            TextMeshProUGUI state = MenuWidgets.CreateText(row, "State", p.IsReady ? "READY" : "NOT READY", 13.5f,
-                p.IsReady ? MenuTheme.Moss : MenuTheme.Faint, MenuWidgets.FontKind.Body, TextAlignmentOptions.MidlineRight, 4f);
+            TextMeshProUGUI state = MenuWidgets.CreateText(row, "State", p.IsReady ? "READY" : "—", 13.5f,
+                p.IsReady ? MenuTheme.Moss : MenuTheme.Faint, MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineRight, 4f);
             RectTransform stateRt = state.rectTransform;
             stateRt.anchorMin = new Vector2(1f, 0f);
             stateRt.anchorMax = new Vector2(1f, 1f);

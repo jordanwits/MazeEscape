@@ -60,6 +60,45 @@ public sealed class UiFlicker : MonoBehaviour
     }
 }
 
+/// <summary>
+/// Keeps a tiling RawImage's uvRect matched to its rect size so weathering grain stays at a
+/// constant density regardless of widget size, with a per-instance offset so no two plates
+/// share the same patch of wear.
+/// </summary>
+[DisallowMultipleComponent]
+[RequireComponent(typeof(RawImage))]
+public sealed class UiGrungeFit : MonoBehaviour
+{
+    public float pixelsPerTile = 260f;
+
+    RawImage _image;
+    float _offsetX;
+    float _offsetY;
+
+    void Awake()
+    {
+        _image = GetComponent<RawImage>();
+        int id = Mathf.Abs(GetInstanceID());
+        _offsetX = (id % 613) / 613f;
+        _offsetY = (id % 419) / 419f;
+        Apply();
+    }
+
+    void OnRectTransformDimensionsChange()
+    {
+        Apply();
+    }
+
+    void Apply()
+    {
+        if (_image == null)
+            return;
+        Rect r = ((RectTransform)transform).rect;
+        _image.uvRect = new Rect(_offsetX, _offsetY,
+            Mathf.Max(0.05f, r.width / pixelsPerTile), Mathf.Max(0.05f, r.height / pixelsPerTile));
+    }
+}
+
 /// <summary>Gentle alpha pulse for small indicators (e.g. "waiting" dots).</summary>
 [DisallowMultipleComponent]
 public sealed class UiPulse : MonoBehaviour

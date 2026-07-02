@@ -144,23 +144,16 @@ public class PlayerHealth : MonoBehaviour
 
     Image CreateHealthBarUI()
     {
-        Canvas canvas = FindAnyObjectByType<Canvas>();
-        if (canvas == null)
-        {
-            GameObject canvasGo = new GameObject("HealthCanvas");
-            canvas = canvasGo.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 10;
-            CanvasScaler scaler = canvasGo.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920, 1080);
-            canvasGo.AddComponent<GraphicRaycaster>();
-        }
+        Canvas canvas = HudKit.EnsureHudCanvas();
 
         GameObject bg = new GameObject("HealthBarBG");
+        bg.layer = 5;
         bg.transform.SetParent(canvas.transform, false);
         Image bgImage = bg.AddComponent<Image>();
-        bgImage.color = new Color(0f, 0f, 0f, 0.6f);
+        bgImage.sprite = MenuTheme.RoundedRect(2);
+        bgImage.type = Image.Type.Sliced;
+        bgImage.color = MenuTheme.WithAlpha(MenuTheme.Ink, 0.72f);
+        bgImage.raycastTarget = false;
         RectTransform bgRect = bg.GetComponent<RectTransform>();
         bgRect.anchorMin = new Vector2(0.5f, 1f);
         bgRect.anchorMax = new Vector2(0.5f, 1f);
@@ -170,16 +163,32 @@ public class PlayerHealth : MonoBehaviour
         _healthBarRoot = bg;
 
         GameObject fill = new GameObject("HealthBarFill");
+        fill.layer = 5;
         fill.transform.SetParent(bg.transform, false);
         Image fillImage = fill.AddComponent<Image>();
-        fillImage.color = new Color(0.9f, 0.2f, 0.2f, 0.95f);
+        fillImage.color = MenuTheme.WithAlpha(MenuTheme.Blood, 0.95f);
+        fillImage.raycastTarget = false;
         RectTransform fillRect = fill.GetComponent<RectTransform>();
         fillRect.anchorMin = Vector2.zero;
         fillRect.anchorMax = Vector2.one;
         fillRect.pivot = new Vector2(0f, 0.5f);
-        fillRect.offsetMin = new Vector2(2f, 2f);
-        fillRect.offsetMax = new Vector2(-2f, -2f);
+        fillRect.offsetMin = new Vector2(2.5f, 2.5f);
+        fillRect.offsetMax = new Vector2(-2.5f, -2.5f);
         _healthFillRect = fillRect;
+
+        GameObject frameGo = new GameObject("Frame");
+        frameGo.layer = 5;
+        frameGo.transform.SetParent(bg.transform, false);
+        Image frame = frameGo.AddComponent<Image>();
+        frame.sprite = MenuTheme.RoundedOutline(2, 1.6f);
+        frame.type = Image.Type.Sliced;
+        frame.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.20f);
+        frame.raycastTarget = false;
+        RectTransform frameRect = frame.rectTransform;
+        frameRect.anchorMin = Vector2.zero;
+        frameRect.anchorMax = Vector2.one;
+        frameRect.offsetMin = Vector2.zero;
+        frameRect.offsetMax = Vector2.zero;
 
         return fillImage;
     }

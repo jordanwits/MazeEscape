@@ -1,3 +1,4 @@
+using TMPro;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -7,10 +8,10 @@ using UnityEngine.UI;
 /// <summary>
 /// Local-player blackjack table view + control overlay. Shown only while the local player occupies a seat. While
 /// seated it (a) switches the view to a per-seat zoomed-in table camera, (b) frees the cursor + freezes movement
-/// via <see cref="IsInteractive"/>, and (c) shows a casino-style control panel (bet / deal / hit / stand / leave)
-/// that routes to the table's <see cref="BlackjackGameController"/> ServerRpcs. Hand totals are deliberately NOT
-/// shown — the player reads the cards on the felt and does their own math. A single instance is created on demand
-/// and persists (DontDestroyOnLoad) so its canvas/camera can't be torn down by other HUD/scene churn.
+/// via <see cref="IsInteractive"/>, and (c) shows a control panel (bet / deal / hit / stand / leave) in the shared
+/// plate language that routes to the table's <see cref="BlackjackGameController"/> ServerRpcs. Hand totals are
+/// deliberately NOT shown — the player reads the cards on the felt and does their own math. A single instance is
+/// created on demand and persists (DontDestroyOnLoad) so its canvas/camera can't be torn down by scene churn.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class BlackjackOverlayController : MonoBehaviour
@@ -20,16 +21,6 @@ public sealed class BlackjackOverlayController : MonoBehaviour
 
     static BlackjackOverlayController _instance;
 
-    // Palette
-    static readonly Color PanelBg = new(0.05f, 0.08f, 0.07f, 0.93f);
-    static readonly Color Gold = new(0.93f, 0.78f, 0.38f, 1f);
-    static readonly Color TextLight = new(0.93f, 0.96f, 0.95f, 1f);
-    static readonly Color TextDim = new(0.66f, 0.72f, 0.70f, 1f);
-    static readonly Color BtnGreen = new(0.18f, 0.55f, 0.28f, 1f);
-    static readonly Color BtnAmber = new(0.80f, 0.52f, 0.16f, 1f);
-    static readonly Color BtnGold = new(0.74f, 0.58f, 0.20f, 1f);
-    static readonly Color BtnGray = new(0.26f, 0.29f, 0.31f, 1f);
-
     PlayerController _player;
     NetworkObject _playerNet;
     NetworkPlayerCarnivalTickets _wallet;
@@ -37,9 +28,11 @@ public sealed class BlackjackOverlayController : MonoBehaviour
 
     GameObject _root;
     CanvasGroup _canvasGroup;
-    Text _bannerText, _balanceValue, _betValue, _message;
+    TMP_Text _bannerText, _balanceValue, _betValue, _message;
     Button _betMinus, _betPlus, _dealBtn, _hitBtn, _standBtn, _leaveBtn;
-    Text _dealLabel;
+    MenuButtonFx _dealFx;
+    TMP_Text _dealLabel;
+    bool _dealStyledAsCancel;
 
     Camera _bjCamera;
     Camera _fpCamera;
@@ -162,6 +155,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
             SeatPlayerOnStool();
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
+            MenuTheme.ApplyCursor();
         }
         else
         {
@@ -294,7 +288,12 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         {
             _dealLabel.text = ready ? "CANCEL" : "DEAL";
             _dealBtn.interactable = ready || balance >= BlackjackConfig.MinBet;
-            SetButtonColor(_dealBtn, ready ? BtnGray : BtnGold);
+            if (_dealStyledAsCancel != ready && _dealFx != null)
+            {
+                _dealStyledAsCancel = ready;
+                MenuWidgets.ApplyPlateStyle(_dealFx,
+                    ready ? MenuWidgets.PlateStyle.Ghost : MenuWidgets.PlateStyle.Primary);
+            }
         }
 
         _hitBtn.gameObject.SetActive(myTurn);
@@ -309,29 +308,29 @@ public sealed class BlackjackOverlayController : MonoBehaviour
             case BlackjackPhase.Idle:
             case BlackjackPhase.Betting:
                 if (s.IsReady == 1)
-                    return $"Bet placed - dealing in {Mathf.CeilToInt(_table.PhaseTimer)}s";
-                return "Set your bet, then DEAL";
+                    return $"DEALING IN {Mathf.CeilToInt(_table.PhaseTimer)}";
+                return "PLACE YOUR BET";
             case BlackjackPhase.Dealing:
-                return "Dealing...";
+                return "DEALING";
             case BlackjackPhase.PlayerTurns:
                 if (s.InRound == 0)
-                    return "Sitting out - next round soon";
+                    return "SITTING OUT";
                 if (s.Status == (byte)BlackjackHandStatus.Bust)
-                    return "Busted!";
+                    return "BUST";
                 if (s.Status == (byte)BlackjackHandStatus.Blackjack)
-                    return "Blackjack!";
+                    return "BLACKJACK";
                 if (myTurn)
-                    return $"Your move - Hit or Stand  ({Mathf.CeilToInt(_table.PhaseTimer)}s)";
+                    return $"YOUR MOVE — {Mathf.CeilToInt(_table.PhaseTimer)}";
                 if (_table.ActingSeatIndex < 0)
-                    return "Dealer's turn...";
-                return $"Seat {_table.ActingSeatIndex + 1} is playing...";
+                    return "DEALER DRAWS";
+                return $"SEAT {_table.ActingSeatIndex + 1} PLAYING";
             case BlackjackPhase.DealerTurn:
-                return "Dealer draws...";
+                return "DEALER DRAWS";
             case BlackjackPhase.Resolve:
             case BlackjackPhase.Payout:
                 if (s.InRound == 0)
-                    return "Sat out - next round soon";
-                return "Round over";
+                    return "SAT OUT";
+                return "ROUND OVER";
             default:
                 return string.Empty;
         }
@@ -342,13 +341,13 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         string delta = s.LastPayout > 0 ? $"+{s.LastPayout}" : s.LastPayout.ToString();
         switch ((BlackjackSeatResult)s.LastResult)
         {
-            case BlackjackSeatResult.Blackjack: color = Gold; return $"BLACKJACK!  {delta}";
-            case BlackjackSeatResult.Win: color = new Color(0.45f, 0.9f, 0.5f); return $"YOU WIN  {delta}";
-            case BlackjackSeatResult.Push: color = TextDim; return "PUSH";
-            case BlackjackSeatResult.Bust: color = new Color(0.95f, 0.4f, 0.4f); return $"BUST  {delta}";
-            case BlackjackSeatResult.Lose: color = new Color(0.95f, 0.4f, 0.4f); return $"DEALER WINS  {delta}";
-            case BlackjackSeatResult.Forfeit: color = new Color(0.95f, 0.4f, 0.4f); return "FORFEIT";
-            default: color = TextLight; return string.Empty;
+            case BlackjackSeatResult.Blackjack: color = MenuTheme.AmberBright; return $"BLACKJACK  {delta}";
+            case BlackjackSeatResult.Win: color = MenuTheme.Moss; return $"YOU WIN  {delta}";
+            case BlackjackSeatResult.Push: color = MenuTheme.Mist; return "PUSH";
+            case BlackjackSeatResult.Bust: color = MenuTheme.BloodBright; return $"BUST  {delta}";
+            case BlackjackSeatResult.Lose: color = MenuTheme.BloodBright; return $"DEALER WINS  {delta}";
+            case BlackjackSeatResult.Forfeit: color = MenuTheme.BloodBright; return "FORFEIT";
+            default: color = MenuTheme.Bone; return string.Empty;
         }
     }
 
@@ -392,42 +391,73 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         const float W = 940f;
         const float H = 232f;
 
-        _root = MakePanel(canvas.transform, "BlackjackPanel", PanelBg, new Vector2(0.5f, 0f), new Vector2(0f, 28f), new Vector2(W, H));
+        // panel: dark weathered plate with a bone frame and corner brackets
+        _root = new GameObject("BlackjackPanel");
+        _root.layer = 5;
+        _root.transform.SetParent(canvas.transform, false);
+        RectTransform rootRt = _root.AddComponent<RectTransform>();
+        rootRt.anchorMin = new Vector2(0.5f, 0f);
+        rootRt.anchorMax = new Vector2(0.5f, 0f);
+        rootRt.pivot = new Vector2(0.5f, 0f);
+        rootRt.anchoredPosition = new Vector2(0f, 28f);
+        rootRt.sizeDelta = new Vector2(W, H);
         _canvasGroup = _root.AddComponent<CanvasGroup>();
 
-        // Gold accent strip along the top of the panel.
-        GameObject strip = MakePanel(_root.transform, "Accent", Gold, new Vector2(0.5f, 1f), new Vector2(0f, 0f), new Vector2(W, 4f));
-        strip.GetComponent<RectTransform>().anchorMin = new Vector2(0f, 1f);
-        strip.GetComponent<RectTransform>().anchorMax = new Vector2(1f, 1f);
-        strip.GetComponent<RectTransform>().sizeDelta = new Vector2(0f, 4f);
+        Image bg = _root.AddComponent<Image>();
+        bg.sprite = MenuTheme.RoundedRect(3);
+        bg.type = Image.Type.Sliced;
+        bg.color = MenuTheme.WithAlpha(MenuTheme.Panel, 0.96f);
+        MenuWidgets.CreateGrunge(_root.transform, MenuTheme.WithAlpha(Color.white, 0.05f));
+        Image frame = MenuWidgets.CreateImage(_root.transform, "Frame", MenuTheme.RoundedOutline(3, 1.6f),
+            MenuTheme.WithAlpha(MenuTheme.Bone, 0.20f));
+        frame.rectTransform.SetStretch();
+        MenuWidgets.CreateCornerBrackets(rootRt, MenuTheme.WithAlpha(MenuTheme.Bone, 0.55f));
 
-        MakeLabel(_root.transform, "BLACKJACK", 22, FontStyle.Bold, Gold, TextAnchor.MiddleLeft,
-            new Vector2(0f, 1f), new Vector2(24f, -12f), new Vector2(280f, 32f));
+        TMP_Text title = MakeLabel(_root.transform, "BLACKJACK", 21f, MenuTheme.WithAlpha(MenuTheme.Amber, 0.95f),
+            TextAlignmentOptions.MidlineLeft, new Vector2(0f, 1f), new Vector2(26f, -14f), new Vector2(280f, 30f));
+        title.characterSpacing = 6f;
 
         // Result banner - big, anchored near the TOP-center of the screen (above the dealer's cards, in the
         // empty felt/background area) so it never overlaps the hands. ~170px down from the top in 1080-ref space.
-        _bannerText = MakeLabel(canvas.transform, "", 56, FontStyle.Bold, Gold, TextAnchor.MiddleCenter,
+        _bannerText = MakeLabel(canvas.transform, "", 58f, MenuTheme.AmberBright, TextAlignmentOptions.Center,
             new Vector2(0.5f, 1f), new Vector2(0f, -170f), new Vector2(900f, 80f));
-        AddShadow(_bannerText, 3f);
+        _bannerText.characterSpacing = 6f;
+        _bannerText.fontStyle = FontStyles.Bold;
+        AddUnderlay(_bannerText);
         _bannerText.gameObject.SetActive(false);
 
-        // Tickets + Bet (right cluster) with +/- buttons.
-        MakeLabel(_root.transform, "TICKETS", 18, FontStyle.Bold, TextDim, TextAnchor.MiddleRight, new Vector2(1f, 1f), new Vector2(-40f, -16f), new Vector2(220f, 22f));
-        _balanceValue = MakeLabel(_root.transform, "0", 40, FontStyle.Bold, Gold, TextAnchor.MiddleRight, new Vector2(1f, 1f), new Vector2(-40f, -52f), new Vector2(220f, 44f));
+        // Tickets + Bet (right cluster) with +/- plates.
+        MakeLabel(_root.transform, "TICKETS", 15f, MenuTheme.Mist, TextAlignmentOptions.MidlineRight,
+            new Vector2(1f, 1f), new Vector2(-40f, -18f), new Vector2(220f, 22f)).characterSpacing = 5f;
+        _balanceValue = MakeLabel(_root.transform, "0", 38f, MenuTheme.AmberBright, TextAlignmentOptions.MidlineRight,
+            new Vector2(1f, 1f), new Vector2(-40f, -52f), new Vector2(220f, 44f));
 
-        MakeLabel(_root.transform, "BET", 18, FontStyle.Bold, TextDim, TextAnchor.MiddleCenter, new Vector2(1f, 1f), new Vector2(-345f, -16f), new Vector2(120f, 22f));
-        _betValue = MakeLabel(_root.transform, "5", 40, FontStyle.Bold, TextLight, TextAnchor.MiddleCenter, new Vector2(1f, 1f), new Vector2(-345f, -54f), new Vector2(120f, 44f));
-        _betMinus = MakeButton(_root.transform, "-", BtnGray, OnBetMinus, out _, new Vector2(1f, 1f), new Vector2(-470f, -58f), new Vector2(52f, 52f), 30);
-        _betPlus = MakeButton(_root.transform, "+", BtnGray, OnBetPlus, out _, new Vector2(1f, 1f), new Vector2(-228f, -58f), new Vector2(52f, 52f), 30);
+        MakeLabel(_root.transform, "BET", 15f, MenuTheme.Mist, TextAlignmentOptions.Center,
+            new Vector2(1f, 1f), new Vector2(-345f, -18f), new Vector2(120f, 22f)).characterSpacing = 5f;
+        _betValue = MakeLabel(_root.transform, "5", 38f, MenuTheme.Bone, TextAlignmentOptions.Center,
+            new Vector2(1f, 1f), new Vector2(-345f, -54f), new Vector2(120f, 44f));
+        _betMinus = MakePlate("-", MenuWidgets.PlateStyle.Ghost, OnBetMinus, out _,
+            new Vector2(1f, 1f), new Vector2(-470f, -58f), new Vector2(52f, 52f), 26f);
+        _betPlus = MakePlate("+", MenuWidgets.PlateStyle.Ghost, OnBetPlus, out _,
+            new Vector2(1f, 1f), new Vector2(-228f, -58f), new Vector2(52f, 52f), 26f);
 
-        // Status message (center, prominent - no totals shown).
-        _message = MakeLabel(_root.transform, "", 28, FontStyle.Bold, TextLight, TextAnchor.MiddleLeft, new Vector2(0f, 1f), new Vector2(28f, -64f), new Vector2(560f, 40f));
+        // Status message (left-center, prominent - no totals shown).
+        _message = MakeLabel(_root.transform, "", 27f, MenuTheme.Bone, TextAlignmentOptions.MidlineLeft,
+            new Vector2(0f, 1f), new Vector2(28f, -64f), new Vector2(560f, 40f));
+        _message.characterSpacing = 3f;
 
-        // Action buttons (bottom).
-        _hitBtn = MakeButton(_root.transform, "HIT", BtnGreen, OnHit, out _, new Vector2(0f, 0f), new Vector2(40f, 24f), new Vector2(250f, 66f), 30);
-        _standBtn = MakeButton(_root.transform, "STAND", BtnAmber, OnStand, out _, new Vector2(0f, 0f), new Vector2(304f, 24f), new Vector2(250f, 66f), 30);
-        _dealBtn = MakeButton(_root.transform, "DEAL", BtnGold, OnDeal, out _dealLabel, new Vector2(0f, 0f), new Vector2(40f, 24f), new Vector2(514f, 66f), 32);
-        _leaveBtn = MakeButton(_root.transform, "LEAVE TABLE", BtnGray, OnLeave, out _, new Vector2(1f, 0f), new Vector2(-40f, 24f), new Vector2(300f, 66f), 26);
+        // Action plates (bottom).
+        _hitBtn = MakePlate("HIT", MenuWidgets.PlateStyle.Primary, OnHit, out _,
+            new Vector2(0f, 0f), new Vector2(40f, 24f), new Vector2(250f, 62f), 26f);
+        _standBtn = MakePlate("STAND", MenuWidgets.PlateStyle.Ghost, OnStand, out _,
+            new Vector2(0f, 0f), new Vector2(304f, 24f), new Vector2(250f, 62f), 26f);
+        MenuButtonFx dealFx;
+        _dealBtn = MakePlateFx("DEAL", MenuWidgets.PlateStyle.Primary, OnDeal, out _dealLabel, out dealFx,
+            new Vector2(0f, 0f), new Vector2(40f, 24f), new Vector2(514f, 62f), 27f);
+        _dealFx = dealFx;
+        _dealStyledAsCancel = false;
+        _leaveBtn = MakePlate("LEAVE", MenuWidgets.PlateStyle.Danger, OnLeave, out _,
+            new Vector2(1f, 0f), new Vector2(-40f, 24f), new Vector2(300f, 62f), 24f);
 
         _root.SetActive(false);
     }
@@ -439,6 +469,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         Canvas canvas = canvasGo.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 30;
+        canvas.vertexColorAlwaysGammaSpace = true;
         CanvasScaler scaler = canvasGo.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920, 1080);
@@ -455,92 +486,53 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         es.AddComponent<InputSystemUIInputModule>();
     }
 
-    // --- uGUI builders ---
+    // --- builders ---
 
-    static GameObject MakePanel(Transform parent, string name, Color color, Vector2 pivotAnchor, Vector2 anchoredPos, Vector2 size)
-    {
-        GameObject go = new(name);
-        go.transform.SetParent(parent, false);
-        RectTransform r = go.AddComponent<RectTransform>();
-        r.anchorMin = pivotAnchor;
-        r.anchorMax = pivotAnchor;
-        r.pivot = pivotAnchor;
-        r.anchoredPosition = anchoredPos;
-        r.sizeDelta = size;
-        Image img = go.AddComponent<Image>();
-        img.color = color;
-        return go;
-    }
-
-    static Text MakeLabel(Transform parent, string text, int fontSize, FontStyle style, Color color, TextAnchor anchor,
+    static TMP_Text MakeLabel(Transform parent, string text, float fontSize, Color color, TextAlignmentOptions alignment,
         Vector2 pivotAnchor, Vector2 anchoredPos, Vector2 size)
     {
-        GameObject go = new("Label");
-        go.transform.SetParent(parent, false);
-        Text t = go.AddComponent<Text>();
-        t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        t.fontSize = fontSize;
-        t.fontStyle = style;
-        t.alignment = anchor;
-        t.color = color;
-        t.text = text;
-        t.raycastTarget = false;
-        t.horizontalOverflow = HorizontalWrapMode.Overflow;
-        t.verticalOverflow = VerticalWrapMode.Overflow;
+        TextMeshProUGUI t = MenuWidgets.CreateText(parent, "Label", text, fontSize, color,
+            MenuWidgets.FontKind.Display, alignment, 2f);
         RectTransform r = t.rectTransform;
         r.anchorMin = pivotAnchor;
         r.anchorMax = pivotAnchor;
         r.pivot = pivotAnchor;
         r.anchoredPosition = anchoredPos;
         r.sizeDelta = size;
+        t.textWrappingMode = TextWrappingModes.NoWrap;
         return t;
     }
 
-    static void AddShadow(Text t, float dist)
+    static void AddUnderlay(TMP_Text text)
     {
-        Shadow sh = t.gameObject.AddComponent<Shadow>();
-        sh.effectColor = new Color(0f, 0f, 0f, 0.6f);
-        sh.effectDistance = new Vector2(dist, -dist);
+        Material mat = text.fontMaterial;
+        if (mat == null || !mat.HasProperty(ShaderUtilities.ID_UnderlayColor))
+            return;
+        mat.EnableKeyword(ShaderUtilities.Keyword_Underlay);
+        mat.SetColor(ShaderUtilities.ID_UnderlayColor, new Color(0f, 0f, 0f, 0.7f));
+        mat.SetFloat(ShaderUtilities.ID_UnderlayOffsetX, 0.6f);
+        mat.SetFloat(ShaderUtilities.ID_UnderlayOffsetY, -0.6f);
+        mat.SetFloat(ShaderUtilities.ID_UnderlaySoftness, 0.3f);
     }
 
-    static Button MakeButton(Transform parent, string label, Color bg, UnityEngine.Events.UnityAction onClick, out Text labelText,
-        Vector2 pivotAnchor, Vector2 anchoredPos, Vector2 size, int fontSize)
+    Button MakePlate(string label, MenuWidgets.PlateStyle style, UnityEngine.Events.UnityAction onClick,
+        out TMP_Text labelText, Vector2 pivotAnchor, Vector2 anchoredPos, Vector2 size, float fontSize)
     {
-        GameObject go = new($"Btn_{label}");
-        go.transform.SetParent(parent, false);
-        RectTransform r = go.AddComponent<RectTransform>();
+        return MakePlateFx(label, style, onClick, out labelText, out _, pivotAnchor, anchoredPos, size, fontSize);
+    }
+
+    Button MakePlateFx(string label, MenuWidgets.PlateStyle style, UnityEngine.Events.UnityAction onClick,
+        out TMP_Text labelText, out MenuButtonFx fx, Vector2 pivotAnchor, Vector2 anchoredPos, Vector2 size, float fontSize)
+    {
+        fx = MenuWidgets.CreatePlate(_root.transform, "Btn_" + label, label, () => onClick?.Invoke(),
+            style, size.y, fontSize);
+        RectTransform r = (RectTransform)fx.transform;
         r.anchorMin = pivotAnchor;
         r.anchorMax = pivotAnchor;
         r.pivot = pivotAnchor;
         r.anchoredPosition = anchoredPos;
         r.sizeDelta = size;
-        Image img = go.AddComponent<Image>();
-        img.color = bg;
-
-        Button btn = go.AddComponent<Button>();
-        btn.targetGraphic = img;
-        SetButtonColor(btn, bg);
-        btn.onClick.AddListener(onClick);
-
-        labelText = MakeLabel(go.transform, label, fontSize, FontStyle.Bold, TextLight, TextAnchor.MiddleCenter,
-            new Vector2(0.5f, 0.5f), Vector2.zero, size);
-        labelText.rectTransform.anchorMin = Vector2.zero;
-        labelText.rectTransform.anchorMax = Vector2.one;
-        labelText.rectTransform.offsetMin = Vector2.zero;
-        labelText.rectTransform.offsetMax = Vector2.zero;
-        return btn;
-    }
-
-    static void SetButtonColor(Button btn, Color bg)
-    {
-        if (btn.targetGraphic is Image img)
-            img.color = bg;
-        ColorBlock cb = btn.colors;
-        cb.normalColor = Color.white;
-        cb.highlightedColor = new Color(1.15f, 1.15f, 1.15f, 1f);
-        cb.pressedColor = new Color(0.8f, 0.8f, 0.8f, 1f);
-        cb.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.6f);
-        cb.colorMultiplier = 1f;
-        btn.colors = cb;
+        labelText = fx.label;
+        return fx.button;
     }
 }

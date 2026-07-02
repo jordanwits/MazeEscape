@@ -33,18 +33,19 @@ public sealed class MenuToast : MonoBehaviour
         _group.blocksRaycasts = false;
         _group.interactable = false;
 
-        Image bg = MenuWidgets.CreateImage(rt, "Bg", MenuTheme.RoundedRect(8), MenuTheme.WithAlpha(MenuTheme.PanelRaised, 0.96f));
+        Image bg = MenuWidgets.CreateImage(rt, "Bg", MenuTheme.RoundedRect(2), MenuTheme.WithAlpha(MenuTheme.PanelRaised, 0.96f));
         StretchFull(bg.rectTransform);
-        Image outline = MenuWidgets.CreateImage(rt, "Outline", MenuTheme.RoundedOutline(8, 1.4f), MenuTheme.WithAlpha(MenuTheme.Stroke, 0.9f));
+        MenuWidgets.CreateGrunge(rt, MenuTheme.WithAlpha(Color.white, 0.05f));
+        Image outline = MenuWidgets.CreateImage(rt, "Outline", MenuTheme.RoundedOutline(2, 1.6f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.28f));
         StretchFull(outline.rectTransform);
 
         Image tick = MenuWidgets.CreateImage(rt, "Accent", MenuTheme.Solid(), MenuTheme.Amber);
         RectTransform tickRt = tick.rectTransform;
-        tickRt.anchorMin = new Vector2(0f, 0.22f);
-        tickRt.anchorMax = new Vector2(0f, 0.78f);
+        tickRt.anchorMin = new Vector2(0f, 0f);
+        tickRt.anchorMax = new Vector2(0f, 1f);
         tickRt.pivot = new Vector2(0f, 0.5f);
-        tickRt.anchoredPosition = new Vector2(10f, 0f);
-        tickRt.sizeDelta = new Vector2(3f, 0f);
+        tickRt.anchoredPosition = new Vector2(0f, 0f);
+        tickRt.sizeDelta = new Vector2(4f, 0f);
 
         _label = MenuWidgets.CreateText(rt, "Label", string.Empty, 15.5f, MenuTheme.Bone,
             MenuWidgets.FontKind.Body, TextAlignmentOptions.MidlineLeft);

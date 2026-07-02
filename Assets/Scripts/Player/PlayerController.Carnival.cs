@@ -1,3 +1,4 @@
+using TMPro;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.UI;
@@ -19,7 +20,7 @@ public partial class PlayerController
 
     NetworkPlayerCarnivalTickets _networkPlayerCarnivalTickets;
     GameObject _ticketCounterRoot;
-    Text _ticketCounterText;
+    TMP_Text _ticketCounterText;
     int _lastDisplayedTicketCount = -1;
 
     void HookupCarnivalTickets()
@@ -56,34 +57,26 @@ public partial class PlayerController
         if (_ticketCounterRoot != null)
             return;
 
-        Canvas canvas = FindAnyObjectByType<Canvas>();
-        if (canvas == null)
-        {
-            GameObject canvasGo = new GameObject("TicketCounterCanvas");
-            canvas = canvasGo.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 10;
-            canvasGo.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            canvasGo.GetComponent<CanvasScaler>().referenceResolution = new Vector2(1920, 1080);
-            canvasGo.AddComponent<GraphicRaycaster>();
-        }
+        Canvas canvas = HudKit.EnsureHudCanvas();
 
         GameObject root = new GameObject("TicketCounter");
+        root.layer = 5;
         root.transform.SetParent(canvas.transform, false);
         RectTransform rootRect = root.AddComponent<RectTransform>();
         rootRect.anchorMin = new Vector2(0f, 1f);
         rootRect.anchorMax = new Vector2(0f, 1f);
         rootRect.pivot = new Vector2(0f, 1f);
         rootRect.anchoredPosition = new Vector2(24f, -24f);
-        rootRect.sizeDelta = new Vector2(180f, 48f);
+        rootRect.sizeDelta = new Vector2(150f, 44f);
+        rootRect.localRotation = Quaternion.Euler(0f, 0f, 0.4f);
 
-        Image bg = root.AddComponent<Image>();
-        bg.color = new Color(0f, 0f, 0f, 0.55f);
-        bg.raycastTarget = false;
+        HudKit.AddPlate(root, 0.72f, 0.20f);
 
+        float leftPad;
         if (ticketCounterIcon != null)
         {
             GameObject iconGo = new GameObject("Icon");
+            iconGo.layer = 5;
             iconGo.transform.SetParent(root.transform, false);
             Image icon = iconGo.AddComponent<Image>();
             icon.sprite = ticketCounterIcon;
@@ -93,24 +86,44 @@ public partial class PlayerController
             iconRect.anchorMin = new Vector2(0f, 0f);
             iconRect.anchorMax = new Vector2(0f, 1f);
             iconRect.pivot = new Vector2(0f, 0.5f);
-            iconRect.anchoredPosition = new Vector2(8f, 0f);
-            iconRect.sizeDelta = new Vector2(36f, -8f);
+            iconRect.anchoredPosition = new Vector2(10f, 0f);
+            iconRect.sizeDelta = new Vector2(30f, -12f);
+            leftPad = 48f;
+        }
+        else
+        {
+            // mustard diamond stands in for a ticket icon
+            GameObject chipGo = new GameObject("Chip");
+            chipGo.layer = 5;
+            chipGo.transform.SetParent(root.transform, false);
+            Image chip = chipGo.AddComponent<Image>();
+            chip.sprite = MenuTheme.Solid();
+            chip.color = MenuTheme.WithAlpha(MenuTheme.Amber, 0.92f);
+            chip.raycastTarget = false;
+            RectTransform chipRect = chip.rectTransform;
+            chipRect.anchorMin = new Vector2(0f, 0.5f);
+            chipRect.anchorMax = new Vector2(0f, 0.5f);
+            chipRect.anchoredPosition = new Vector2(18f, 0f);
+            chipRect.sizeDelta = new Vector2(9f, 9f);
+            chipRect.localRotation = Quaternion.Euler(0f, 0f, 45f);
+            leftPad = 34f;
         }
 
         GameObject textGo = new GameObject("Count");
+        textGo.layer = 5;
         textGo.transform.SetParent(root.transform, false);
-        Text count = textGo.AddComponent<Text>();
-        count.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        count.fontSize = 28;
-        count.color = new Color(1f, 0.93f, 0.6f, 0.98f);
+        TextMeshProUGUI count = textGo.AddComponent<TextMeshProUGUI>();
+        count.font = MenuTheme.DisplayFont;
+        count.fontSize = 23f;
+        count.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.96f);
+        count.characterSpacing = 2f;
         count.raycastTarget = false;
-        count.alignment = TextAnchor.MiddleLeft;
+        count.alignment = TextAlignmentOptions.MidlineLeft;
         count.text = "0";
         RectTransform textRect = count.rectTransform;
         textRect.anchorMin = new Vector2(0f, 0f);
         textRect.anchorMax = new Vector2(1f, 1f);
         textRect.pivot = new Vector2(0f, 0.5f);
-        float leftPad = ticketCounterIcon != null ? 52f : 14f;
         textRect.offsetMin = new Vector2(leftPad, 2f);
         textRect.offsetMax = new Vector2(-8f, -2f);
 

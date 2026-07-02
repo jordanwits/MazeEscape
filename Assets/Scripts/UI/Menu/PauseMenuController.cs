@@ -101,6 +101,7 @@ public sealed class PauseMenuController : MonoBehaviour
 
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
+        MenuTheme.ApplyCursor();
 
         EnsureEventSystem();
         RefreshStatics();
@@ -154,36 +155,39 @@ public sealed class PauseMenuController : MonoBehaviour
         block.anchoredPosition = new Vector2(150f, -150f);
         block.sizeDelta = new Vector2(620f, 240f);
 
-        TextMeshProUGUI overline = MenuWidgets.CreateText(block, "Overline", "DETOUR", 15f,
-            MenuTheme.WithAlpha(MenuTheme.Amber, 0.85f), MenuWidgets.FontKind.Body, TextAlignmentOptions.Left, 12f);
+        TextMeshProUGUI overline = MenuWidgets.CreateText(block, "Overline", "DETOUR", 16f,
+            MenuTheme.WithAlpha(MenuTheme.Amber, 0.9f), MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 11f);
         SetTop(overline.rectTransform, 0f, 24f);
 
-        TextMeshProUGUI title = MenuWidgets.CreateText(block, "Title", "PAUSED", 84f, MenuTheme.Bone,
-            MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 8f, FontStyles.Bold);
+        TextMeshProUGUI misprint = MenuWidgets.CreateText(block, "TitleMisprint", "PAUSED", 86f,
+            MenuTheme.WithAlpha(MenuTheme.Amber, 0.8f), MenuWidgets.FontKind.Display,
+            TextAlignmentOptions.Left, 5f, FontStyles.Bold);
+        SetTop(misprint.rectTransform, -30f, 100f);
+        misprint.rectTransform.anchoredPosition += new Vector2(7f, -5f);
+
+        TextMeshProUGUI title = MenuWidgets.CreateText(block, "Title", "PAUSED", 86f, MenuTheme.Bone,
+            MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 5f, FontStyles.Bold);
         SetTop(title.rectTransform, -30f, 100f);
 
-        _sceneLabel = MenuWidgets.CreateText(block, "Scene", string.Empty, 15.5f, MenuTheme.Mist,
-            MenuWidgets.FontKind.Body, TextAlignmentOptions.Left, 2f, FontStyles.Italic);
-        SetTop(_sceneLabel.rectTransform, -136f, 24f);
+        _sceneLabel = MenuWidgets.CreateText(block, "Scene", string.Empty, 14.5f, MenuTheme.Mist,
+            MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 6f);
+        SetTop(_sceneLabel.rectTransform, -140f, 24f);
 
         // ---- nav
         RectTransform nav = MenuWidgets.CreateRect("Nav", root);
         nav.anchorMin = new Vector2(0f, 0f);
         nav.anchorMax = new Vector2(0f, 1f);
         nav.pivot = new Vector2(0f, 1f);
-        nav.anchoredPosition = new Vector2(146f, -440f);
-        nav.sizeDelta = new Vector2(460f, 320f);
-        MenuWidgets.AddVertical(nav.gameObject, new RectOffset(0, 0, 0, 0), 6f);
+        nav.anchoredPosition = new Vector2(150f, -440f);
+        nav.sizeDelta = new Vector2(430f, 320f);
+        MenuWidgets.AddVertical(nav.gameObject, new RectOffset(0, 0, 0, 0), 12f);
 
         MenuWidgets.CreateNavButton(nav, "RESUME", () => Close(false), out _);
         MenuWidgets.CreateNavButton(nav, "SETTINGS", () => ShowSettings(!_settingsOpen), out _);
 
         MenuWidgets.CreateNavButton(nav, "LEAVE SESSION", () =>
         {
-            string message = _session != null && _session.IsSessionActive
-                ? "Leave this session and return to the main menu? Other players stay behind."
-                : "Return to the main menu?";
-            _modal.Open("LEAVE SESSION?", message, "LEAVE", true, () =>
+            _modal.Open("LEAVE SESSION", string.Empty, "LEAVE", true, () =>
             {
                 Close(true);
                 if (_flow != null)
@@ -194,8 +198,7 @@ public sealed class PauseMenuController : MonoBehaviour
 
         MenuWidgets.CreateNavButton(nav, "QUIT TO DESKTOP", () =>
         {
-            _modal.Open("QUIT TO DESKTOP?", "Quit the game. Any active session will be abandoned.",
-                "QUIT", true, () =>
+            _modal.Open("QUIT TO DESKTOP", string.Empty, "QUIT", true, () =>
                 {
                     if (_flow != null)
                         _flow.QuitApplication();
@@ -280,7 +283,7 @@ public sealed class PauseMenuController : MonoBehaviour
         if (_sceneLabel != null)
         {
             Scene active = SceneManager.GetActiveScene();
-            _sceneLabel.text = "Somewhere below — " + (active.IsValid() ? active.name : "???");
+            _sceneLabel.text = active.IsValid() ? active.name.ToUpperInvariant() : "???";
         }
         if (_leaveLabel != null)
             _leaveLabel.text = _session != null && _session.IsSessionActive ? "LEAVE SESSION" : "BACK TO MENU";

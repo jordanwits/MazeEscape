@@ -113,11 +113,6 @@ public sealed class MenuSettingsPanel : MonoBehaviour
             UpdateValueLabels();
         });
 
-        TextMeshProUGUI brightnessHint = MenuWidgets.CreateText(_content, "BrightnessHint",
-            "Midpoint matches the level as authored. Raising it lifts the darkness — and some of the dread.",
-            14f, MenuTheme.Faint);
-        brightnessHint.lineSpacing = 6f;
-
         BuildGraphicsSection();
 
         MenuWidgets.CreateSection(_content, "VOICE");
@@ -131,8 +126,9 @@ public sealed class MenuSettingsPanel : MonoBehaviour
                 VoiceUserSettings.SetOpenMic();
         };
 
-        MenuWidgets.CreateText(_content, "VoiceHint",
-            "Proximity voice chat. Push to talk is bound to V.", 14f, MenuTheme.Faint);
+        MenuWidgets.CreateText(_content, "VoiceHint", "PTT KEY — V", 12.5f,
+            MenuTheme.WithAlpha(MenuTheme.Faint, 0.9f), MenuWidgets.FontKind.Display,
+            TMPro.TextAlignmentOptions.Right, 3f);
 
         SyncFromManagers();
     }
@@ -141,7 +137,8 @@ public sealed class MenuSettingsPanel : MonoBehaviour
     {
         MenuWidgets.CreateSection(_content, "GRAPHICS");
 
-        MenuWidgets.CreateText(_content, "QualityCaption", "Quality Preset", 15f, MenuTheme.Bone);
+        MenuWidgets.CreateText(_content, "QualityCaption", "QUALITY", 15.5f, MenuTheme.Bone,
+            MenuWidgets.FontKind.Display, TMPro.TextAlignmentOptions.Left, 3f);
         _quality = MenuWidgets.CreateSegmented(_content, GameGraphicsSettings.TierNames());
         _quality.Changed += index =>
         {
@@ -166,7 +163,8 @@ public sealed class MenuSettingsPanel : MonoBehaviour
             UpdateValueLabels();
         });
 
-        MenuWidgets.CreateText(_content, "ResolutionCaption", "Resolution", 15f, MenuTheme.Bone);
+        MenuWidgets.CreateText(_content, "ResolutionCaption", "RESOLUTION", 15.5f, MenuTheme.Bone,
+            MenuWidgets.FontKind.Display, TMPro.TextAlignmentOptions.Left, 3f);
         _resolution = MenuWidgets.CreateStepper(_content);
         _resolution.Changed += index =>
         {
@@ -174,7 +172,8 @@ public sealed class MenuSettingsPanel : MonoBehaviour
                 GameGraphicsSettings.Instance.SetResolutionIndex(index);
         };
 
-        MenuWidgets.CreateText(_content, "DisplayModeCaption", "Display Mode", 15f, MenuTheme.Bone);
+        MenuWidgets.CreateText(_content, "DisplayModeCaption", "DISPLAY MODE", 15.5f, MenuTheme.Bone,
+            MenuWidgets.FontKind.Display, TMPro.TextAlignmentOptions.Left, 3f);
         _displayMode = MenuWidgets.CreateSegmented(_content, GameGraphicsSettings.DisplayModeNames());
         _displayMode.Changed += index =>
         {
@@ -182,7 +181,8 @@ public sealed class MenuSettingsPanel : MonoBehaviour
                 GameGraphicsSettings.Instance.SetDisplayModeIndex(index);
         };
 
-        MenuWidgets.CreateText(_content, "VSyncCaption", "V-Sync", 15f, MenuTheme.Bone);
+        MenuWidgets.CreateText(_content, "VSyncCaption", "V-SYNC", 15.5f, MenuTheme.Bone,
+            MenuWidgets.FontKind.Display, TMPro.TextAlignmentOptions.Left, 3f);
         _vsync = MenuWidgets.CreateSegmented(_content, GameGraphicsSettings.VSyncNames());
         _vsync.Changed += index =>
         {
@@ -190,18 +190,14 @@ public sealed class MenuSettingsPanel : MonoBehaviour
                 GameGraphicsSettings.Instance.SetVSync(index); // 0 = off, 1 = on
         };
 
-        MenuWidgets.CreateText(_content, "FpsCaption", "Frame Rate Limit", 15f, MenuTheme.Bone);
+        MenuWidgets.CreateText(_content, "FpsCaption", "FRAME RATE LIMIT", 15.5f, MenuTheme.Bone,
+            MenuWidgets.FontKind.Display, TMPro.TextAlignmentOptions.Left, 3f);
         _fpsCap = MenuWidgets.CreateSegmented(_content, GameGraphicsSettings.FpsCapNames());
         _fpsCap.Changed += index =>
         {
             if (GameGraphicsSettings.Instance != null)
                 GameGraphicsSettings.Instance.SetFpsCapOptionIndex(index);
         };
-
-        MenuWidgets.CreateText(_content, "GraphicsHint",
-            "If the game runs slowly, lower the Quality Preset or Render Scale — render scale is the strongest "
-                + "performance lever. V-Sync (when on) overrides the frame-rate limit.",
-            14f, MenuTheme.Faint).lineSpacing = 6f;
     }
 
     void OnEnable()

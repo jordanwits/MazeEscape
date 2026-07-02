@@ -3,30 +3,33 @@ using TMPro;
 using UnityEngine;
 
 /// <summary>
-/// Style source-of-truth for the menu system: palette, fonts, and a cache of procedurally
-/// generated sprites/textures (rounded panels, glows, fog, vignette, maze motif).
-/// Everything is built at runtime so menus need no hand-authored art or scene wiring.
+/// Style source-of-truth for every runtime-built UI surface: palette, fonts, and a cache of
+/// procedurally generated sprites/textures (tiles, frames, grunge, torn bars, cursor, fog).
+/// The language is "condemned funhouse noticeboard": warm charcoal tiles, bone frames and
+/// type, one mustard accent, everything lightly weathered. No authored art required.
 /// </summary>
 public static class MenuTheme
 {
     // ---------------------------------------------------------------- palette
-    public static readonly Color Ink = Hex("07080B");          // deepest background
-    public static readonly Color Bg = Hex("0B0D12");
-    public static readonly Color Panel = Hex("10131A");
-    public static readonly Color PanelRaised = Hex("171B24");
-    public static readonly Color Stroke = Hex("262B36");
-    public static readonly Color StrokeBright = Hex("3C4453");
+    public static readonly Color Ink = Hex("0D0C09");           // deepest background / shadows
+    public static readonly Color Bg = Hex("171511");
+    public static readonly Color Panel = Hex("1E1B15");
+    public static readonly Color PanelRaised = Hex("27231A");
+    public static readonly Color Tile = Hex("14120D");          // button plate fill
+    public static readonly Color Stroke = Hex("3B362B");        // hairlines
+    public static readonly Color StrokeBright = Hex("57503F");
 
-    public static readonly Color Bone = Hex("E9E2D0");          // primary text
-    public static readonly Color Mist = Hex("9A937F");          // secondary text
-    public static readonly Color Faint = Hex("615C4F");         // tertiary text
+    public static readonly Color Bone = Hex("E6E1D3");          // primary text + frames
+    public static readonly Color Mist = Hex("A69F8F");          // secondary text
+    public static readonly Color Faint = Hex("6E6759");         // tertiary text
 
-    public static readonly Color Amber = Hex("E2A13F");         // candle accent
-    public static readonly Color AmberBright = Hex("FFC465");
-    public static readonly Color AmberDeep = Hex("8A5F1E");
-    public static readonly Color Blood = Hex("A8353A");         // destructive accent
-    public static readonly Color BloodBright = Hex("D4555B");
-    public static readonly Color Moss = Hex("7E9E55");          // ready / positive
+    public static readonly Color Amber = Hex("D9A62B");         // mustard accent / selected
+    public static readonly Color AmberBright = Hex("F3C44E");
+    public static readonly Color AmberDeep = Hex("6E5310");     // edge on mustard plates
+    public static readonly Color InkOnAccent = Hex("191307");   // text on mustard
+    public static readonly Color Blood = Hex("A23A33");         // destructive accent
+    public static readonly Color BloodBright = Hex("C75A50");
+    public static readonly Color Moss = Hex("8C9C5A");          // ready / positive
 
     public static Color WithAlpha(Color c, float a)
     {
@@ -40,11 +43,31 @@ public static class MenuTheme
     }
 
     // ---------------------------------------------------------------- fonts
+
     static TMP_FontAsset _displayFont;
     static TMP_FontAsset _bodyFont;
-    static readonly string[] DisplayFontCandidates = { "Constantia", "Palatino Linotype", "Georgia", "Cambria" };
 
-    /// <summary>Engraved-serif display face for titles/buttons; falls back to the body font.</summary>
+    // Condensed grotesque for display type (Bahnschrift = DIN, ships with Win10+).
+    // Both variable-font style names and standalone family names are tried, then
+    // hard classics, then the body font.
+    static readonly string[][] DisplayFontCandidates =
+    {
+        new[] { "Bahnschrift", "SemiBold Condensed" },
+        new[] { "Bahnschrift SemiBold Condensed", "Regular" },
+        new[] { "Bahnschrift", "SemiBold" },
+        new[] { "Bahnschrift", "Regular" },
+        new[] { "Franklin Gothic Medium", "Regular" },
+        new[] { "Impact", "Regular" },
+        new[] { "Arial Narrow", "Bold" },
+    };
+
+    static readonly string[][] BodyFontCandidates =
+    {
+        new[] { "Segoe UI", "Regular" },
+        new[] { "Tahoma", "Regular" },
+    };
+
+    /// <summary>Condensed display face for titles, buttons and headers.</summary>
     public static TMP_FontAsset DisplayFont
     {
         get
@@ -61,7 +84,9 @@ public static class MenuTheme
         {
             if (_bodyFont == null)
             {
-                _bodyFont = TMP_Settings.defaultFontAsset;
+                _bodyFont = CreateOsFontAsset(BodyFontCandidates);
+                if (_bodyFont == null)
+                    _bodyFont = TMP_Settings.defaultFontAsset;
                 if (_bodyFont == null)
                     _bodyFont = Resources.Load<TMP_FontAsset>("Fonts & Materials/LiberationSans SDF");
             }
@@ -69,15 +94,15 @@ public static class MenuTheme
         }
     }
 
-    static TMP_FontAsset CreateOsFontAsset(string[] familyCandidates)
+    static TMP_FontAsset CreateOsFontAsset(string[][] familyStyleCandidates)
     {
-        foreach (string wanted in familyCandidates)
+        foreach (string[] candidate in familyStyleCandidates)
         {
             try
             {
                 // family-name overload resolves the font file through the OS font engine,
                 // which works where CreateFontAsset(Font) fails for dynamic OS fonts.
-                TMP_FontAsset asset = TMP_FontAsset.CreateFontAsset(wanted, "Regular", 90);
+                TMP_FontAsset asset = TMP_FontAsset.CreateFontAsset(candidate[0], candidate[1], 90);
                 if (asset != null)
                 {
                     asset.hideFlags = HideFlags.HideAndDontSave;
@@ -86,7 +111,7 @@ public static class MenuTheme
             }
             catch (System.Exception e)
             {
-                Debug.LogWarning($"[MenuTheme] OS font '{wanted}' unavailable: {e.Message}");
+                Debug.LogWarning($"[MenuTheme] OS font '{candidate[0]} {candidate[1]}' unavailable: {e.Message}");
             }
         }
 
@@ -94,6 +119,7 @@ public static class MenuTheme
     }
 
     // ---------------------------------------------------------------- sprite cache
+
     static readonly Dictionary<string, Sprite> SpriteCache = new();
     static readonly Dictionary<string, Texture2D> TextureCache = new();
 
@@ -132,7 +158,7 @@ public static class MenuTheme
         return qPos.magnitude + Mathf.Min(Mathf.Max(q.x, q.y), 0f) - radius;
     }
 
-    /// <summary>White 9-sliced rounded-rect fill; tint via Image.color.</summary>
+    /// <summary>White 9-sliced near-square plate fill; tint via Image.color.</summary>
     public static Sprite RoundedRect(int radius)
     {
         return CacheSprite($"rect{radius}", () =>
@@ -160,7 +186,7 @@ public static class MenuTheme
         });
     }
 
-    /// <summary>White 9-sliced rounded-rect inner stroke; tint via Image.color.</summary>
+    /// <summary>White 9-sliced inner frame stroke; tint via Image.color.</summary>
     public static Sprite RoundedOutline(int radius, float thickness)
     {
         return CacheSprite($"line{radius}_{thickness:0.#}", () =>
@@ -303,7 +329,179 @@ public static class MenuTheme
         });
     }
 
+    /// <summary>
+    /// Horizontal bar with a ragged, torn right end and lightly nibbled edges — the
+    /// under-ledge on selected plates, title strikes, tape strips. Tint via Image.color.
+    /// </summary>
+    public static Sprite TornBar()
+    {
+        return CacheSprite("tornbar", () =>
+        {
+            const int w = 128;
+            const int h = 12;
+            Texture2D tex = NewTexture(w, h);
+            var px = new Color32[w * h];
+            var rng = new System.Random(7741);
+            float[] topNibble = new float[w];
+            float[] botNibble = new float[w];
+            for (int x = 0; x < w; x++)
+            {
+                topNibble[x] = (float)rng.NextDouble();
+                botNibble[x] = (float)rng.NextDouble();
+            }
+
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    float a = 1f;
+                    // torn right end: erode the last ~14 px with noise
+                    float tearStart = w - 15f;
+                    if (x > tearStart)
+                    {
+                        float t = (x - tearStart) / 14f;
+                        float noise = Mathf.PerlinNoise(x * 0.9f, y * 0.55f);
+                        a = Mathf.Clamp01(1f - t * 1.6f + (noise - 0.5f) * 0.9f);
+                    }
+                    // lightly nibbled top/bottom edge — stays a bar, not a scribble
+                    if (y == h - 1 && topNibble[x] > 0.88f) a = 0f;
+                    if (y == 0 && botNibble[x] > 0.88f) a = 0f;
+                    px[y * w + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a) * 255f));
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply(false, false);
+            // slice: keep the left cap + torn right cap, stretch the middle
+            return ToSprite(tex, new Vector4(6, 0, 20, 0));
+        });
+    }
+
+    /// <summary>Small tag chip with roughly eroded edges (tape/label tabs). Tint via Image.color.</summary>
+    public static Sprite RoughChip()
+    {
+        return CacheSprite("roughchip", () =>
+        {
+            const int w = 64;
+            const int h = 36;
+            Texture2D tex = NewTexture(w, h);
+            var px = new Color32[w * h];
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    // distance to edge, eroded by noise
+                    float ex = Mathf.Min(x, w - 1 - x);
+                    float ey = Mathf.Min(y, h - 1 - y);
+                    float edge = Mathf.Min(ex, ey);
+                    float noise = Mathf.PerlinNoise(x * 0.55f + 3.7f, y * 0.55f);
+                    float a = Mathf.Clamp01(edge - 1.6f * noise + 0.8f);
+                    px[y * w + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a) * 255f));
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply(false, false);
+            return ToSprite(tex, new Vector4(10, 10, 10, 10));
+        });
+    }
+
     // ---------------------------------------------------------------- atmosphere textures
+
+    /// <summary>
+    /// Tileable weathering grain: fine fBm speckle broken by faint diagonal scratches.
+    /// Alpha holds the mask (white RGB) — overlay at very low alpha on plates and panels.
+    /// </summary>
+    public static Texture2D GrungeTexture()
+    {
+        if (TextureCache.TryGetValue("grunge", out Texture2D cached) && cached != null)
+            return cached;
+
+        const int size = 256;
+        Texture2D tex = NewTexture(size, size);
+        tex.wrapMode = TextureWrapMode.Repeat;
+
+        var px = new Color32[size * size];
+        var rng = new System.Random(52107);
+        // sparse scratch set: seed lines with random angle/offset, drawn softly
+        const int scratchCount = 8;
+        var scratches = new Vector3[scratchCount]; // x: angle, y: offset, z: sharpness
+        for (int i = 0; i < scratchCount; i++)
+        {
+            scratches[i] = new Vector3(
+                Mathf.Lerp(0.55f, 1.05f, (float)rng.NextDouble()) * (rng.Next(2) == 0 ? 1f : -1f),
+                (float)rng.NextDouble() * size,
+                Mathf.Lerp(0.3f, 1.1f, (float)rng.NextDouble()));
+        }
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float u = x / (float)size;
+                float v = y / (float)size;
+
+                // two octaves of tileable value noise via Perlin on a torus approximation
+                float n = 0.62f * Mathf.PerlinNoise(u * 6f + 11.13f, v * 6f + 5.71f)
+                        + 0.38f * Mathf.PerlinNoise(u * 17f + 3.29f, v * 17f + 9.44f);
+
+                // speckle: hard grain dots
+                float speck = (float)rng.NextDouble();
+                float grain = speck > 0.975f ? 0.85f : 0f;
+
+                // scratches (wrap distance so the texture stays tileable)
+                float scratch = 0f;
+                for (int i = 0; i < scratchCount; i++)
+                {
+                    float line = x * scratches[i].x + scratches[i].y;
+                    float d = Mathf.Abs(Mathf.Repeat(y - line, size));
+                    d = Mathf.Min(d, size - d);
+                    if (d < scratches[i].z)
+                        scratch = Mathf.Max(scratch, 1f - d / scratches[i].z);
+                }
+
+                float a = Mathf.Clamp01(Mathf.Pow(n, 2.4f) * 0.7f + grain + scratch * 0.30f);
+                px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+            }
+        }
+        tex.SetPixels32(px);
+        tex.Apply(false, false);
+        TextureCache["grunge"] = tex;
+        return tex;
+    }
+
+    /// <summary>
+    /// Large tileable wall mottling: low-frequency stains + mid grain, for backdrops.
+    /// Alpha mask; tint at the RawImage.
+    /// </summary>
+    public static Texture2D WallTexture()
+    {
+        if (TextureCache.TryGetValue("wall", out Texture2D cached) && cached != null)
+            return cached;
+
+        const int size = 512;
+        Texture2D tex = NewTexture(size, size);
+        tex.wrapMode = TextureWrapMode.Repeat;
+
+        var px = new Color32[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float u = x / (float)size;
+                float v = y / (float)size;
+                float f = 0.5f * Mathf.PerlinNoise(u * 3f + 91.2f, v * 3f + 17.8f)
+                        + 0.3f * Mathf.PerlinNoise(u * 7f + 44.1f, v * 7f + 60.3f)
+                        + 0.2f * Mathf.PerlinNoise(u * 19f + 8.8f, v * 19f + 23.5f);
+                // push contrast so stains read as patches, not uniform noise
+                f = Mathf.Clamp01((f - 0.42f) * 1.9f);
+                f = f * f * (3f - 2f * f);
+                px[y * size + x] = new Color32(255, 255, 255, (byte)(f * 200f));
+            }
+        }
+        tex.SetPixels32(px);
+        tex.Apply(false, false);
+        TextureCache["wall"] = tex;
+        return tex;
+    }
 
     /// <summary>Tileable fBm value-noise used for drifting fog layers (alpha holds the noise).</summary>
     public static Texture2D FogTexture()
@@ -452,5 +650,87 @@ public static class MenuTheme
         tex.Apply(false, false);
         TextureCache["maze"] = tex;
         return tex;
+    }
+
+    // ---------------------------------------------------------------- cursor
+
+    static Texture2D _cursorTexture;
+    static readonly Vector2 CursorHotspot = new(2f, 2f);
+
+    /// <summary>Bone arrow cursor with an ink rim, generated once. 32×32, hotspot near the tip.</summary>
+    public static Texture2D CursorTexture()
+    {
+        if (_cursorTexture != null)
+            return _cursorTexture;
+
+        const int size = 32;
+        var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+        {
+            wrapMode = TextureWrapMode.Clamp,
+            filterMode = FilterMode.Point,
+            hideFlags = HideFlags.HideAndDontSave,
+        };
+
+        // classic pointer polygon in texture space (y up), tip at top-left
+        Vector2[] poly =
+        {
+            new(3f, 29f), new(3f, 8f), new(8.6f, 13.8f), new(11.4f, 5.6f),
+            new(15.4f, 7.2f), new(12.4f, 15.2f), new(20f, 15.2f),
+        };
+
+        bool Inside(Vector2 p)
+        {
+            bool inside = false;
+            for (int i = 0, j = poly.Length - 1; i < poly.Length; j = i++)
+            {
+                if (poly[i].y > p.y != poly[j].y > p.y &&
+                    p.x < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)
+                    inside = !inside;
+            }
+            return inside;
+        }
+
+        var fill = new bool[size * size];
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+                fill[y * size + x] = Inside(new Vector2(x + 0.5f, y + 0.5f));
+
+        var px = new Color32[size * size];
+        Color32 bone = Bone;
+        Color32 ink = new Color32(13, 12, 9, 255);
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                int i = y * size + x;
+                if (fill[i])
+                {
+                    px[i] = bone;
+                    continue;
+                }
+                bool edge = false;
+                for (int dy = -1; dy <= 1 && !edge; dy++)
+                {
+                    for (int dx = -1; dx <= 1 && !edge; dx++)
+                    {
+                        int nx = x + dx;
+                        int ny = y + dy;
+                        if (nx >= 0 && ny >= 0 && nx < size && ny < size && fill[ny * size + nx])
+                            edge = true;
+                    }
+                }
+                px[i] = edge ? ink : new Color32(0, 0, 0, 0);
+            }
+        }
+        tex.SetPixels32(px);
+        tex.Apply(false, false);
+        _cursorTexture = tex;
+        return tex;
+    }
+
+    /// <summary>Swap the OS cursor for the themed one (call when a menu/overlay shows the cursor).</summary>
+    public static void ApplyCursor()
+    {
+        Cursor.SetCursor(CursorTexture(), CursorHotspot, CursorMode.Auto);
     }
 }

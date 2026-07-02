@@ -4,8 +4,9 @@ using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 /// <summary>
-/// Hover/press presentation for menu buttons: color shifts, sliding accent bar,
-/// subtle indent and press dip. All motion uses unscaled time.
+/// Plate-button presentation: dark plate at rest, flips light with dark type on hover,
+/// mustard with an under-ledge when selected. Handles press dip, disabled dimming and
+/// hover audio. All motion uses unscaled time.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class MenuButtonFx : MonoBehaviour,
@@ -13,41 +14,52 @@ public sealed class MenuButtonFx : MonoBehaviour,
 {
     public Button button;
     public TMP_Text label;
-    public Image background;
-    public Image outline;
-    public RectTransform accentBar;
+    public Image fill;
+    public Image frame;
+    public RawImage grunge;
+    public RectTransform ledge;
+    public Image ledgeImage;
 
+    public Color fillNormal = Color.clear;
+    public Color fillHover = Color.clear;
+    public Color fillSelected = Color.clear;
+    public Color frameNormal = Color.clear;
+    public Color frameHover = Color.clear;
+    public Color frameSelected = Color.clear;
     public Color labelNormal = Color.white;
     public Color labelHover = Color.white;
-    public Color backgroundNormal = Color.clear;
-    public Color backgroundHover = Color.clear;
-    public Color outlineNormal = Color.clear;
-    public Color outlineHover = Color.clear;
-    public float hoverShift;
+    public Color labelSelected = Color.white;
+    public Color grungeNormal = Color.clear;
+    public Color grungeHover = Color.clear;
+    public Color grungeSelected = Color.clear;
+    public Color ledgeColor = Color.white;
+
+    /// <summary>Ledge shows permanently (primary CTAs) instead of only while selected.</summary>
+    public bool ledgeAlways;
 
     CanvasGroup _group;
-    RectTransform _labelRect;
-    Vector2 _labelBasePosition;
     float _hover;
     float _press;
+    float _select;
     bool _pointerInside;
     bool _pointerDown;
+    bool _selected;
+
+    public bool Selected => _selected;
+
+    public void SetSelected(bool selected)
+    {
+        _selected = selected;
+    }
 
     void Awake()
     {
-        // hover shift is applied to the label, not the root: the root is usually owned by a
-        // layout group and writing its anchoredPosition would fight the layout system.
-        if (label != null)
-        {
-            _labelRect = label.rectTransform;
-            _labelBasePosition = _labelRect.anchoredPosition;
-        }
         _group = GetComponent<CanvasGroup>();
         if (_group == null)
             _group = gameObject.AddComponent<CanvasGroup>();
         if (button == null)
             button = GetComponent<Button>();
-        ApplyVisuals();
+        ApplyVisuals(true);
     }
 
     void OnEnable()
@@ -56,7 +68,8 @@ public sealed class MenuButtonFx : MonoBehaviour,
         _pointerDown = false;
         _hover = 0f;
         _press = 0f;
-        ApplyVisuals();
+        _select = _selected ? 1f : 0f;
+        ApplyVisuals(true);
     }
 
     bool Interactable => button == null || button.interactable;
@@ -91,32 +104,49 @@ public sealed class MenuButtonFx : MonoBehaviour,
         bool hovered = _pointerInside && Interactable;
         _hover = Mathf.Lerp(_hover, hovered ? 1f : 0f, k);
         _press = Mathf.Lerp(_press, _pointerDown && Interactable ? 1f : 0f, k);
+        _select = Mathf.Lerp(_select, _selected ? 1f : 0f, k);
 
-        ApplyVisuals();
+        ApplyVisuals(false);
     }
 
-    void ApplyVisuals()
+    void ApplyVisuals(bool instant)
     {
-        if (label != null)
-            label.color = Color.Lerp(labelNormal, labelHover, _hover);
-        if (background != null)
-            background.color = Color.Lerp(backgroundNormal, backgroundHover, _hover);
-        if (outline != null)
-            outline.color = Color.Lerp(outlineNormal, outlineHover, _hover);
-        if (accentBar != null)
+        if (instant)
         {
-            Vector3 s = accentBar.localScale;
-            s.y = Mathf.Max(0.0001f, _hover);
-            accentBar.localScale = s;
+            _hover = _pointerInside && Interactable ? 1f : 0f;
+            _select = _selected ? 1f : 0f;
         }
 
-        if (_labelRect != null)
-            _labelRect.anchoredPosition = _labelBasePosition + new Vector2(hoverShift * _hover, 0f);
+        // selected overrides the hover flip; hover still nudges the selected plate a touch
+        if (fill != null)
+            fill.color = Blend(fillNormal, fillHover, fillSelected);
+        if (frame != null)
+            frame.color = Blend(frameNormal, frameHover, frameSelected);
+        if (label != null)
+            label.color = Blend(labelNormal, labelHover, labelSelected);
+        if (grunge != null)
+            grunge.color = Blend(grungeNormal, grungeHover, grungeSelected);
+
+        if (ledge != null)
+        {
+            float shown = ledgeAlways ? 1f : Mathf.Max(_select, 0f);
+            Vector3 s = ledge.localScale;
+            s.x = Mathf.Max(0.0001f, shown);
+            ledge.localScale = s;
+            if (ledgeImage != null)
+                ledgeImage.color = MenuTheme.WithAlpha(ledgeColor, ledgeColor.a * shown);
+        }
 
         float scale = 1f - 0.015f * _press;
         transform.localScale = new Vector3(scale, scale, 1f);
 
         if (_group != null)
-            _group.alpha = Interactable ? 1f : 0.4f;
+            _group.alpha = Interactable ? 1f : 0.35f;
+    }
+
+    Color Blend(Color normal, Color hover, Color selected)
+    {
+        Color c = Color.Lerp(normal, hover, _hover);
+        return Color.Lerp(c, selected, _select);
     }
 }
