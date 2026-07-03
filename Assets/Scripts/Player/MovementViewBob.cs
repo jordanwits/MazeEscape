@@ -49,21 +49,45 @@ public class MovementViewBob : MonoBehaviour
 
     void LateUpdate()
     {
-        if (animator == null || !animator.isHuman || !animator.isInitialized)
+        Vector3 worldOffset = ComputePendingBobWorldOffset();
+        if (worldOffset.sqrMagnitude <= 0f)
             return;
 
         Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
         if (hips == null)
             return;
 
+        // The bob must lift the hips along WORLD up. localPosition is expressed in the parent bone's space,
+        // which is not world-aligned on every rig (UE-style skeletons rotate the root -90° X), so adding a raw
+        // Vector3.up would shove the hips sideways/backward and slosh in phase with the step cadence. Converting
+        // world up into the parent's local space keeps the bob vertical on any rig (no-op when the parent is identity).
+        Vector3 offsetInParentSpace = hips.parent != null
+            ? hips.parent.InverseTransformVector(worldOffset)
+            : worldOffset;
+        hips.localPosition += offsetInParentSpace;
+    }
+
+    /// <summary>
+    /// World-space hips lift this component will apply in LateUpdate this frame (zero while bob is inactive).
+    /// Runs after IK (execution order 500), so hand-IK targets aimed at non-bobbing anchors (e.g. the held item
+    /// at HoldPoint) must subtract this to stay pinned. Safe to call during OnAnimatorIK.
+    /// </summary>
+    public Vector3 ComputePendingBobWorldOffset()
+    {
+        if (animator == null || !animator.isHuman || !animator.isInitialized)
+            return Vector3.zero;
+
+        if (animator.GetBoneTransform(HumanBodyBones.Hips) == null)
+            return Vector3.zero;
+
         bool grounded = animator.GetBool(_groundedParamHash);
         float speed = animator.GetFloat(_speedParamHash);
 
         if (!grounded || speed < minimumSpeed)
-            return;
+            return Vector3.zero;
 
         if (suppressBobDuringMaskedMelee && IsPlayingUpperBodyMeleeState())
-            return;
+            return Vector3.zero;
 
         AnimatorStateInfo info = animator.GetCurrentAnimatorStateInfo(baseLayerIndex);
         float cycle = Mathf.Repeat(info.normalizedTime, 1f);
@@ -74,14 +98,7 @@ public class MovementViewBob : MonoBehaviour
         float amp = Mathf.Lerp(walkBobAmplitude, runBobAmplitude, runBlend);
 
         float bob = (1f - Mathf.Cos(angle)) * 0.5f * amp;
-        // The bob must lift the hips along WORLD up. localPosition is expressed in the parent bone's space,
-        // which is not world-aligned on every rig (UE-style skeletons rotate the root -90° X), so adding a raw
-        // Vector3.up would shove the hips sideways/backward and slosh in phase with the step cadence. Converting
-        // world up into the parent's local space keeps the bob vertical on any rig (no-op when the parent is identity).
-        Vector3 worldUpInParentSpace = hips.parent != null
-            ? hips.parent.InverseTransformVector(Vector3.up)
-            : Vector3.up;
-        hips.localPosition += worldUpInParentSpace * bob;
+        return Vector3.up * bob;
     }
 
     bool IsPlayingUpperBodyMeleeState()

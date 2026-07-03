@@ -2391,6 +2391,37 @@ Transform:
   - {fileID: 4732113561085106483}
   m_Father: {fileID: 8517600495033936913}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &3579957428981779926
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 694289328465130313}
+  m_Layer: 0
+  m_Name: GripSocket_R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &694289328465130313
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3579957428981779926}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0.00731324, y: 0.06780627, z: -0.052716356, w: 0.996278}
+  m_LocalPosition: {x: 0.09, y: -0.038, z: 0.01}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3702088477937374094}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &3734014266453883959
 GameObject:
   m_ObjectHideFlags: 0
@@ -2987,6 +3018,7 @@ Transform:
   - {fileID: 7598991347378079845}
   - {fileID: 6469316671699116617}
   - {fileID: 7719735207688400255}
+  - {fileID: 694289328465130313}
   m_Father: {fileID: 7742840804248816546}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &4313803590319324929
@@ -3047,6 +3079,10 @@ GameObject:
   - component: {fileID: 9030000000000000001}
   - component: {fileID: 8499174113071352965}
   - component: {fileID: 3145109071381666946}
+  - component: {fileID: 1034180917640098468}
+  - component: {fileID: 478129860995997387}
+  - component: {fileID: 549430295686419751}
+  - component: {fileID: 6231423387456705298}
   m_Layer: 8
   m_Name: Player_Survivalist2
   m_TagString: Player
@@ -3125,6 +3161,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerController
   ticketBundlePromptFormat: Press E to collect {0} tickets
   ticketCounterIcon: {fileID: 21300000, guid: 4f61435e86a4360438a1783f76596a8f, type: 3}
+  reachApexSeconds: 0.32
+  reachSettleSeconds: 0.22
+  reachRetryLockoutSeconds: 0.1
   characterController: {fileID: 8025695549591612232}
   animator: {fileID: 4205222711325704942}
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
@@ -3181,7 +3220,7 @@ MonoBehaviour:
   bandageUseClip: {fileID: 8300000, guid: 92cbc2c7564a736428e5439c30d22bf2, type: 3}
   bandageUseVolume: 0.05
   maxStamina: 100
-  staminaDrainRate: 20
+  staminaDrainRate: 15
   staminaRegenRate: 15
   staminaRegenDelay: 1.5
   jumpStaminaCost: 15
@@ -3223,6 +3262,12 @@ MonoBehaviour:
   ragdollIdleCrossFadeSeconds: 0.08
   walkAnimationSpeed: 0.35
   runAnimationSpeed: 1
+  enableCrouch: 1
+  crouchParameter: Crouching
+  crouchHeight: 1.15
+  standUpBlockingMask:
+    serializedVersion: 2
+    m_Bits: 0
   inventoryStashRoot: {fileID: 0}
 --- !u!95 &4205222711325704942
 Animator:
@@ -3402,7 +3447,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  GlobalObjectIdHash: 3810701028
+  GlobalObjectIdHash: 3438530578
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 1
@@ -3665,6 +3710,105 @@ MonoBehaviour:
   ragdoll: {fileID: 7861290197597770154}
   viewOffsetInHeadLocalSpace: {x: -0.1089, y: -0.1621, z: 0.0242}
   positionFollowSmoothTime: 0.055
+--- !u!114 &1034180917640098468
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4447047592272457077}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ba11c7973ef0f9e4683a419be98c4533, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerItemHoldIK
+  animator: {fileID: 0}
+  playerController: {fileID: 0}
+  networkPlayerAvatar: {fileID: 0}
+  ragdollController: {fileID: 0}
+  movementViewBob: {fileID: 0}
+  playerHealth: {fileID: 0}
+  handPositionWeight: 1
+  oneHandRotationWeight: 0.85
+  twoHandRotationWeight: 1
+  elbowHintWeight: 0.6
+  weightInSeconds: 0.15
+  weightOutSeconds: 0.12
+  maxReachFraction: 0.94
+  rightHandRotationOffsetEuler: {x: 6.3, y: -25.9, z: 56.1}
+  leftHandRotationOffsetEuler: {x: 6.3, y: 25.9, z: -56.1}
+  rightPalmCenterInHandSpace: {x: 0.055, y: -0.012, z: 0.005}
+  leftPalmCenterInHandSpace: {x: 0.055, y: -0.012, z: 0.005}
+  compensateViewBob: 1
+  reachInSeconds: 0.24
+  reachHoldSeconds: 0.12
+  reachOutSeconds: 0.2
+  upperBodyLayerName: Upper Body
+  upperBodyLayerIndexFallback: 2
+  meleeStateNameOnUpperLayer: RightHook
+--- !u!114 &478129860995997387
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4447047592272457077}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4f86e5f4ffb4f8440802b42fc6bf4465, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerFootIK
+  animator: {fileID: 0}
+  ragdollController: {fileID: 0}
+  networkPlayerAvatar: {fileID: 0}
+  playerHealth: {fileID: 0}
+  groundMask:
+    serializedVersion: 2
+    m_Bits: 0
+  castUp: 0.45
+  castDown: 0.85
+  footSoleHeight: 0.1
+  maxStepUp: 0.35
+  maxStepDown: 0.45
+  maxSlopeDegrees: 40
+  footPlantMinLift: 0.04
+  footPlantMaxLift: 0.18
+  rotationWeightScale: 0.7
+  masterWeightSmoothSeconds: 0.1
+  pelvisSmoothTime: 0.12
+--- !u!114 &549430295686419751
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4447047592272457077}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4f9ae038f5228740b470de9d90fdbf4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HeldItemHandSocketFollow
+  animator: {fileID: 0}
+  playerController: {fileID: 0}
+  handSocket: {fileID: 0}
+  forceForwardAim: 1
+  forwardAimLocal: {x: 0.08, y: -0.12, z: 1}
+  viewPitchWristFollow: 1
+  maxWristPitchDegrees: 55
+--- !u!114 &6231423387456705298
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4447047592272457077}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7a3fee14572ab424782b83b6b9be85ef, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TwoHandFingerCurl
+  openAmount: 1
+  onlyWhenTwoHandHold: 1
 --- !u!1 &4485469191314246978
 GameObject:
   m_ObjectHideFlags: 0

@@ -13,6 +13,9 @@ public class FlashlightItem : GrabbableInventoryItem
     public bool IsLightOn => _isLightOn;
     bool _isLightOn;
 
+    /// <summary>The flashlight mesh aims along the view (camera pitch) so it tilts up/down like the beam.</summary>
+    public override bool HeldAimsAlongView => true;
+
     [Tooltip("Total runtime in seconds with the light on before it goes dead. New pickups start full. No recharging in this build.")]
     [SerializeField] float maxBatterySeconds = 180f;
     [SerializeField, Min(0.001f)] float minBatteryToOperate = 0.001f;
@@ -109,6 +112,19 @@ public class FlashlightItem : GrabbableInventoryItem
 
         Quaternion lightRotationRelativeToRoot = Quaternion.Inverse(transform.rotation) * flashlightLight.transform.rotation;
         _heldLocalRotation = Quaternion.Inverse(lightRotationRelativeToRoot);
+    }
+
+    /// <summary>
+    /// While hand-socket held, the mesh follows the animated hand — so the BEAM alone tracks the view here:
+    /// the spot light's world rotation is snapped to the camera-pitch source (owner input locally, the
+    /// replicated pitch on remote avatars). Called by HeldItemHandSocketFollow after the mesh is placed.
+    /// </summary>
+    public void AimHeldLightAlongPitch()
+    {
+        if (flashlightLight == null || _heldRotationSource == null || !IsHeld || IsStashed)
+            return;
+
+        flashlightLight.transform.rotation = _heldRotationSource.rotation;
     }
 
     public void ToggleLight()

@@ -256,9 +256,11 @@ MonoBehaviour:
   itemRigidbody: {fileID: 7788990011000001}
   itemColliders: []
   itemRenderers: []
-  heldLocalPosition: {x: 0, y: 0, z: 0}
+  heldLocalPosition: {x: 0, y: -0.06, z: -0.4}
   heldLocalEulerAngles: {x: 0, y: 0, z: 0}
   alignRotationWithFollow: 1
+  gripPointRight: {fileID: 0}
+  gripPointLeft: {fileID: 0}
   _stackCount: 1
   _pointLights: []
   _onWhenSelectedInHand: 1

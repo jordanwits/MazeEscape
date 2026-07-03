@@ -1,5 +1,36 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!1 &1753563912784670067
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6037473075550185923}
+  m_Layer: 0
+  m_Name: GripPoint_R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6037473075550185923
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1753563912784670067}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0.6981096, y: -0.006629997, z: -0.055449974, w: 0.71380967}
+  m_LocalPosition: {x: -0.00002, y: -0.00964, z: 0.00035}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 7523845043569921079}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1831756137279748588
 GameObject:
   m_ObjectHideFlags: 0
@@ -40,9 +71,10 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0.7071068, y: 0, z: -0, w: 0.7071068}
   m_LocalPosition: {x: -3.286, y: 1.813, z: -36.935}
-  m_LocalScale: {x: 25.416344, y: 25.416344, z: 25.416344}
+  m_LocalScale: {x: 16.795187, y: 16.795187, z: 16.795187}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 6037473075550185923}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &8870667265579190903
@@ -341,9 +373,13 @@ MonoBehaviour:
   itemColliders: []
   itemRenderers:
   - {fileID: 3266194138731682794}
-  heldLocalPosition: {x: 0, y: 0, z: 0}
+  heldLocalPosition: {x: -0.237, y: -0.1, z: -0.4}
   heldLocalEulerAngles: {x: 90, y: 0, z: 0}
   alignRotationWithFollow: 1
+  gripPointRight: {fileID: 6037473075550185923}
+  gripPointLeft: {fileID: 0}
+  heldRotationOffsetEuler: {x: 0, y: 0, z: 0}
+  heldAttachToHandSocket: 1
 --- !u!114 &8701098834412200202
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -371,6 +407,10 @@ MonoBehaviour:
   ringDropSpinAngularSpeed: 8
   serverReclaimSpeedThreshold: 0.35
   serverSettleSecondsBeforeReturn: 1.25
+  observerLocalArcEnabled: 1
+  observerArcBlendSeconds: 0.22
+  observerArcFreshDataDistance: 0.2
+  observerArcMaxSeconds: 1.5
 --- !u!114 &-4927542010702592481
 MonoBehaviour:
   m_ObjectHideFlags: 0

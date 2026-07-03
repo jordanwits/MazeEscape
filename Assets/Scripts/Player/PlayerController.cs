@@ -535,6 +535,14 @@ public partial class PlayerController : MonoBehaviour
 
     void Update()
     {
+        // First so reach cancels (ragdoll, jailor grab, death, lost control) still process.
+        TickPickupReach();
+
+        // Re-derive the hold pose from the live held state every frame (owner only). Event-driven refreshes
+        // can be missed/delayed for a networked throw — the owner simulates the arc locally while the
+        // authoritative holder value round-trips — which otherwise leaves the arm stuck in the carry pose.
+        ApplyHoldPoseAnimatorParameter();
+
         if (!_hasLocalControl && !ShouldRunDeadRagdollCameraUpdate())
         {
             if (_allowLookWhileMovementLocked && firstPersonLook)
@@ -1982,7 +1990,8 @@ public partial class PlayerController : MonoBehaviour
             return;
         }
 
-        bool shouldShow = ShouldShowPickupPrompt();
+        // No pickup prompt while the reach is in flight (it would flash "press E" mid-grab).
+        bool shouldShow = !PickupReachActive && ShouldShowPickupPrompt();
         SetPickupPromptVisible(shouldShow, pickupPromptMessage);
     }
 

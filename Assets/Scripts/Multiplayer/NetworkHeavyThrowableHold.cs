@@ -87,6 +87,9 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         NetworkVariableWritePermission.Server);
 
     HeavyThrowableHoldItem _item;
+
+    /// <summary>The carried item (used to pick the one-hand vs two-hand hold pose by its socket flag).</summary>
+    public GrabbableInventoryItem HeldItem => _item;
     NetworkTransform _networkTransform;
     NetworkObject _networkObject;
     Rigidbody _rb;

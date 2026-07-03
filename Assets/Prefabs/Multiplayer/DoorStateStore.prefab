@@ -12,6 +12,7 @@ GameObject:
   - component: {fileID: 2771810099716842378}
   - component: {fileID: 7848803187147106474}
   - component: {fileID: 5017289509900665114}
+  - component: {fileID: 2432557601850032537}
   m_Layer: 0
   m_Name: DoorStateStore
   m_TagString: Untagged
@@ -84,4 +85,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1d4812fb773b5ed4b81314a8b2e88ba6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ConsumedItemNetworkStore
+  ShowTopMostFoldoutHeaderGroup: 1
+--- !u!114 &2432557601850032537
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1894828846414958821}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c0a2221573e759e46bf7243dc478a41c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CarnivalRadioNetworkStore
   ShowTopMostFoldoutHeaderGroup: 1

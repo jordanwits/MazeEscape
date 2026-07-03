@@ -112,9 +112,11 @@ MonoBehaviour:
   - {fileID: 8336906325066039563}
   itemRenderers:
   - {fileID: 3186245251174045940}
-  heldLocalPosition: {x: 0, y: 0, z: 0}
+  heldLocalPosition: {x: 0, y: -0.06, z: -0.4}
   heldLocalEulerAngles: {x: 0, y: 0, z: 0}
   alignRotationWithFollow: 1
+  gripPointRight: {fileID: 0}
+  gripPointLeft: {fileID: 0}
 --- !u!54 &1208223962772278169
 Rigidbody:
   m_ObjectHideFlags: 0

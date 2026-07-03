@@ -33,6 +33,24 @@ public class GrabbableInventoryItem : MonoBehaviour
     [SerializeField] protected Vector3 heldLocalEulerAngles;
     [Tooltip("If true, the held mesh follows the follow transform (camera) rotation. Set false to lock to the hold point.")]
     [SerializeField] bool alignRotationWithFollow = true;
+    [Tooltip("Optional direct child marking where the right hand grips this item. Falls back to the item origin.")]
+    [SerializeField] Transform gripPointRight;
+    [Tooltip("Optional direct child for the left hand (two-handed carries). No left-hand IK when unset.")]
+    [SerializeField] Transform gripPointLeft;
+    [Tooltip("Extra local rotation applied while held (degrees). Use e.g. (0,180,0) to flip an item that is authored facing backward.")]
+    [SerializeField] Vector3 heldRotationOffsetEuler;
+    [Tooltip("Held items ride the avatar's animated hand socket (perfect grip, natural wrist). Disable for chest-carried heavy items (StarBall/rings) that use two-hand IK instead.")]
+    [SerializeField] bool heldAttachToHandSocket = true;
+
+    /// <summary>True when the in-hand visual follows the hand socket instead of the HoldPoint float.</summary>
+    public bool HeldAttachToHandSocket => heldAttachToHandSocket;
+
+    /// <summary>
+    /// When held on the hand socket, aim the item's forward along the player's view (camera pitch) instead
+    /// of a fixed forward — so e.g. a flashlight tilts up/down as you look. Off for items that should just
+    /// sit in the hand (key, glowstick). <see cref="FlashlightItem"/> overrides this to true.
+    /// </summary>
+    public virtual bool HeldAimsAlongView => false;
 
     public bool IsHeld { get; private set; }
     public bool IsStashed { get; private set; }
@@ -458,6 +476,99 @@ public class GrabbableInventoryItem : MonoBehaviour
             worldRotation = _heldAnchor.rotation * _heldLocalRotation;
 
         transform.localRotation = Quaternion.Inverse(_heldAnchor.rotation) * worldRotation;
+    }
+
+    /// <summary>
+    /// Aligns this held item so its right-hand grip sits exactly on the avatar's hand socket. Called by
+    /// HeldItemHandSocketFollow after animation, IK and view bob have finalized the hand pose, so the item
+    /// rides the animated hand with zero lag and the wrist keeps its authored (natural) orientation.
+    /// </summary>
+    public void ApplyHandSocketHeldPose(Transform handSocket)
+    {
+        if (handSocket == null)
+            return;
+
+        Quaternion gripLocalRotation = gripPointRight != null ? gripPointRight.localRotation : Quaternion.identity;
+        Vector3 gripLocalPosition = gripPointRight != null
+            ? Vector3.Scale(gripPointRight.localPosition, transform.localScale)
+            : Vector3.zero;
+
+        Quaternion itemRotation = handSocket.rotation * Quaternion.Inverse(gripLocalRotation) * Quaternion.Euler(heldRotationOffsetEuler);
+        Vector3 itemPosition = handSocket.position - itemRotation * gripLocalPosition;
+        transform.SetPositionAndRotation(itemPosition, itemRotation);
+    }
+
+    /// <summary>
+    /// Like <see cref="ApplyHandSocketHeldPose"/> but the item's forward (its light/barrel) is locked to a
+    /// fixed world aim instead of the hand's rotation — so a flashlight always points forward while the arm
+    /// and wrist can be posed freely. Position still seats the grip point at the socket (the fist).
+    /// </summary>
+    public void ApplyHandSocketHeldPoseForwardAim(Transform handSocket, Vector3 worldAim, Vector3 worldUp)
+    {
+        if (handSocket == null || worldAim.sqrMagnitude < 1e-6f)
+            return;
+
+        Quaternion gripLocalRotation = gripPointRight != null ? gripPointRight.localRotation : Quaternion.identity;
+        Vector3 gripLocalPosition = gripPointRight != null
+            ? Vector3.Scale(gripPointRight.localPosition, transform.localScale)
+            : Vector3.zero;
+
+        Quaternion itemRotation = Quaternion.LookRotation(worldAim.normalized, worldUp) * Quaternion.Inverse(gripLocalRotation) * Quaternion.Euler(heldRotationOffsetEuler);
+        Vector3 itemPosition = handSocket.position - itemRotation * gripLocalPosition;
+        transform.SetPositionAndRotation(itemPosition, itemRotation);
+    }
+
+    /// <summary>
+    /// Seats the grip at the socket while orienting the item so its light/barrel matches a full world
+    /// rotation (e.g. the camera-pitch transform) — used for view-aimed items like the flashlight so the
+    /// mesh tilts up/down with the look direction, matching the beam.
+    /// </summary>
+    public void ApplyHandSocketHeldPoseAim(Transform handSocket, Quaternion lightWorldRotation)
+    {
+        if (handSocket == null)
+            return;
+
+        Quaternion gripLocalRotation = gripPointRight != null ? gripPointRight.localRotation : Quaternion.identity;
+        Vector3 gripLocalPosition = gripPointRight != null
+            ? Vector3.Scale(gripPointRight.localPosition, transform.localScale)
+            : Vector3.zero;
+
+        Quaternion itemRotation = lightWorldRotation * Quaternion.Inverse(gripLocalRotation) * Quaternion.Euler(heldRotationOffsetEuler);
+        Vector3 itemPosition = handSocket.position - itemRotation * gripLocalPosition;
+        transform.SetPositionAndRotation(itemPosition, itemRotation);
+    }
+
+    /// <summary>
+    /// Where a hand should grip this held item, in world space, computed from *current-frame* anchor and
+    /// camera-pitch transforms. The item's own transform is written in LateUpdate and is one frame stale
+    /// during the animator's IK pass, so hand IK must re-derive the pose from the same inputs
+    /// <see cref="UpdateHeldTransform"/> uses instead of reading the grip transform directly.
+    /// </summary>
+    public bool TryComputeHeldGripWorldPose(bool leftHand, out Vector3 worldPosition, out Quaternion worldRotation)
+    {
+        worldPosition = default;
+        worldRotation = Quaternion.identity;
+        if (!IsHeld || IsStashed || _heldAnchor == null)
+            return false;
+
+        Transform rotationSource = _heldRotationSource != null ? _heldRotationSource : _heldAnchor;
+        Quaternion itemRotation = alignRotationWithFollow
+            ? rotationSource.rotation * _heldLocalRotation
+            : _heldAnchor.rotation * _heldLocalRotation;
+        Vector3 itemPosition = _heldAnchor.TransformPoint(heldLocalPosition);
+
+        Transform grip = leftHand ? gripPointLeft : gripPointRight;
+        if (grip == null)
+        {
+            // Right hand can target the item body itself; a missing left grip means no left-hand IK.
+            worldPosition = itemPosition;
+            worldRotation = itemRotation;
+            return !leftHand;
+        }
+
+        worldPosition = itemPosition + itemRotation * Vector3.Scale(grip.localPosition, transform.localScale);
+        worldRotation = itemRotation * grip.localRotation;
+        return true;
     }
 
     protected void BeginHeldState()

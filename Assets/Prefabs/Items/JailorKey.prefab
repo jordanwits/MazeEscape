@@ -112,9 +112,13 @@ MonoBehaviour:
   itemRigidbody: {fileID: 0}
   itemColliders: []
   itemRenderers: []
-  heldLocalPosition: {x: 0, y: 0, z: 0}
+  heldLocalPosition: {x: 0, y: -0.06, z: -0.4}
   heldLocalEulerAngles: {x: 180, y: 0, z: 0}
   alignRotationWithFollow: 1
+  gripPointRight: {fileID: 0}
+  gripPointLeft: {fileID: 0}
+  heldRotationOffsetEuler: {x: 0, y: 180, z: 0}
+  heldAttachToHandSocket: 1
 --- !u!54 &3317436582642645979
 Rigidbody:
   m_ObjectHideFlags: 0

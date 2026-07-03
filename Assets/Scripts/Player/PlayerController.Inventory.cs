@@ -96,11 +96,70 @@ public partial class PlayerController
             }
 
             DetachItemsNoLongerInNetworkInventory(holderId);
+            ApplyHoldPoseAnimatorParameter();
             RefreshInventorySlotHud();
             return;
         }
 
         RefreshLocalInventoryView();
+    }
+
+    static readonly int HoldPoseHash = Animator.StringToHash("HoldPose");
+    NetworkObject _selfNetworkObjectCache;
+    NetworkObject SelfNetworkObject => _selfNetworkObjectCache != null
+        ? _selfNetworkObjectCache
+        : (_selfNetworkObjectCache = GetComponent<NetworkObject>());
+
+    /// <summary>
+    /// Drives the "Item Hold" animator layer: 0 empty hands, 1 one-hand hotbar item, 2 two-hand heavy carry.
+    /// Owner-only in network sessions — OwnerNetworkAnimator replicates the int, so a non-owner writing it
+    /// locally would fight the replicated value. Forced to 0 while blackjack-seated so hold arms never
+    /// override the Sit pose.
+    /// </summary>
+    public void ApplyHoldPoseAnimatorParameter()
+    {
+        if (!driveAnimator || animator == null)
+            return;
+
+        if (IsUsingNetworkedInventory && _networkPlayerAvatar != null && _networkPlayerAvatar.IsSpawned && !_networkPlayerAvatar.IsOwner)
+            return;
+
+        int pose = 0;
+        if (!_blackjackSeated)
+        {
+            if (IsUsingNetworkedInventory)
+            {
+                NetworkObject thisPlayer = SelfNetworkObject;
+                ulong holderId = thisPlayer != null ? thisPlayer.NetworkObjectId : 0UL;
+                NetworkHeavyThrowableHold heavy = holderId != 0UL
+                    ? NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(holderId) : null;
+                if (heavy != null)
+                {
+                    // Socket-held heavy items (rings) are one-handed; chest-carried ones (StarBall) are two-handed.
+                    pose = heavy.HeldItem != null && heavy.HeldItem.HeldAttachToHandSocket ? 1 : 2;
+                }
+                else
+                {
+                    int selected = _networkPlayerInventory.SelectedSlotIndex;
+                    if (selected >= 0 && selected < 3
+                        && (_networkPlayerInventory.GetSlotItemId(selected) != 0UL
+                            || _networkPlayerInventory.GetSlotItemTypeId(selected) != GrabbableInventoryItem.TypeIdNone))
+                    {
+                        pose = 1;
+                    }
+                }
+            }
+            else
+            {
+                NetworkHeavyThrowableHold heavy = NetworkHeavyThrowableHold.FindOfflineHeldBy(this);
+                if (heavy != null)
+                    pose = heavy.HeldItem != null && heavy.HeldItem.HeldAttachToHandSocket ? 1 : 2;
+                else if (_localSelectedSlot >= 0 && _localSelectedSlot < 3 && _localInventorySlots[_localSelectedSlot] != null)
+                    pose = 1;
+            }
+        }
+
+        animator.SetInteger(HoldPoseHash, pose);
     }
 
     /// <summary>
@@ -189,6 +248,7 @@ public partial class PlayerController
             }
         }
 
+        ApplyHoldPoseAnimatorParameter();
         RefreshInventorySlotHud();
     }
 
@@ -549,13 +609,9 @@ public partial class PlayerController
             return;
         }
 
-        if (IsUsingNetworkedInventory)
-        {
-            TryPickupNetwork();
-            return;
-        }
-
-        TryPickupLocal();
+        // Grabbable items go through the gated reach (arm extends, grant fires at the apex).
+        // Chest/door/carnival interactions above stay instant.
+        BeginGatedPickup();
     }
 
     void TryPickupNetwork()

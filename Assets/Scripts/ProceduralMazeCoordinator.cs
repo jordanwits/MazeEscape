@@ -858,9 +858,10 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         DoorNetworkStateStore.ServerClear();
-        // ConsumedItemNetworkStore rides the same infrastructure NetworkObject as the door store, so it is
-        // already spawned by the block above; just scope its consumed-item tombstones to this level.
+        // ConsumedItemNetworkStore and CarnivalRadioNetworkStore ride the same infrastructure NetworkObject as the
+        // door store, so they are already spawned by the block above; just scope their per-level state to this level.
         ConsumedItemNetworkStore.ServerClear();
+        CarnivalRadioNetworkStore.ServerClear();
     }
 
     GameObject FindRegisteredNetworkPrefabWithComponent<T>() where T : Component

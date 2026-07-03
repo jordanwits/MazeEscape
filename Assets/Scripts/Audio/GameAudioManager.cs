@@ -181,6 +181,15 @@ public sealed class GameAudioManager : MonoBehaviour
         source.outputAudioMixerGroup = Instance._sfxGroup;
     }
 
+    /// <summary>Sends diegetic music (e.g. the carnival radio) through the Music bus so the Music slider affects it.</summary>
+    public static void RouteMusicSource(AudioSource source)
+    {
+        if (source == null || Instance == null || Instance._musicGroup == null)
+            return;
+
+        source.outputAudioMixerGroup = Instance._musicGroup;
+    }
+
     public static void RouteVoiceSource(AudioSource source)
     {
         if (source == null || Instance == null || Instance._voiceGroup == null)

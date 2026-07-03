@@ -29,13 +29,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7024707792395785160}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.021791829, y: -0.0039844764, z: 0.1798168, w: 0.98345065}
+  m_LocalRotation: {x: 0.17981397, y: 0.98345107, z: -0.02179385, w: 0.0039847824}
   m_LocalPosition: {x: 0.0012039449, y: -0.0044997726, z: -0.00024561398}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 2.539, y: 0, z: 20.723}
+  m_LocalEulerAnglesHint: {x: 2.539, y: 180, z: 20.723}
 --- !u!33 &8974265133831145437
 MeshFilter:
   m_ObjectHideFlags: 0
@@ -110,9 +110,13 @@ MonoBehaviour:
   itemRigidbody: {fileID: 0}
   itemColliders: []
   itemRenderers: []
-  heldLocalPosition: {x: 0, y: 0, z: 0}
+  heldLocalPosition: {x: 0, y: -0.06, z: -0.4}
   heldLocalEulerAngles: {x: 180, y: 0, z: 0}
   alignRotationWithFollow: 1
+  gripPointRight: {fileID: 0}
+  gripPointLeft: {fileID: 0}
+  heldRotationOffsetEuler: {x: 0, y: 180, z: 0}
+  heldAttachToHandSocket: 1
 --- !u!54 &1208223952772278169
 Rigidbody:
   m_ObjectHideFlags: 0

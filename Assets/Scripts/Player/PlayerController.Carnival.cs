@@ -184,6 +184,31 @@ public partial class PlayerController
         return false;
     }
 
+    bool TryFindInteractableRadio(Transform cam, out CarnivalRadio radio)
+    {
+        radio = null;
+        if (cam == null)
+            return false;
+
+        int mask = interactMask.value == 0 ? Physics.DefaultRaycastLayers : interactMask.value;
+        int count = TryInteractCastNonAlloc(cam, mask);
+        if (count <= 0)
+            return false;
+
+        SortInteractHitsByDistance(count);
+        for (int i = 0; i < count; i++)
+        {
+            RaycastHit h = _interactCastHitBuffer[i];
+            CarnivalRadio found = h.collider.GetComponentInParent<CarnivalRadio>();
+            if (found != null)
+            {
+                radio = found;
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool TryFindInteractableTicketBundle(Transform cam, out CarnivalTicketBundle bundle)
     {
         bundle = null;
@@ -240,6 +265,12 @@ public partial class PlayerController
             }
         }
 
+        if (TryFindInteractableRadio(cam, out CarnivalRadio radio) && radio != null)
+        {
+            radio.RequestToggle();
+            return true;
+        }
+
         return false;
     }
 
@@ -266,6 +297,12 @@ public partial class PlayerController
         if (TryFindInteractableCarnivalStartButton(cam, out CarnivalGameStartButton button) && button != null)
         {
             message = button.CanStart ? button.StartPromptMessage : button.InProgressPromptMessage;
+            return true;
+        }
+
+        if (TryFindInteractableRadio(cam, out CarnivalRadio radio) && radio != null)
+        {
+            message = radio.InteractPromptMessage;
             return true;
         }
 
@@ -310,6 +347,9 @@ public partial class PlayerController
 
         if (driveAnimator && animator != null)
             animator.SetBool(SeatedAnimatorParameter, true);
+
+        // Seated forces HoldPose 0 so raised hold arms never override the Sit pose.
+        ApplyHoldPoseAnimatorParameter();
     }
 
     /// <summary>Stand the player back up at their pre-sit spot (stops the sitting animation).</summary>
@@ -323,5 +363,8 @@ public partial class PlayerController
             TeleportPlayer(_preSeatPosition, _preSeatRotation);
             _blackjackSeated = false;
         }
+
+        // Restore the hold pose for whatever is selected now that we're standing again.
+        ApplyHoldPoseAnimatorParameter();
     }
 }

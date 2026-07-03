@@ -1,5 +1,36 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!1 &848676227065482001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 5719438424046966889}
+  m_Layer: 0
+  m_Name: GripPoint_L
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &5719438424046966889
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 848676227065482001}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.4034958, y: 0.039094236, z: 0.8828206, w: 0.23725644}
+  m_LocalPosition: {x: -0.01344, y: 0.0039699976, z: -0.00319}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 5492340383901033657}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &3822100035863138692
 GameObject:
   m_ObjectHideFlags: 0
@@ -42,7 +73,9 @@ Transform:
   m_LocalPosition: {x: 49.075, y: 1.64, z: -14.666}
   m_LocalScale: {x: 20.692188, y: 20.692188, z: 20.692188}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 4096198370371637746}
+  - {fileID: 5719438424046966889}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &6665520924501145746
@@ -350,9 +383,13 @@ MonoBehaviour:
   - {fileID: 5190908140759165947}
   itemRenderers:
   - {fileID: 3084985487440427515}
-  heldLocalPosition: {x: 0, y: 0, z: 0}
+  heldLocalPosition: {x: -0.237, y: -0.1, z: -0.4}
   heldLocalEulerAngles: {x: 0, y: 0, z: 0}
   alignRotationWithFollow: 1
+  gripPointRight: {fileID: 4096198370371637746}
+  gripPointLeft: {fileID: 5719438424046966889}
+  heldRotationOffsetEuler: {x: 0, y: 0, z: 0}
+  heldAttachToHandSocket: 0
 --- !u!114 &6612098834412200202
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -380,6 +417,10 @@ MonoBehaviour:
   ringDropSpinAngularSpeed: 8
   serverReclaimSpeedThreshold: 0.35
   serverSettleSecondsBeforeReturn: 1.25
+  observerLocalArcEnabled: 1
+  observerArcBlendSeconds: 0.22
+  observerArcFreshDataDistance: 0.2
+  observerArcMaxSeconds: 1.5
 --- !u!114 &9200000000000000005
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -393,3 +434,34 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics
   ShowTopMostFoldoutHeaderGroup: 1
+--- !u!1 &5847993236517155216
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4096198370371637746}
+  m_Layer: 0
+  m_Name: GripPoint_R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &4096198370371637746
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5847993236517155216}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.33114856, y: 0.11730154, z: -0.90865934, w: 0.22565298}
+  m_LocalPosition: {x: 0.01047, y: -0.00010999733, z: -0.0025200003}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 5492340383901033657}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}

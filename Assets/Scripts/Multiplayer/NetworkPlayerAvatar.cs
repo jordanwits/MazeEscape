@@ -33,6 +33,14 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
 
+    // Item id the owner is currently reaching for during a gated pickup (0 = none). Remote peers replay the
+    // reach arm-extension in PlayerItemHoldIK toward the registered item; a stale id merely plays a short
+    // extend-and-retract, so a netvar (self-correcting for late joiners) beats an RPC here.
+    readonly NetworkVariable<ulong> _reachTargetItemId = new NetworkVariable<ulong>(
+        0UL,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Owner);
+
     readonly NetworkVariable<bool> _audiblySprintingForAi = new NetworkVariable<bool>(
         false,
         NetworkVariableReadPermission.Everyone,
@@ -68,6 +76,18 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
     /// <summary>Server-authoritative: player is grabbed and carried by the Jailor.</summary>
     public bool IsCarriedByJailor => IsSpawned ? _carriedByJailor.Value : _offlineCarriedByJailor;
+
+    /// <summary>Replicated from owner: item id of an in-flight gated-pickup reach (0 = none).</summary>
+    public ulong ReachTargetItemId => IsSpawned ? _reachTargetItemId.Value : 0UL;
+
+    /// <summary>Owner-side publish of the gated-pickup reach target (no-op offline or off-owner).</summary>
+    public void PublishReachTarget(ulong itemId)
+    {
+        if (!IsSpawned || !IsOwner)
+            return;
+        if (_reachTargetItemId.Value != itemId)
+            _reachTargetItemId.Value = itemId;
+    }
 
     /// <summary>
     /// Server-authoritative: Jailor finished locking this player in a key-locked jail cell.
