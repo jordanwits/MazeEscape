@@ -557,6 +557,12 @@ public partial class PlayerController : MonoBehaviour
 
         if (_ragdollController != null && (_ragdollController.IsRagdolled || _ragdollController.IsHeld))
         {
+            // The view is being moved for us (Jailor carry, ragdoll tumble) rather than by look input.
+            // Force the render culler to evaluate every frame so geometry swinging into view as the
+            // Jailor rounds a corner is enabled the same frame, instead of on its next throttled tick
+            // (which briefly reveals the skybox). No-op cost when nothing is culling.
+            WorldRenderCuller.RequestContinuousEvaluation();
+
             CancelThrowCharge();
             if (PauseMenuController.BlocksGameplayInput)
             {

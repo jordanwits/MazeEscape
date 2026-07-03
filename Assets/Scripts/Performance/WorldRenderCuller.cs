@@ -43,6 +43,13 @@ using UnityEngine;
 ///     skinned mesh, so this does NOT exclude them.
 ///   * Anything carrying a <see cref="WorldRenderCullIgnore"/> marker.
 /// </summary>
+// Run the visibility pass AFTER every script that moves the view camera this frame, so we cull
+// against the camera's FINAL pose rather than last frame's. The FP view is driven late in LateUpdate:
+// RagdollCameraDamper (550) -> FirstPersonViewHeadSync (600) -> RagdollCameraCollision (601). If we
+// evaluated at the default order (0) we'd read the previous frame's pose, and a fast pose change —
+// most visibly being whipped around a corner in the Jailor's grip — would outrun the cull by a frame
+// and briefly reveal the skybox. Ordering past 601 closes that one-frame lag.
+[DefaultExecutionOrder(700)]
 [DisallowMultipleComponent]
 public class WorldRenderCuller : MonoBehaviour
 {
@@ -92,6 +99,10 @@ public class WorldRenderCuller : MonoBehaviour
         public bool On = true;
     }
 
+    /// <summary>View-cone length in metres — geometry beyond this (plus its bucket radius) stops drawing.
+    /// Exposed so <see cref="MazeDistanceFog"/> can end its fog just before this edge.</summary>
+    public float CullDistance => cullDistance;
+
     readonly List<Bucket> _buckets = new();
     readonly Dictionary<Vector3Int, Bucket> _bucketByCoord = new();
 
@@ -99,6 +110,28 @@ public class WorldRenderCuller : MonoBehaviour
     float _nextUpdate;
     float _nextRescan;
     int _lastRendererCount = -1;
+
+    // Frame index through which the throttle is bypassed (a visibility pass runs every frame).
+    // Set by RequestContinuousEvaluation while the local view is being moved by something other than
+    // the player's own look input — being carried/ragdolled by the Jailor. In that state the camera
+    // rides a smoothed proxy whose per-frame rotation/translation can sit just under the turn/move
+    // re-evaluate thresholds, so the pass would otherwise fall back to the idle updateInterval cadence
+    // and briefly reveal the skybox as geometry swings into view between ticks. The owner pulses this
+    // each frame it is disrupted; a single-frame horizon means it self-expires the moment it stops.
+    static int _forceEvalThroughFrame = -1;
+
+    /// <summary>
+    /// Ask the culler to skip its update-interval throttle and run a visibility pass this frame and the
+    /// next. Call every frame while the local viewpoint is being driven involuntarily (Jailor carry,
+    /// ragdoll) so geometry is enabled the same frame it comes into view instead of on the next tick.
+    /// Cheap and idempotent; static so callers don't need a reference to the instance.
+    /// </summary>
+    public static void RequestContinuousEvaluation()
+    {
+        // +1 so a pulse set in an earlier LateUpdate (PlayerController, order 100) still counts when the
+        // culler reads it later this frame (order 700), and also covers the immediately following frame.
+        _forceEvalThroughFrame = Time.frameCount + 1;
+    }
 
     // View state at the last visibility pass, so a fast turn/dash can force an early re-evaluation.
     Vector3 _lastEvalForward;
@@ -140,7 +173,7 @@ public class WorldRenderCuller : MonoBehaviour
         // that swings into view stays disabled until the next tick and the player sees the skybox.
         // During a quick turn the rotation test trips every frame, so what you're looking at is
         // enabled the same frame it becomes visible (LateUpdate runs before rendering).
-        bool due = now >= _nextUpdate;
+        bool due = now >= _nextUpdate || Time.frameCount <= _forceEvalThroughFrame;
         if (!due && _hasEvaluated)
         {
             float turnCos = Mathf.Cos(Mathf.Max(0f, reevaluateOnTurnDegrees) * Mathf.Deg2Rad);

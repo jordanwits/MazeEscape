@@ -124,7 +124,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     [Header("Config")]
     [Tooltip("If set, always uses this config (ignores Resources/MazeConfigs). Leave empty for normal play: one ProceduralMazeConfig per level under Resources/MazeConfigs, matched by Target Scene Name.")]
     [SerializeField] ProceduralMazeConfig configOverride;
-    [Tooltip("If set, used instead of Maze Enemy Prefab on the config (same maze asset, different enemy per scene).")]
+    [Tooltip("If set, used instead of the Enemy 1 prefab on the config (same maze asset, different enemy per scene).")]
     [SerializeField] GameObject mazeEnemyPrefabOverride;
 
     [Header("Navigation (runtime)")]
@@ -2909,38 +2909,78 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0x39FEA0B9))));
 
-        int zombiesToSpawn = wantZombies ? Mathf.Min(zombieCountRequested, candidates.Count) : 0;
-        if (wantZombies && zombieCountRequested > candidates.Count)
+        // Reserve far-from-start cells for the Jailor/Clown slot FIRST, so that dangerous chaser never
+        // spawns right on top of the start room. The Jailor/Clown uses its own (usually larger) minimum
+        // distance; everything else keeps the shared maze-enemy minimum baked into the candidate list.
+        int jailorMinCells = _config.MazeJailorMinCellsFromStart;
+        List<Vector2Int> jailorCells = new();
+        if (wantJailors && jailorCountRequested > 0)
+        {
+            HashSet<Vector2Int> picked = new();
+            foreach (Vector2Int c in candidates)
+            {
+                if (jailorCells.Count >= jailorCountRequested)
+                    break;
+                if ((distances[c.x, c.y] ?? 0) >= jailorMinCells)
+                {
+                    jailorCells.Add(c);
+                    picked.Add(c);
+                }
+            }
+
+            // Small maze fallback: if no cell is far enough, still spawn the Jailor/Clown at the
+            // farthest cells available (never near the start) rather than dropping it entirely.
+            if (jailorCells.Count < jailorCountRequested)
+            {
+                List<Vector2Int> byDistanceDesc = new(candidates);
+                byDistanceDesc.Sort((a, b) => (distances[b.x, b.y] ?? 0).CompareTo(distances[a.x, a.y] ?? 0));
+                foreach (Vector2Int c in byDistanceDesc)
+                {
+                    if (jailorCells.Count >= jailorCountRequested)
+                        break;
+                    if (picked.Add(c))
+                        jailorCells.Add(c);
+                }
+
+                LogMazeWarningOnce(
+                    "maze-jailor-trimmed",
+                    $"[Maze] No cell is at least {jailorMinCells} cell(s) from start for the Jailor/Clown; "
+                    + "placing it at the farthest available cell(s) instead. Lower the Jailor min distance or enlarge the maze.",
+                    this);
+            }
+        }
+
+        int jailorsToSpawn = jailorCells.Count;
+
+        HashSet<Vector2Int> reservedJailorCells = new(jailorCells);
+
+        // Remaining cells (shuffled order preserved) feed zombies, skeletons and monkeys.
+        List<Vector2Int> otherCells = new(candidates.Count - jailorsToSpawn);
+        foreach (Vector2Int c in candidates)
+            if (!reservedJailorCells.Contains(c))
+                otherCells.Add(c);
+
+        int zombiesToSpawn = wantZombies ? Mathf.Min(zombieCountRequested, otherCells.Count) : 0;
+        if (wantZombies && zombieCountRequested > otherCells.Count)
         {
             LogMazeWarningOnce(
                 "enemies-trimmed",
-                $"[Maze] Requested {_config.MazeEnemyCount} maze enemies but only {candidates.Count} cells match rules; spawning {candidates.Count}.",
+                $"[Maze] Requested {_config.MazeEnemyCount} maze enemies but only {otherCells.Count} cells match rules; spawning {otherCells.Count}.",
                 this);
         }
 
-        int freeAfterZombies = candidates.Count - zombiesToSpawn;
-        int jailorsToSpawn = wantJailors ? Mathf.Min(jailorCountRequested, freeAfterZombies) : 0;
-        if (wantJailors && jailorsToSpawn < jailorCountRequested)
-        {
-            LogMazeWarningOnce(
-                "maze-jailor-trimmed",
-                $"[Maze] Requested {jailorCountRequested} maze jailor(s) but only {freeAfterZombies} cell(s) remain after zombies; spawning {jailorsToSpawn}. "
-                + "Reduce maze enemy count or maze size.",
-                this);
-        }
-
-        int freeAfterJailors = candidates.Count - zombiesToSpawn - jailorsToSpawn;
-        int skeletonsToSpawn = wantSkeletons ? Mathf.Min(skeletonCountRequested, freeAfterJailors) : 0;
+        int freeAfterZombies = otherCells.Count - zombiesToSpawn;
+        int skeletonsToSpawn = wantSkeletons ? Mathf.Min(skeletonCountRequested, freeAfterZombies) : 0;
         if (wantSkeletons && skeletonsToSpawn < skeletonCountRequested)
         {
             LogMazeWarningOnce(
                 "maze-skeleton-trimmed",
-                $"[Maze] Requested {skeletonCountRequested} maze skeleton(s) but only {freeAfterJailors} cell(s) remain after zombies and jailors; spawning {skeletonsToSpawn}. "
+                $"[Maze] Requested {skeletonCountRequested} maze skeleton(s) but only {freeAfterZombies} cell(s) remain after zombies and jailors; spawning {skeletonsToSpawn}. "
                 + "Reduce maze enemy count or maze size.",
                 this);
         }
 
-        int freeAfterSkeletons = candidates.Count - zombiesToSpawn - jailorsToSpawn - skeletonsToSpawn;
+        int freeAfterSkeletons = freeAfterZombies - skeletonsToSpawn;
         int monkeysToSpawn = wantMonkeys ? Mathf.Min(monkeyCountRequested, freeAfterSkeletons) : 0;
         if (wantMonkeys && monkeysToSpawn < monkeyCountRequested)
         {
@@ -2954,6 +2994,14 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int totalSpawns = zombiesToSpawn + jailorsToSpawn + skeletonsToSpawn + monkeysToSpawn;
         if (totalSpawns == 0)
             return;
+
+        // Rebuild the flat candidate list in the exact layout the spawn loops below index into:
+        // [zombies][jailors][skeletons][monkeys].
+        candidates = new List<Vector2Int>(totalSpawns);
+        candidates.AddRange(otherCells.GetRange(0, zombiesToSpawn));
+        candidates.AddRange(jailorCells);
+        candidates.AddRange(otherCells.GetRange(zombiesToSpawn, skeletonsToSpawn));
+        candidates.AddRange(otherCells.GetRange(zombiesToSpawn + skeletonsToSpawn, monkeysToSpawn));
 
         if (wantZombies)
         {

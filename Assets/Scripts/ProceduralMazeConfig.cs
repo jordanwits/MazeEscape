@@ -104,8 +104,8 @@ public class ProceduralMazeConfig : ScriptableObject
     [SerializeField] float spawnSpacing = 1.5f;
     [SerializeField] int spawnPointCount = 4;
 
-    [Header("Maze enemies (optional)")]
-    [Tooltip("Prefab spawned after the maze is built (e.g. zombie with NetworkObject). Leave empty to skip.")]
+    [Header("Enemy 1 (optional)")]
+    [Tooltip("Prefab spawned after the maze is built (with NetworkObject). Leave empty to skip.")]
     [SerializeField] GameObject mazeEnemyPrefab;
     [SerializeField] int mazeEnemyCount;
     [Tooltip("Extra Y offset added on top of the cell center when spawning enemies.")]
@@ -117,24 +117,27 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Minimum horizontal distance between enemies spawned in the same batch. Use 0 for auto (from cell size).")]
     [SerializeField] float mazeEnemyMinSeparation;
 
-    [Header("Maze Jailor (optional, in addition to maze enemies)")]
-    [Tooltip("Spawned after zombies in the same GeneratedEnemies pass, using extra candidate cells (same rules as maze enemies).")]
+    [Header("Enemy 2 (optional, in addition to Enemy 1)")]
+    [Tooltip("Spawned after Enemy 1 in the same GeneratedEnemies pass, using extra candidate cells (same rules as Enemy 1).")]
     [SerializeField] GameObject mazeJailorPrefab;
-    [Tooltip("How many Jailors to spawn (usually 1). Cannot exceed free cells after zombie spawns.")]
+    [Tooltip("How many Enemy 2 to spawn (usually 1). Cannot exceed free cells after Enemy 1 spawns.")]
     [SerializeField] int mazeJailorCount = 1;
+    [Tooltip("Minimum graph distance from the start cell for the Enemy 2 slot. Kept separate (and usually larger) "
+        + "than the Enemy 1 minimum so Enemy 2 never spawns right next to the start room. "
+        + "Clamped to at least the Enemy 1 minimum.")]
+    [SerializeField] int mazeJailorMinCellsFromStart = 5;
 
-    [Header("Maze Skeleton (optional, in addition to maze enemies)")]
-    [Tooltip("Skeleton enemy prefab (with NetworkObject). Spawned after zombies and jailors in the same GeneratedEnemies pass, using extra candidate cells (same rules as maze enemies). Leave empty to skip.")]
+    [Header("Enemy 3 (optional, in addition to Enemy 1)")]
+    [Tooltip("Enemy prefab (with NetworkObject). Spawned after Enemy 1 and Enemy 2 in the same GeneratedEnemies pass, using extra candidate cells (same rules as Enemy 1). Leave empty to skip.")]
     [SerializeField] GameObject mazeSkeletonPrefab;
-    [Tooltip("How many Skeletons to spawn. Cannot exceed free cells after zombie and jailor spawns.")]
+    [Tooltip("How many Enemy 3 to spawn. Cannot exceed free cells after Enemy 1 and Enemy 2 spawns.")]
     [SerializeField] int mazeSkeletonCount;
 
-    [Header("Maze Wind-up Monkey (optional)")]
-    [Tooltip("Wind-up cymbal monkey enemy prefab (with NetworkObject). Spawned after zombies, jailors and "
-        + "skeletons in the same GeneratedEnemies pass. Stands still until a player is near, then walks straight "
-        + "and claps to lure the Clown. Leave empty to skip.")]
+    [Header("Enemy 4 (optional)")]
+    [Tooltip("Enemy prefab (with NetworkObject). Spawned after Enemy 1, Enemy 2 and Enemy 3 in the "
+        + "same GeneratedEnemies pass. Leave empty to skip.")]
     [SerializeField] GameObject mazeWindupMonkeyPrefab;
-    [Tooltip("How many wind-up monkeys to spawn. Cannot exceed free cells after zombie, jailor and skeleton spawns.")]
+    [Tooltip("How many Enemy 4 to spawn. Cannot exceed free cells after Enemy 1, Enemy 2 and Enemy 3 spawns.")]
     [SerializeField] int mazeWindupMonkeyCount;
 
     [Header("Jailor carry drop (maze)")]
@@ -255,6 +258,9 @@ public class ProceduralMazeConfig : ScriptableObject
     public float MazeEnemyMinSeparation => mazeEnemyMinSeparation;
     public GameObject MazeJailorPrefab => mazeJailorPrefab;
     public int MazeJailorCount => Mathf.Max(0, mazeJailorCount);
+    /// <summary>Minimum start distance for the Jailor/Clown slot, never below the shared maze enemy minimum.</summary>
+    public int MazeJailorMinCellsFromStart =>
+        Mathf.Max(MazeEnemyMinCellsFromStart, mazeJailorMinCellsFromStart);
     public GameObject MazeSkeletonPrefab => mazeSkeletonPrefab;
     public int MazeSkeletonCount => Mathf.Max(0, mazeSkeletonCount);
 

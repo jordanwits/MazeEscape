@@ -385,6 +385,7 @@ GameObject:
   m_Component:
   - component: {fileID: 938650457}
   - component: {fileID: 938650456}
+  - component: {fileID: 938650458}
   m_Layer: 0
   m_Name: WorldRenderCuller
   m_TagString: Untagged
@@ -405,9 +406,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WorldRenderCuller
   cullDistance: 60
+  coneMarginDegrees: 15
+  nearRadius: 10
   hysteresis: 4
+  coneEdgeHysteresisDegrees: 5
   bucketSize: 12
   updateInterval: 0.15
+  reevaluateOnTurnDegrees: 5
+  reevaluateOnMoveMetres: 3
   rescanInterval: 4
 --- !u!4 &938650457
 Transform:
@@ -424,6 +430,28 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &938650458
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 938650455}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5cea24d1fb00ba8418250a92ce411d55, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MazeDistanceFog
+  enableFog: 1
+  fogColor: {r: 0.035, g: 0.035, b: 0.045, a: 1}
+  deriveFromCuller: 1
+  culler: {fileID: 0}
+  endMarginBeforeCull: 8
+  startFraction: 0.5
+  manualStartDistance: 25
+  manualEndDistance: 50
+  overrideCameraBackground: 1
+  cameraRecheckInterval: 0.5
 --- !u!1 &942412436
 GameObject:
   m_ObjectHideFlags: 0
