@@ -81,19 +81,23 @@ MonoBehaviour:
   spawnHeight: 1
   spawnSpacing: 1.5
   spawnPointCount: 0
-  mazeEnemyPrefab: {fileID: 8324813916893631794, guid: bb8ce64463a351b44b8282256b5ae913, type: 3}
-  mazeEnemyCount: 8
+  enemy1:
+    enemyPrefab: {fileID: 8324813916893631794, guid: bb8ce64463a351b44b8282256b5ae913, type: 3}
+    enemyCount: 8
   mazeEnemySpawnHeight: 1
   mazeEnemyMinCellsFromStart: 2
   mazeEnemyExcludeExitCell: 1
   mazeEnemyMinSeparation: 0
-  mazeHunterPrefab: {fileID: 7644638518217413858, guid: 3250bcfe5b1c11d4da88e202a1b8ea13, type: 3}
-  mazeHunterCount: 1
-  mazeHunterMinCellsFromStart: 5
-  mazeSkeletonPrefab: {fileID: 6189255197053811317, guid: 8e793ad3ce29cd4478188a06b77c7e5e, type: 3}
-  mazeSkeletonCount: 4
-  mazeWindupMonkeyPrefab: {fileID: 0}
-  mazeWindupMonkeyCount: 0
+  enemy2:
+    enemyPrefab: {fileID: 7644638518217413858, guid: 3250bcfe5b1c11d4da88e202a1b8ea13, type: 3}
+    enemyCount: 1
+  enemy2MinCellsFromStart: 5
+  enemy3:
+    enemyPrefab: {fileID: 6189255197053811317, guid: 8e793ad3ce29cd4478188a06b77c7e5e, type: 3}
+    enemyCount: 4
+  enemy4:
+    enemyPrefab: {fileID: 0}
+    enemyCount: 0
   assignJailorCarryDestinationAfterSpawn: 1
   preferJailorCarryAnchorFromMazePrefab: 1
   jailorCarryAnchorTransformName: JailorCarryDrop
