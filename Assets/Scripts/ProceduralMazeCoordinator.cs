@@ -124,7 +124,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     [Header("Config")]
     [Tooltip("If set, always uses this config (ignores Resources/MazeConfigs). Leave empty for normal play: one ProceduralMazeConfig per level under Resources/MazeConfigs, matched by Target Scene Name.")]
     [SerializeField] ProceduralMazeConfig configOverride;
-    [Tooltip("If set, used instead of the Enemy 1 prefab on the config (same maze asset, different enemy per scene).")]
+    [Tooltip("If set, used instead of the config's Enemy Slot 1 (zombie horde) prefab (same maze asset, different enemy per scene).")]
     [SerializeField] GameObject mazeEnemyPrefabOverride;
 
     [Header("Navigation (runtime)")]
@@ -992,7 +992,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     }
 
     /// <summary>
-    /// Horizontal origin for enemy/jailor spawn probes: interior anchor cells use the footprint center (matching built geometry).
+    /// Horizontal origin for enemy/hunter spawn probes: interior anchor cells use the footprint center (matching built geometry).
     /// Skip cells are excluded from candidates beforehand.
     /// </summary>
     Vector3 ResolveMazeEnemySpawnHorizontalCellOrigin(
@@ -2852,18 +2852,18 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         mazeTrapRoots ??= new List<Transform>();
         GameObject zombiePrefab = mazeEnemyPrefabOverride != null ? mazeEnemyPrefabOverride : _config.MazeEnemyPrefab;
         int zombieCountRequested = _config.MazeEnemyCount;
-        GameObject jailorPrefab = _config.MazeJailorPrefab;
-        int jailorCountRequested = _config.MazeJailorCount;
+        GameObject hunterPrefab = _config.MazeHunterPrefab;
+        int hunterCountRequested = _config.MazeHunterCount;
         GameObject skeletonPrefab = _config.MazeSkeletonPrefab;
         int skeletonCountRequested = _config.MazeSkeletonCount;
         GameObject monkeyPrefab = _config.MazeWindupMonkeyPrefab;
         int monkeyCountRequested = _config.MazeWindupMonkeyCount;
 
         bool wantZombies = zombiePrefab != null && zombieCountRequested > 0;
-        bool wantJailors = jailorPrefab != null && jailorCountRequested > 0;
+        bool wantHunters = hunterPrefab != null && hunterCountRequested > 0;
         bool wantSkeletons = skeletonPrefab != null && skeletonCountRequested > 0;
         bool wantMonkeys = monkeyPrefab != null && monkeyCountRequested > 0;
-        if (!wantZombies && !wantJailors && !wantSkeletons && !wantMonkeys)
+        if (!wantZombies && !wantHunters && !wantSkeletons && !wantMonkeys)
             return;
 
         if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
@@ -2909,55 +2909,55 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0x39FEA0B9))));
 
-        // Reserve far-from-start cells for the Jailor/Clown slot FIRST, so that dangerous chaser never
-        // spawns right on top of the start room. The Jailor/Clown uses its own (usually larger) minimum
+        // Reserve far-from-start cells for the hunter slot (Jailor/Clown) FIRST, so that dangerous chaser never
+        // spawns right on top of the start room. The hunter uses its own (usually larger) minimum
         // distance; everything else keeps the shared maze-enemy minimum baked into the candidate list.
-        int jailorMinCells = _config.MazeJailorMinCellsFromStart;
-        List<Vector2Int> jailorCells = new();
-        if (wantJailors && jailorCountRequested > 0)
+        int hunterMinCells = _config.MazeHunterMinCellsFromStart;
+        List<Vector2Int> hunterCells = new();
+        if (wantHunters && hunterCountRequested > 0)
         {
             HashSet<Vector2Int> picked = new();
             foreach (Vector2Int c in candidates)
             {
-                if (jailorCells.Count >= jailorCountRequested)
+                if (hunterCells.Count >= hunterCountRequested)
                     break;
-                if ((distances[c.x, c.y] ?? 0) >= jailorMinCells)
+                if ((distances[c.x, c.y] ?? 0) >= hunterMinCells)
                 {
-                    jailorCells.Add(c);
+                    hunterCells.Add(c);
                     picked.Add(c);
                 }
             }
 
-            // Small maze fallback: if no cell is far enough, still spawn the Jailor/Clown at the
+            // Small maze fallback: if no cell is far enough, still spawn the hunter at the
             // farthest cells available (never near the start) rather than dropping it entirely.
-            if (jailorCells.Count < jailorCountRequested)
+            if (hunterCells.Count < hunterCountRequested)
             {
                 List<Vector2Int> byDistanceDesc = new(candidates);
                 byDistanceDesc.Sort((a, b) => (distances[b.x, b.y] ?? 0).CompareTo(distances[a.x, a.y] ?? 0));
                 foreach (Vector2Int c in byDistanceDesc)
                 {
-                    if (jailorCells.Count >= jailorCountRequested)
+                    if (hunterCells.Count >= hunterCountRequested)
                         break;
                     if (picked.Add(c))
-                        jailorCells.Add(c);
+                        hunterCells.Add(c);
                 }
 
                 LogMazeWarningOnce(
-                    "maze-jailor-trimmed",
-                    $"[Maze] No cell is at least {jailorMinCells} cell(s) from start for the Jailor/Clown; "
-                    + "placing it at the farthest available cell(s) instead. Lower the Jailor min distance or enlarge the maze.",
+                    "maze-hunter-trimmed",
+                    $"[Maze] No cell is at least {hunterMinCells} cell(s) from start for the hunter (Jailor/Clown); "
+                    + "placing it at the farthest available cell(s) instead. Lower the hunter min distance or enlarge the maze.",
                     this);
             }
         }
 
-        int jailorsToSpawn = jailorCells.Count;
+        int huntersToSpawn = hunterCells.Count;
 
-        HashSet<Vector2Int> reservedJailorCells = new(jailorCells);
+        HashSet<Vector2Int> reservedHunterCells = new(hunterCells);
 
         // Remaining cells (shuffled order preserved) feed zombies, skeletons and monkeys.
-        List<Vector2Int> otherCells = new(candidates.Count - jailorsToSpawn);
+        List<Vector2Int> otherCells = new(candidates.Count - huntersToSpawn);
         foreach (Vector2Int c in candidates)
-            if (!reservedJailorCells.Contains(c))
+            if (!reservedHunterCells.Contains(c))
                 otherCells.Add(c);
 
         int zombiesToSpawn = wantZombies ? Mathf.Min(zombieCountRequested, otherCells.Count) : 0;
@@ -2975,7 +2975,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         {
             LogMazeWarningOnce(
                 "maze-skeleton-trimmed",
-                $"[Maze] Requested {skeletonCountRequested} maze skeleton(s) but only {freeAfterZombies} cell(s) remain after zombies and jailors; spawning {skeletonsToSpawn}. "
+                $"[Maze] Requested {skeletonCountRequested} maze skeleton(s) but only {freeAfterZombies} cell(s) remain after zombies and hunters; spawning {skeletonsToSpawn}. "
                 + "Reduce maze enemy count or maze size.",
                 this);
         }
@@ -2986,20 +2986,20 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         {
             LogMazeWarningOnce(
                 "maze-monkey-trimmed",
-                $"[Maze] Requested {monkeyCountRequested} maze wind-up monkey(s) but only {freeAfterSkeletons} cell(s) remain after zombies, jailors and skeletons; spawning {monkeysToSpawn}. "
+                $"[Maze] Requested {monkeyCountRequested} maze wind-up monkey(s) but only {freeAfterSkeletons} cell(s) remain after zombies, hunters and skeletons; spawning {monkeysToSpawn}. "
                 + "Reduce maze enemy count or maze size.",
                 this);
         }
 
-        int totalSpawns = zombiesToSpawn + jailorsToSpawn + skeletonsToSpawn + monkeysToSpawn;
+        int totalSpawns = zombiesToSpawn + huntersToSpawn + skeletonsToSpawn + monkeysToSpawn;
         if (totalSpawns == 0)
             return;
 
         // Rebuild the flat candidate list in the exact layout the spawn loops below index into:
-        // [zombies][jailors][skeletons][monkeys].
+        // [zombies][hunters][skeletons][monkeys].
         candidates = new List<Vector2Int>(totalSpawns);
         candidates.AddRange(otherCells.GetRange(0, zombiesToSpawn));
-        candidates.AddRange(jailorCells);
+        candidates.AddRange(hunterCells);
         candidates.AddRange(otherCells.GetRange(zombiesToSpawn, skeletonsToSpawn));
         candidates.AddRange(otherCells.GetRange(zombiesToSpawn + skeletonsToSpawn, monkeysToSpawn));
 
@@ -3012,10 +3012,10 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 this);
         }
 
-        if (wantJailors && jailorsToSpawn > 0)
+        if (wantHunters && huntersToSpawn > 0)
         {
             Debug.Log(
-                $"[Maze] Spawning {jailorsToSpawn} maze jailor(s) from config \"{_config.name}\" (prefab \"{jailorPrefab.name}\").",
+                $"[Maze] Spawning {huntersToSpawn} maze hunter(s) (Jailor/Clown) from config \"{_config.name}\" (prefab \"{hunterPrefab.name}\").",
                 this);
         }
 
@@ -3050,12 +3050,12 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             }
         }
 
-        const int jailorSpawnSalt = unchecked((int)0x7E11CA33);
-        for (int j = 0; j < jailorsToSpawn; j++)
+        const int hunterSpawnSalt = unchecked((int)0x7E11CA33);
+        for (int j = 0; j < huntersToSpawn; j++)
         {
             int candidateIndex = zombiesToSpawn + j;
             Vector2Int cell = candidates[candidateIndex];
-            int spawnKey = zombiesToSpawn + MixSeed(seed, MixSeed(j, jailorSpawnSalt));
+            int spawnKey = zombiesToSpawn + MixSeed(seed, MixSeed(j, hunterSpawnSalt));
             Vector3 position = ResolveSpawnPositionWithSeparation(
                 cell,
                 cellSize,
@@ -3068,7 +3068,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 mazeTrapRoots);
 
             placedEnemyPositions.Add(position);
-            GameObject instance = Instantiate(jailorPrefab, position, Quaternion.identity, enemiesRoot);
+            GameObject instance = Instantiate(hunterPrefab, position, Quaternion.identity, enemiesRoot);
 
             if (spawnWithNetcode)
             {
@@ -3088,9 +3088,9 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         const int skeletonSpawnSalt = unchecked((int)0x5CE1E708);
         for (int s = 0; s < skeletonsToSpawn; s++)
         {
-            int candidateIndex = zombiesToSpawn + jailorsToSpawn + s;
+            int candidateIndex = zombiesToSpawn + huntersToSpawn + s;
             Vector2Int cell = candidates[candidateIndex];
-            int spawnKey = zombiesToSpawn + jailorsToSpawn + MixSeed(seed, MixSeed(s, skeletonSpawnSalt));
+            int spawnKey = zombiesToSpawn + huntersToSpawn + MixSeed(seed, MixSeed(s, skeletonSpawnSalt));
             Vector3 position = ResolveSpawnPositionWithSeparation(
                 cell,
                 cellSize,
@@ -3123,9 +3123,9 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         const int monkeySpawnSalt = unchecked((int)0x4D0E1A55);
         for (int m = 0; m < monkeysToSpawn; m++)
         {
-            int candidateIndex = zombiesToSpawn + jailorsToSpawn + skeletonsToSpawn + m;
+            int candidateIndex = zombiesToSpawn + huntersToSpawn + skeletonsToSpawn + m;
             Vector2Int cell = candidates[candidateIndex];
-            int spawnKey = zombiesToSpawn + jailorsToSpawn + skeletonsToSpawn + MixSeed(seed, MixSeed(m, monkeySpawnSalt));
+            int spawnKey = zombiesToSpawn + huntersToSpawn + skeletonsToSpawn + MixSeed(seed, MixSeed(m, monkeySpawnSalt));
             Vector3 position = ResolveSpawnPositionWithSeparation(
                 cell,
                 cellSize,

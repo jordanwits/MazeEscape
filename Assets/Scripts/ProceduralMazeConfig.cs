@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 public enum MazeSpecialRoomVariant
 {
@@ -64,10 +65,10 @@ public class ProceduralMazeConfig : ScriptableObject
         + "Tick this to allow duplicates again (old behavior).")]
     [SerializeField] bool allowAdjacentDuplicatePieces;
 
-    [Header("Interior rooms (throughout maze)")]
+    [Header("Interior Rooms")]
     [Tooltip("Prefabs with MazePieceDefinition: open faces must match the **outer** openings of the room block (see Interior Room Grid Footprint). Placed on non-start, non-exit cells only.")]
     [SerializeField] GameObject[] interiorRoomPrefabs = EmptyPrefabs;
-    [Tooltip("Default grid size for an interior room (cells in X and Z). Example: (2,2) with cellSize 6 →12×12 world floor. Per-prefab override: MazePieceDefinition.interiorGridFootprint.")]
+    [Tooltip("Default grid size for an interior room (cells in X and Z). Example: (2,2) with cellSize 6 → a 12×12 world floor. Per-prefab override: MazePieceDefinition.interiorGridFootprint.")]
     [SerializeField] Vector2Int interiorRoomGridFootprint = new(1, 1);
     [Tooltip("How many interior rooms to try to place each build. Uses maze seed; skips cells where no prefab matches.")]
     [SerializeField] int interiorRoomCount;
@@ -99,49 +100,60 @@ public class ProceduralMazeConfig : ScriptableObject
     [SerializeField] float cornerYawOffset;
     [SerializeField] float teeYawOffset;
 
-    [Header("Generated Spawns")]
+    [Header("Generated Player Spawn Points")]
+    [Tooltip("Y offset above the start cell floor for generated player spawn points.")]
     [SerializeField] float spawnHeight = 1f;
+    [Tooltip("Horizontal spacing between generated player spawn points.")]
     [SerializeField] float spawnSpacing = 1.5f;
+    [Tooltip("How many player spawn points (Spawn_0..N under GeneratedSpawnPoints) to create at the start cell. Use 0 when the scene provides its own spawn points.")]
     [SerializeField] int spawnPointCount = 4;
 
-    [Header("Enemy 1 (optional)")]
-    [Tooltip("Prefab spawned after the maze is built (with NetworkObject). Leave empty to skip.")]
+    [Header("Enemy Slot 1 — Zombie Horde")]
+    [Tooltip("Slot 1 horde enemy, spawned after the maze is built (with NetworkObject). Spawn order each build: slot 1 → 2 → 3 → 4. Leave empty to skip.")]
     [SerializeField] GameObject mazeEnemyPrefab;
+    [Tooltip("How many slot 1 enemies to spawn. Ignored while the prefab above is empty.")]
     [SerializeField] int mazeEnemyCount;
-    [Tooltip("Extra Y offset added on top of the cell center when spawning enemies.")]
+
+    [Header("Enemy Spawn Rules (Shared By All Slots)")]
+    [Tooltip("Extra Y offset added on top of the cell center when spawning enemies (all slots).")]
     [SerializeField] float mazeEnemySpawnHeight;
-    [Tooltip("Minimum graph distance from the start cell along open passages. Start cell is never used.")]
+    [Tooltip("Minimum graph distance from the start cell along open passages (all slots; the hunter slot adds its own larger minimum). Start cell is never used.")]
     [SerializeField] int mazeEnemyMinCellsFromStart = 2;
-    [Tooltip("If true, the farthest (exit) cell is not used for enemy spawns.")]
+    [Tooltip("If true, the farthest (exit) cell is not used for enemy spawns (all slots).")]
     [SerializeField] bool mazeEnemyExcludeExitCell = true;
-    [Tooltip("Minimum horizontal distance between enemies spawned in the same batch. Use 0 for auto (from cell size).")]
+    [Tooltip("Minimum horizontal distance between enemies spawned in the same batch (all slots). Use 0 for auto (from cell size).")]
     [SerializeField] float mazeEnemyMinSeparation;
 
-    [Header("Enemy 2 (optional, in addition to Enemy 1)")]
-    [Tooltip("Spawned after Enemy 1 in the same GeneratedEnemies pass, using extra candidate cells (same rules as Enemy 1).")]
-    [SerializeField] GameObject mazeJailorPrefab;
-    [Tooltip("How many Enemy 2 to spawn (usually 1). Cannot exceed free cells after Enemy 1 spawns.")]
-    [SerializeField] int mazeJailorCount = 1;
-    [Tooltip("Minimum graph distance from the start cell for the Enemy 2 slot. Kept separate (and usually larger) "
-        + "than the Enemy 1 minimum so Enemy 2 never spawns right next to the start room. "
-        + "Clamped to at least the Enemy 1 minimum.")]
-    [SerializeField] int mazeJailorMinCellsFromStart = 5;
+    [Header("Enemy Slot 2 — Hunter (Jailor / Clown)")]
+    [Tooltip("Slot 2 heavy hunter — the Jailor on Levels 01/03/04, the Clown on Level02. Spawned after slot 1, "
+        + "reserving the farthest cells first via its own minimum distance below. Leave empty to skip.")]
+    [FormerlySerializedAs("mazeJailorPrefab")]
+    [SerializeField] GameObject mazeHunterPrefab;
+    [Tooltip("How many hunters to spawn (usually 1). Cannot exceed free cells after slot 1 spawns.")]
+    [FormerlySerializedAs("mazeJailorCount")]
+    [SerializeField] int mazeHunterCount = 1;
+    [Tooltip("Minimum graph distance from the start cell for the hunter slot. Kept separate (and usually larger) "
+        + "than the shared enemy minimum so the hunter never spawns right next to the start room. "
+        + "Clamped to at least the shared minimum.")]
+    [FormerlySerializedAs("mazeJailorMinCellsFromStart")]
+    [SerializeField] int mazeHunterMinCellsFromStart = 5;
 
-    [Header("Enemy 3 (optional, in addition to Enemy 1)")]
-    [Tooltip("Enemy prefab (with NetworkObject). Spawned after Enemy 1 and Enemy 2 in the same GeneratedEnemies pass, using extra candidate cells (same rules as Enemy 1). Leave empty to skip.")]
+    [Header("Enemy Slot 3 — Skeletons")]
+    [Tooltip("Slot 3 Skeleton enemy (with NetworkObject). Spawned after slots 1–2 in the same GeneratedEnemies pass, using the shared spawn rules. Leave empty to skip.")]
     [SerializeField] GameObject mazeSkeletonPrefab;
-    [Tooltip("How many Enemy 3 to spawn. Cannot exceed free cells after Enemy 1 and Enemy 2 spawns.")]
+    [Tooltip("How many skeletons to spawn. Cannot exceed free cells after slots 1–2 spawn.")]
     [SerializeField] int mazeSkeletonCount;
 
-    [Header("Enemy 4 (optional)")]
-    [Tooltip("Enemy prefab (with NetworkObject). Spawned after Enemy 1, Enemy 2 and Enemy 3 in the "
-        + "same GeneratedEnemies pass. Leave empty to skip.")]
+    [Header("Enemy Slot 4 — Wind-up Monkeys")]
+    [Tooltip("Slot 4 Wind-up Monkey lure (with NetworkObject). Spawned last in the same GeneratedEnemies pass, "
+        + "using the shared spawn rules. Leave empty to skip.")]
     [SerializeField] GameObject mazeWindupMonkeyPrefab;
-    [Tooltip("How many Enemy 4 to spawn. Cannot exceed free cells after Enemy 1, Enemy 2 and Enemy 3 spawns.")]
+    [Tooltip("How many monkeys to spawn. Cannot exceed free cells after slots 1–3 spawn.")]
     [SerializeField] int mazeWindupMonkeyCount;
 
-    [Header("Jailor carry drop (maze)")]
-    [Tooltip("After maze enemies and maze jailor(s) spawn, assign carry destination on every JailorAI in the scene.")]
+    [Header("Jailor Carry Drop (JailorAI Only)")]
+    [Tooltip("After maze enemies spawn, assign the carry destination on every JailorAI in the scene. "
+        + "Species-specific: does nothing on levels whose hunter is the Clown (Level02 leaves this off).")]
     [SerializeField] bool assignJailorCarryDestinationAfterSpawn = true;
     [Tooltip(
         "If true, looks for a child Transform with Jailor Carry Anchor Transform Name anywhere under the built maze (your room prefab instance). "
@@ -157,8 +169,8 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Child name under the generated maze root. Re-created each maze build if assign is enabled.")]
     [SerializeField] string jailorCarryDestinationMarkerName = "JailorCarryDestination";
 
-    [Header("Maze traps (anchor-based, optional)")]
-    [Tooltip("Prefab spawned at child transforms named TrapAnchor or TrapAnchor2 on generated maze pieces. Use a NetworkObject prefab for multiplayer.")]
+    [Header("Maze Traps (Anchor-Based)")]
+    [Tooltip("Prefab spawned at child transforms named TrapAnchor or TrapAnchor2 on generated maze pieces. Use a NetworkObject prefab for multiplayer. Leave empty to skip.")]
     [SerializeField] GameObject mazeTrapPrefab;
     [SerializeField] int mazeTrapCount;
     [Tooltip("Minimum graph distance from the start cell along open passages. Start cell is never used.")]
@@ -168,17 +180,17 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Minimum horizontal distance between spawned traps. Use 0 for auto (from cell size).")]
     [SerializeField] float mazeTrapMinSeparation;
 
-    [Header("Maze chests (anchor-based, optional)")]
-    [Tooltip("Prefab spawned at each child transform named ChestAnchor on generated maze pieces. Use a NetworkObject prefab for multiplayer.")]
+    [Header("Maze Chests (Anchor-Based)")]
+    [Tooltip("Prefab spawned at each child transform named ChestAnchor on generated maze pieces. Use a NetworkObject prefab for multiplayer. Leave empty to skip.")]
     [SerializeField] GameObject mazeChestPrefab;
 
-    [Header("Maze posters (optional, cosmetic)")]
+    [Header("Maze Posters (Cosmetic)")]
     [Tooltip("Child transforms named PosterSpawn on maze pieces: each site rolls this chance (maze seed) then picks a random non-null prefab from the list. Use non-networked prefabs so host and clients match.")]
     [Range(0f, 1f)]
     [SerializeField] float mazePosterSpawnChance = 0.25f;
     [SerializeField] GameObject[] mazePosterPrefabs = EmptyPrefabs;
 
-    [Header("Maze start flashlights (optional)")]
+    [Header("Maze Start Flashlights")]
     [Tooltip("Placed on children named LightSpawn, LightSpawn1, LightSpawn2, … on the start piece. At maze build, spawns one per connected player, in order, up to the number of those transforms. Use a NetworkObject prefab in multiplayer.")]
     [SerializeField] GameObject mazeStartFlashlightPrefab;
 
@@ -256,11 +268,11 @@ public class ProceduralMazeConfig : ScriptableObject
     public int MazeEnemyMinCellsFromStart => Mathf.Max(0, mazeEnemyMinCellsFromStart);
     public bool MazeEnemyExcludeExitCell => mazeEnemyExcludeExitCell;
     public float MazeEnemyMinSeparation => mazeEnemyMinSeparation;
-    public GameObject MazeJailorPrefab => mazeJailorPrefab;
-    public int MazeJailorCount => Mathf.Max(0, mazeJailorCount);
-    /// <summary>Minimum start distance for the Jailor/Clown slot, never below the shared maze enemy minimum.</summary>
-    public int MazeJailorMinCellsFromStart =>
-        Mathf.Max(MazeEnemyMinCellsFromStart, mazeJailorMinCellsFromStart);
+    public GameObject MazeHunterPrefab => mazeHunterPrefab;
+    public int MazeHunterCount => Mathf.Max(0, mazeHunterCount);
+    /// <summary>Minimum start distance for the hunter (Jailor/Clown) slot, never below the shared maze enemy minimum.</summary>
+    public int MazeHunterMinCellsFromStart =>
+        Mathf.Max(MazeEnemyMinCellsFromStart, mazeHunterMinCellsFromStart);
     public GameObject MazeSkeletonPrefab => mazeSkeletonPrefab;
     public int MazeSkeletonCount => Mathf.Max(0, mazeSkeletonCount);
 
