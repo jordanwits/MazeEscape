@@ -34,7 +34,7 @@ SteamNetworkingSockets transport) or direct IP/LAN (UnityTransport fallback).
 - `Assets/Prefabs/` — `Characters/`, `Enemies/`, `Items/`, `Maze Components/` (maze piece
   prefabs), `MG_Components/`, `Multiplayer/` (`DoorStateStore.prefab`).
 - `Assets/Resources/` — `DefaultNetworkPrefabs.asset` (**the live NGO prefab list** — loaded by
-  `MultiplayerBootstrap`; the copy at `Assets/DefaultNetworkPrefabs.asset` is not the one used),
+  `MultiplayerBootstrap`),
   `MultiplayerProjectSettings.asset` (lobby character roster), `MazeConfigs/` (per-level configs
   `MazeSection_Level01–04` + legacy fallback `ProceduralMazeConfig.asset`).
 - Most other top-level `Assets/` folders are imported asset-store packs (AllSkyFree, Decrepit
@@ -96,6 +96,7 @@ SteamNetworkingSockets transport) or direct IP/LAN (UnityTransport fallback).
   Untagged. Resolve the local camera from the player rig (see `WorldRenderCuller.ResolveViewpoint`
   or `RagdollCameraCollision` for the fallback pattern); never gate a feature on `Camera.main`.
 - Scripts use the global namespace (no `namespace` blocks); one class per file, file = class name.
-- Register any new networked prefab in `Assets/Resources/DefaultNetworkPrefabs.asset` — the
-  root-level copy of that asset is ignored at runtime.
+- Register any new networked prefab in `Assets/Resources/DefaultNetworkPrefabs.asset`. Don't
+  re-enable NGO's "Generate Default Network Prefabs" project setting — it recreates an unused
+  decoy list at the Assets root (disabled and the decoy deleted 2026-07-05).
 - Auto-memory (separate from this file) holds evolving gotchas; check it before deep debugging.
