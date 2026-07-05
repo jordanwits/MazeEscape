@@ -33,7 +33,7 @@ public class ProceduralMazeConfig : ScriptableObject
 
     [Header("Runtime")]
     [SerializeField] bool enableGeneration = true;
-    [SerializeField] string targetSceneName = "Main";
+    [SerializeField] string targetSceneName = "Level01";
     [SerializeField] bool buildOfflineInPlayMode = true;
     [SerializeField] bool randomizeOfflineSeed;
     [SerializeField] bool randomizeHostSeed = true;
