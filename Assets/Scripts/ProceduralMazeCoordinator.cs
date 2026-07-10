@@ -592,7 +592,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         (HashSet<Vector2Int> mazeTrapCells, List<Transform> mazeTrapRoots) =
             TrySpawnMazeTraps(root.transform, grid, builtCellRoots, start, exit, seed, cellSize);
         TrySpawnMazeChests(root.transform, builtCellRoots, seed);
-        TrySpawnMazeTeleportOrbs(root.transform, builtCellRoots);
+        TrySpawnMazeTeleportOrbs(root.transform, builtCellRoots, seed);
         TrySpawnMazePosters(root.transform, builtCellRoots, seed);
         TrySpawnMazeStartFlashlights(root.transform);
         CreateSpawnPoints(root.transform, start, cellSize, multiStartFootprint);
@@ -3652,24 +3652,28 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     }
 
     /// <summary>
-    /// Spawns the configured teleport-orb prefab at every child transform named <see cref="TeleportOrbAnchorName"/>
-    /// on generated maze pieces (mirrors <see cref="TrySpawnMazeChests"/>). The orb prefab's pivot is at its base,
-    /// so an anchor placed on the floor puts the pedestal on the floor. Server-spawned NetworkObjects are torn
-    /// down each level by <see cref="ServerDespawnAllLevelNetworkObjects"/>.
+    /// Spawns the configured teleport-orb prefab at up to <see cref="ProceduralMazeConfig.MazeTeleportOrbCount"/>
+    /// of the child transforms named <see cref="TeleportOrbAnchorName"/> on generated maze pieces (mirrors
+    /// <see cref="TrySpawnMazeChests"/>, but capped/sampled instead of unconditional-per-anchor). When there are
+    /// more anchors than the requested count, a maze-seeded random subset is chosen so the choice is reproducible
+    /// for a given seed; when there are fewer, one orb spawns at each available anchor. The orb prefab's pivot is
+    /// at its base, so an anchor placed on the floor puts the pedestal on the floor. Server-spawned NetworkObjects
+    /// are torn down each level by <see cref="ServerDespawnAllLevelNetworkObjects"/>.
     /// </summary>
-    void TrySpawnMazeTeleportOrbs(Transform mazeRoot, IReadOnlyDictionary<Vector2Int, Transform> cellRoots)
+    void TrySpawnMazeTeleportOrbs(Transform mazeRoot, IReadOnlyDictionary<Vector2Int, Transform> cellRoots, int mazeSeed)
     {
         GameObject prefab = _config.MazeTeleportOrbPrefab;
-        if (prefab == null)
+        int requestedCount = _config.MazeTeleportOrbCount;
+        if (prefab == null || requestedCount <= 0)
             return;
 
         if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
             return;
 
-        Transform orbsRoot = CreateChild(mazeRoot, "GeneratedTeleportOrbs");
+        // Gather every anchor maze-wide first (unlike chests, which spawn unconditionally per-anchor) so the
+        // count cap can sample across the whole maze rather than per cell.
+        List<Transform> allAnchors = new();
         List<Transform> cellOrbAnchors = new(2);
-        bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
-
         foreach (KeyValuePair<Vector2Int, Transform> pair in cellRoots)
         {
             Transform cellRoot = pair.Value;
@@ -3678,22 +3682,42 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
             cellOrbAnchors.Clear();
             CollectTeleportOrbAnchors(cellRoot, cellOrbAnchors);
+            allAnchors.AddRange(cellOrbAnchors);
+        }
 
-            for (int a = 0; a < cellOrbAnchors.Count; a++)
+        if (allAnchors.Count == 0)
+            return;
+
+        List<Transform> chosenAnchors = allAnchors;
+        if (allAnchors.Count > requestedCount)
+        {
+            System.Random rng = new(MixSeed(mazeSeed, unchecked((int)0x0B12EE55)));
+            // Partial Fisher-Yates: shuffle only the prefix we need, so we don't waste swaps beyond requestedCount.
+            for (int i = 0; i < requestedCount; i++)
             {
-                Transform anchor = cellOrbAnchors[a];
-                if (anchor == null)
-                    continue;
-
-                GameObject instance = Instantiate(prefab, anchor.position, anchor.rotation, orbsRoot);
-
-                if (!spawnWithNetcode)
-                    continue;
-
-                NetworkObject networkObject = instance.GetComponent<NetworkObject>();
-                if (networkObject != null)
-                    networkObject.Spawn();
+                int j = i + rng.Next(allAnchors.Count - i);
+                (allAnchors[i], allAnchors[j]) = (allAnchors[j], allAnchors[i]);
             }
+            chosenAnchors = allAnchors.GetRange(0, requestedCount);
+        }
+
+        Transform orbsRoot = CreateChild(mazeRoot, "GeneratedTeleportOrbs");
+        bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
+
+        for (int a = 0; a < chosenAnchors.Count; a++)
+        {
+            Transform anchor = chosenAnchors[a];
+            if (anchor == null)
+                continue;
+
+            GameObject instance = Instantiate(prefab, anchor.position, anchor.rotation, orbsRoot);
+
+            if (!spawnWithNetcode)
+                continue;
+
+            NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+            if (networkObject != null)
+                networkObject.Spawn();
         }
     }
 

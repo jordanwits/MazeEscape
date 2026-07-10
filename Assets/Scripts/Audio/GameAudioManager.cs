@@ -175,7 +175,15 @@ public sealed class GameAudioManager : MonoBehaviour
     /// </summary>
     public static void RouteSfxSource(AudioSource source)
     {
-        if (source == null || Instance == null || Instance._sfxGroup == null)
+        if (source == null)
+            return;
+
+        // Every positional gameplay source funnels through here, so this is also the single place we opt sources
+        // into wall-occlusion muffling. Registration is independent of the mixer (occlusion still works if the
+        // mixer failed to load) and inert for 2D sources.
+        AudioOcclusionManager.Register(source);
+
+        if (Instance == null || Instance._sfxGroup == null)
             return;
 
         source.outputAudioMixerGroup = Instance._sfxGroup;
@@ -184,7 +192,12 @@ public sealed class GameAudioManager : MonoBehaviour
     /// <summary>Sends diegetic music (e.g. the carnival radio) through the Music bus so the Music slider affects it.</summary>
     public static void RouteMusicSource(AudioSource source)
     {
-        if (source == null || Instance == null || Instance._musicGroup == null)
+        if (source == null)
+            return;
+
+        AudioOcclusionManager.Register(source);
+
+        if (Instance == null || Instance._musicGroup == null)
             return;
 
         source.outputAudioMixerGroup = Instance._musicGroup;
@@ -192,7 +205,12 @@ public sealed class GameAudioManager : MonoBehaviour
 
     public static void RouteVoiceSource(AudioSource source)
     {
-        if (source == null || Instance == null || Instance._voiceGroup == null)
+        if (source == null)
+            return;
+
+        AudioOcclusionManager.Register(source);
+
+        if (Instance == null || Instance._voiceGroup == null)
             return;
 
         source.outputAudioMixerGroup = Instance._voiceGroup;

@@ -177,6 +177,8 @@ public class ProceduralMazeConfig : ScriptableObject
     [Header("Teleport Orbs (Anchor-Based)")]
     [Tooltip("Prefab spawned at each child transform named TeleportOrbAnchor on generated maze pieces. Use the TeleportOrb NetworkObject prefab. Leave empty to skip.")]
     [SerializeField] GameObject mazeTeleportOrbPrefab;
+    [Tooltip("How many teleport orbs to actually spawn this build. If there are more TeleportOrbAnchor markers in the maze than this, a random subset (seeded by the maze seed, so reproducible per seed) is chosen; if there are fewer anchors, one orb spawns at each available anchor. 0 = spawn no orbs even if anchors exist.")]
+    [SerializeField, Min(0)] int mazeTeleportOrbCount = 3;
 
     [Header("Maze Posters (Cosmetic)")]
     [Tooltip("Child transforms named PosterSpawn on maze pieces: each site rolls this chance (maze seed) then picks a random non-null prefab from the list. Use non-networked prefabs so host and clients match.")]
@@ -295,6 +297,7 @@ public class ProceduralMazeConfig : ScriptableObject
     public float MazeTrapMinSeparation => mazeTrapMinSeparation;
     public GameObject MazeChestPrefab => mazeChestPrefab;
     public GameObject MazeTeleportOrbPrefab => mazeTeleportOrbPrefab;
+    public int MazeTeleportOrbCount => Mathf.Max(0, mazeTeleportOrbCount);
     /// <summary>Per <c>PosterSpawn</c> anchor, probability [0,1] of spawning a poster for this maze build.</summary>
     public float MazePosterSpawnChance => Mathf.Clamp01(mazePosterSpawnChance);
     public GameObject[] MazePosterPrefabs => mazePosterPrefabs ?? EmptyPrefabs;
