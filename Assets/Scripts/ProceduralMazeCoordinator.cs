@@ -110,6 +110,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     const string TrapMountPointName = "MountPoint";
     const string ChestAnchorName = "ChestAnchor";
     const string ChestMountPointName = "ChestMount";
+    const string TeleportOrbAnchorName = "TeleportOrbAnchor";
     const string PosterSpawnName = "PosterSpawn";
     const string LightSpawnNamePrefix = "LightSpawn";
 
@@ -591,6 +592,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         (HashSet<Vector2Int> mazeTrapCells, List<Transform> mazeTrapRoots) =
             TrySpawnMazeTraps(root.transform, grid, builtCellRoots, start, exit, seed, cellSize);
         TrySpawnMazeChests(root.transform, builtCellRoots, seed);
+        TrySpawnMazeTeleportOrbs(root.transform, builtCellRoots);
         TrySpawnMazePosters(root.transform, builtCellRoots, seed);
         TrySpawnMazeStartFlashlights(root.transform);
         CreateSpawnPoints(root.transform, start, cellSize, multiStartFootprint);
@@ -3649,6 +3651,66 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Spawns the configured teleport-orb prefab at every child transform named <see cref="TeleportOrbAnchorName"/>
+    /// on generated maze pieces (mirrors <see cref="TrySpawnMazeChests"/>). The orb prefab's pivot is at its base,
+    /// so an anchor placed on the floor puts the pedestal on the floor. Server-spawned NetworkObjects are torn
+    /// down each level by <see cref="ServerDespawnAllLevelNetworkObjects"/>.
+    /// </summary>
+    void TrySpawnMazeTeleportOrbs(Transform mazeRoot, IReadOnlyDictionary<Vector2Int, Transform> cellRoots)
+    {
+        GameObject prefab = _config.MazeTeleportOrbPrefab;
+        if (prefab == null)
+            return;
+
+        if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
+            return;
+
+        Transform orbsRoot = CreateChild(mazeRoot, "GeneratedTeleportOrbs");
+        List<Transform> cellOrbAnchors = new(2);
+        bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
+
+        foreach (KeyValuePair<Vector2Int, Transform> pair in cellRoots)
+        {
+            Transform cellRoot = pair.Value;
+            if (cellRoot == null)
+                continue;
+
+            cellOrbAnchors.Clear();
+            CollectTeleportOrbAnchors(cellRoot, cellOrbAnchors);
+
+            for (int a = 0; a < cellOrbAnchors.Count; a++)
+            {
+                Transform anchor = cellOrbAnchors[a];
+                if (anchor == null)
+                    continue;
+
+                GameObject instance = Instantiate(prefab, anchor.position, anchor.rotation, orbsRoot);
+
+                if (!spawnWithNetcode)
+                    continue;
+
+                NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+                if (networkObject != null)
+                    networkObject.Spawn();
+            }
+        }
+    }
+
+    static void CollectTeleportOrbAnchors(Transform root, List<Transform> into)
+    {
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            Transform candidate = transforms[i];
+            if (candidate == null)
+                continue;
+
+            if (string.Equals(candidate.name, TeleportOrbAnchorName, StringComparison.Ordinal))
+                into.Add(candidate);
+        }
+    }
+
     static void CollectChestAnchors(Transform root, List<Transform> into)
     {
         Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
@@ -3677,6 +3739,138 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         Quaternion rootRotation = anchor.rotation * Quaternion.Inverse(mountPoint.localRotation);
         Vector3 rootPosition = anchor.position - rootRotation * mountPoint.localPosition;
         chestRoot.SetPositionAndRotation(rootPosition, rootRotation);
+    }
+
+    /// <summary>
+    /// Picks a random point on the runtime-baked NavMesh that a player can be safely teleported to: it is
+    /// on the walkable floor (never a roof or pit), inset from walls/props by the bake's agent radius, and
+    /// re-checked for standing clearance so the player never spawns clipping geometry. The returned
+    /// position already includes the same floor lift used for normal player spawns
+    /// (<see cref="ProceduralMazeConfig.SpawnHeight"/>). Intended to be called by the server/host (the
+    /// NavMesh is baked locally on every peer, so an offline caller also works).
+    /// </summary>
+    /// <param name="avoidNearWorld">Prefer a point at least <paramref name="minDistanceFromAvoid"/> from here (e.g. the orb) so the teleport actually relocates the player.</param>
+    /// <param name="minDistanceFromAvoid">Preferred minimum distance from <paramref name="avoidNearWorld"/>; relaxed automatically if no far point clears.</param>
+    /// <param name="clearanceRadius">Player capsule radius used for the anti-clip check.</param>
+    /// <param name="clearanceHeight">Player capsule height used for the anti-clip check.</param>
+    /// <param name="worldPosition">The resolved, ready-to-teleport position.</param>
+    /// <returns>False only if there is no baked NavMesh or no clearance-valid point was found after retries.</returns>
+    public bool TryGetRandomWalkableTeleportPoint(
+        Vector3 avoidNearWorld,
+        float minDistanceFromAvoid,
+        float clearanceRadius,
+        float clearanceHeight,
+        out Vector3 worldPosition)
+    {
+        worldPosition = default;
+
+        NavMeshTriangulation tri = NavMesh.CalculateTriangulation();
+        int triCount = (tri.indices != null ? tri.indices.Length : 0) / 3;
+        if (triCount == 0)
+            return false;
+
+        // Area-weighted cumulative table so points are distributed roughly uniformly over the walkable
+        // floor area (not biased toward tiny sliver triangles near walls/corners).
+        float[] cumulativeArea = new float[triCount];
+        float totalArea = 0f;
+        for (int t = 0; t < triCount; t++)
+        {
+            Vector3 a = tri.vertices[tri.indices[t * 3 + 0]];
+            Vector3 b = tri.vertices[tri.indices[t * 3 + 1]];
+            Vector3 c = tri.vertices[tri.indices[t * 3 + 2]];
+            totalArea += 0.5f * Vector3.Cross(b - a, c - a).magnitude;
+            cumulativeArea[t] = totalArea;
+        }
+        if (totalArea <= 0f)
+            return false;
+
+        float floorLift = Mathf.Max(0.05f, _config != null ? _config.SpawnHeight : 0.1f);
+        float minDistSqr = minDistanceFromAvoid * minDistanceFromAvoid;
+
+        const int maxAttempts = 32;
+        bool hasNearFallback = false;
+        Vector3 nearFallback = default;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            Vector3 onMesh = SampleRandomPointOnTriangulation(tri, cumulativeArea, totalArea);
+
+            // Snap onto the authoritative walkable surface (rejects any numerical drift off the triangle).
+            if (!NavMesh.SamplePosition(onMesh, out NavMeshHit navHit, 1.0f, NavMesh.AllAreas))
+                continue;
+
+            Vector3 floorPos = navHit.position;
+            if (!HasStandingClearance(floorPos, clearanceRadius, clearanceHeight))
+                continue;
+
+            Vector3 candidate = floorPos + Vector3.up * floorLift;
+
+            if ((candidate - avoidNearWorld).sqrMagnitude >= minDistSqr)
+            {
+                worldPosition = candidate;
+                return true;
+            }
+
+            if (!hasNearFallback)
+            {
+                nearFallback = candidate;
+                hasNearFallback = true;
+            }
+        }
+
+        // Nothing was far enough, but we did find at least one clearance-valid (closer) point — use it
+        // rather than fail (common on small maps where every walkable point is within minDistance).
+        if (hasNearFallback)
+        {
+            worldPosition = nearFallback;
+            return true;
+        }
+
+        return false;
+    }
+
+    static Vector3 SampleRandomPointOnTriangulation(NavMeshTriangulation tri, float[] cumulativeArea, float totalArea)
+    {
+        float r = UnityEngine.Random.value * totalArea;
+        int lo = 0;
+        int hi = cumulativeArea.Length - 1;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (cumulativeArea[mid] < r)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+
+        int triIndex = lo;
+        Vector3 a = tri.vertices[tri.indices[triIndex * 3 + 0]];
+        Vector3 b = tri.vertices[tri.indices[triIndex * 3 + 1]];
+        Vector3 c = tri.vertices[tri.indices[triIndex * 3 + 2]];
+
+        float u = UnityEngine.Random.value;
+        float v = UnityEngine.Random.value;
+        if (u + v > 1f)
+        {
+            u = 1f - u;
+            v = 1f - v;
+        }
+        return a + u * (b - a) + v * (c - a);
+    }
+
+    /// <summary>
+    /// True if an upright capsule of the given size standing on <paramref name="floorPos"/> does not overlap
+    /// any solid (non-trigger) collider — i.e. a teleported player will not clip a wall or prop. Starts
+    /// slightly above the floor so the floor collider itself is not counted, and shrinks the radius a hair
+    /// so a point exactly on the NavMesh edge (inset by the agent radius) is not falsely rejected.
+    /// </summary>
+    static bool HasStandingClearance(Vector3 floorPos, float radius, float height)
+    {
+        float r = Mathf.Max(0.05f, radius * 0.95f);
+        float h = Mathf.Max(r * 2f + 0.1f, height);
+        Vector3 bottom = floorPos + Vector3.up * (r + 0.06f);
+        Vector3 top = floorPos + Vector3.up * (h - r);
+        return !Physics.CheckCapsule(bottom, top, r, Physics.AllLayers, QueryTriggerInteraction.Ignore);
     }
 
     float ResolveMazeEnemyMinSeparationXZ(float cellSize)

@@ -578,6 +578,13 @@ public partial class PlayerController
             return;
         }
 
+        // Teleport orbs are hold-to-activate (see TickTeleportHold): a tap just consumes the press so it
+        // doesn't fall through to a gated item pickup.
+        if (cam != null && TryFindInteractableTeleportOrb(cam, out _))
+        {
+            return;
+        }
+
         if (cam != null && TryFindInteractableHingeDoor(cam, out HingeInteractDoor hingeDoor) && hingeDoor != null)
         {
             if (hingeDoor.IsLocked)

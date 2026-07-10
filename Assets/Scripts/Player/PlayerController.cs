@@ -64,6 +64,7 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] string chestPromptMessage = "Press E to open";
     [SerializeField] string doorUnlockPromptMessage = "Press E to unlock";
     [SerializeField] string doorOpenPromptMessage = "Press E to open";
+    [SerializeField] string teleportOrbPromptMessage = "Hold E to teleport";
     [Tooltip("Optional mask for interactable items. If empty, Unity default raycast layers are used.")]
     [SerializeField] LayerMask interactMask;
     [NonSerialized] RaycastHit[] _interactCastHitBuffer = new RaycastHit[32];
@@ -537,6 +538,8 @@ public partial class PlayerController : MonoBehaviour
     {
         // First so reach cancels (ragdoll, jailor grab, death, lost control) still process.
         TickPickupReach();
+        // Hold-to-activate teleport charging (self-cancels when E is released / not aiming at an orb).
+        TickTeleportHold();
 
         // Re-derive the hold pose from the live held state every frame (owner only). Event-driven refreshes
         // can be missed/delayed for a networked throw — the owner simulates the arc locally while the
@@ -1314,6 +1317,8 @@ public partial class PlayerController : MonoBehaviour
         img.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.42f);
         img.raycastTarget = false;
         _crosshairRoot = dot;
+
+        CreateTeleportHoldRing(dot.transform);
     }
 
     Image CreateStaminaBarUI()
@@ -1961,6 +1966,12 @@ public partial class PlayerController : MonoBehaviour
             return;
         }
 
+        if (cam != null && TryFindInteractableTeleportOrb(cam, out _))
+        {
+            SetPickupPromptVisible(true, teleportOrbPromptMessage);
+            return;
+        }
+
         // All three door prompts key off the same aimed door; cast once and evaluate the conditions on that
         // single result rather than repeating the spherecast + sort three times per frame.
         if (cam != null && TryFindInteractableHingeDoor(cam, out HingeInteractDoor aimedDoor) && aimedDoor != null)
@@ -2058,6 +2069,37 @@ public partial class PlayerController : MonoBehaviour
 
             door = found;
             return true;
+        }
+
+        return false;
+    }
+
+    bool TryFindInteractableTeleportOrb(Transform cam, out TeleportOrb orb)
+    {
+        orb = null;
+
+        if (cam == null)
+            return false;
+
+        int mask = interactMask.value == 0 ? Physics.DefaultRaycastLayers : interactMask.value;
+        int count = TryInteractCastNonAlloc(cam, mask);
+        if (count <= 0)
+            return false;
+
+        SortInteractHitsByDistance(count);
+
+        for (int i = 0; i < count; i++)
+        {
+            RaycastHit h = _interactCastHitBuffer[i];
+            if (InteractHitBelongsToOpenedChest(h))
+                continue;
+
+            TeleportOrb found = h.collider.GetComponentInParent<TeleportOrb>();
+            if (found != null && !found.IsConsumed && found.IsInInteractRange(cam.position))
+            {
+                orb = found;
+                return true;
+            }
         }
 
         return false;

@@ -91,6 +91,53 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         });
     }
 
+    /// <summary>
+    /// Server-authoritative teleport of THIS player to an already-validated destination (e.g. from a
+    /// <see cref="TeleportOrb"/>). Mirrors <see cref="ApplyInitialSpawn"/> — applies on the server for
+    /// coherence and tells the owning client (the OwnerNetworkTransform authority) to perform the move —
+    /// but does NOT heal the player. No-op if the player is dead/respawning.
+    /// </summary>
+    public void ServerTeleport(Vector3 position, Quaternion rotation)
+    {
+        if (!IsServer || !IsSpawned)
+            return;
+        if (_isDead.Value)
+            return;
+
+        // Brief pit-kill grace so the CharacterController re-enable frame at the destination can't trip a
+        // pit volume on the same tick (the destination is already NavMesh-validated away from pits).
+        BeginRespawnPitKillGrace();
+
+        ApplyRespawnTransform(position, rotation);
+
+        TeleportOwnerClientRpc(position, rotation, new ClientRpcParams
+        {
+            Send = new ClientRpcSendParams
+            {
+                TargetClientIds = new[] { OwnerClientId }
+            }
+        });
+    }
+
+    [ClientRpc]
+    void TeleportOwnerClientRpc(Vector3 position, Quaternion rotation, ClientRpcParams clientRpcParams = default)
+    {
+        // The host already applied the move in ServerTeleport; only remote owners run it here.
+        if (IsServer)
+            return;
+
+        ApplyRespawnTransform(position, rotation);
+    }
+
+    /// <summary>
+    /// Offline / non-networked teleport: moves the local player directly using the same
+    /// CharacterController-safe path as respawn. Used when no netcode session is active.
+    /// </summary>
+    public void LocalTeleport(Vector3 position, Quaternion rotation)
+    {
+        ApplyRespawnTransform(position, rotation);
+    }
+
     public bool ShouldIgnorePitKill()
     {
         return IsSpawned && Time.time < _ignorePitKillsUntil;

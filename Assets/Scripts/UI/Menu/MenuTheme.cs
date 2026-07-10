@@ -267,6 +267,42 @@ public static class MenuTheme
         });
     }
 
+    /// <summary>
+    /// Hollow ring / annulus (no inner fill) for radial-fill progress meters. <paramref name="thickness"/>
+    /// is the band width as a fraction of the radius. Use with Image type=Filled, Radial360 to draw a
+    /// border circle that fills around.
+    /// </summary>
+    public static Sprite Ring(float thickness = 0.16f)
+    {
+        int key = Mathf.RoundToInt(Mathf.Clamp(thickness, 0.02f, 0.9f) * 100f);
+        return CacheSprite("ring_" + key, () =>
+        {
+            const int size = 128;
+            Texture2D tex = NewTexture(size, size);
+            var px = new Color32[size * size];
+            float half = size * 0.5f;
+            float outer = half - 2f;                       // 2px AA margin
+            float band = Mathf.Max(1.5f, Mathf.Clamp(thickness, 0.02f, 0.9f) * outer);
+            float mid = outer - band * 0.5f;
+            float halfBand = band * 0.5f;
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = x + 0.5f - half;
+                    float dy = y + 0.5f - half;
+                    float r = Mathf.Sqrt(dx * dx + dy * dy);
+                    float d = Mathf.Abs(r - mid) - halfBand;   // <=0 inside the band
+                    float a = Mathf.Clamp01(0.5f - d / 1.25f); // 1.25px AA edge, matches Circle()
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply(false, false);
+            return ToSprite(tex, Vector4.zero);
+        });
+    }
+
     /// <summary>Darkened-corner vignette; render as white-alpha mask, tint black at the Image.</summary>
     public static Sprite Vignette()
     {

@@ -174,6 +174,10 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Prefab spawned at each child transform named ChestAnchor on generated maze pieces. Use a NetworkObject prefab for multiplayer. Leave empty to skip.")]
     [SerializeField] GameObject mazeChestPrefab;
 
+    [Header("Teleport Orbs (Anchor-Based)")]
+    [Tooltip("Prefab spawned at each child transform named TeleportOrbAnchor on generated maze pieces. Use the TeleportOrb NetworkObject prefab. Leave empty to skip.")]
+    [SerializeField] GameObject mazeTeleportOrbPrefab;
+
     [Header("Maze Posters (Cosmetic)")]
     [Tooltip("Child transforms named PosterSpawn on maze pieces: each site rolls this chance (maze seed) then picks a random non-null prefab from the list. Use non-networked prefabs so host and clients match.")]
     [Range(0f, 1f)]
@@ -290,6 +294,7 @@ public class ProceduralMazeConfig : ScriptableObject
     public bool MazeTrapExcludeExitCell => mazeTrapExcludeExitCell;
     public float MazeTrapMinSeparation => mazeTrapMinSeparation;
     public GameObject MazeChestPrefab => mazeChestPrefab;
+    public GameObject MazeTeleportOrbPrefab => mazeTeleportOrbPrefab;
     /// <summary>Per <c>PosterSpawn</c> anchor, probability [0,1] of spawning a poster for this maze build.</summary>
     public float MazePosterSpawnChance => Mathf.Clamp01(mazePosterSpawnChance);
     public GameObject[] MazePosterPrefabs => mazePosterPrefabs ?? EmptyPrefabs;
