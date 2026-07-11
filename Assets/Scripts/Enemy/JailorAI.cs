@@ -520,6 +520,7 @@ public class JailorAI : MonoBehaviour
     void OnEnable()
     {
         ServerProximityVoiceNotifications.Register(this);
+        JailorAIRegistry.Register(this);
         TrySnapToNavMesh();
     }
 
@@ -545,6 +546,7 @@ public class JailorAI : MonoBehaviour
     void OnDisable()
     {
         ServerProximityVoiceNotifications.Unregister(this);
+        JailorAIRegistry.Unregister(this);
         ReleaseCarriedPlayerIfNeeded();
     }
 

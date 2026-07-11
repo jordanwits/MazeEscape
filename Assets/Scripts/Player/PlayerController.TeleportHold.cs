@@ -118,6 +118,8 @@ public partial class PlayerController
             return false;
         if (BlackjackOverlayController.IsInteractive)
             return false;
+        if (SkeletonRpsOverlayController.IsInteractive)
+            return false;
         if (ProceduralMazeCoordinator.ShouldBlockLocalPlayerUntilMazeReady())
             return false;
         return true;

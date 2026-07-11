@@ -6,7 +6,7 @@ using Object = UnityEngine.Object;
 
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
-public class NetworkPlayerInventory : NetworkBehaviour
+public partial class NetworkPlayerInventory : NetworkBehaviour
 {
     [SerializeField] PlayerController playerController;
     [Tooltip("Forward impulse when dropping (matches PlayerController drop force).")]

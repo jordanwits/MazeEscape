@@ -84,10 +84,6 @@ MonoBehaviour:
   enemy1:
     enemyPrefab: {fileID: 8324813916893631794, guid: bb8ce64463a351b44b8282256b5ae913, type: 3}
     enemyCount: 8
-  mazeEnemySpawnHeight: 1
-  mazeEnemyMinCellsFromStart: 2
-  mazeEnemyExcludeExitCell: 1
-  mazeEnemyMinSeparation: 0
   enemy2:
     enemyPrefab: {fileID: 7644638518217413858, guid: 3250bcfe5b1c11d4da88e202a1b8ea13, type: 3}
     enemyCount: 1
@@ -98,6 +94,10 @@ MonoBehaviour:
   enemy4:
     enemyPrefab: {fileID: 0}
     enemyCount: 0
+  mazeEnemySpawnHeight: 1
+  mazeEnemyMinCellsFromStart: 2
+  mazeEnemyExcludeExitCell: 1
+  mazeEnemyMinSeparation: 0
   assignJailorCarryDestinationAfterSpawn: 1
   preferJailorCarryAnchorFromMazePrefab: 1
   jailorCarryAnchorTransformName: JailorCarryDrop
@@ -111,6 +111,8 @@ MonoBehaviour:
   mazeTrapExcludeExitCell: 1
   mazeTrapMinSeparation: 1
   mazeChestPrefab: {fileID: 7786454923030501191, guid: e621573098a2cb04a8ec9019443befb6, type: 3}
+  mazeTeleportOrbPrefab: {fileID: 6503207978257455889, guid: 57af5772f43301f44b2190988f5251bf, type: 3}
+  mazeTeleportOrbCount: 2
   mazePosterSpawnChance: 0.25
   mazePosterPrefabs: []
   mazeStartFlashlightPrefab: {fileID: 7328506109978203443, guid: 4f1b1ddb8a2d50848aa35c5643acaa6b, type: 3}

@@ -65,6 +65,7 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] string doorUnlockPromptMessage = "Press E to unlock";
     [SerializeField] string doorOpenPromptMessage = "Press E to open";
     [SerializeField] string teleportOrbPromptMessage = "Hold E to teleport";
+    [SerializeField] string skeletonRpsPromptMessage = "Press E to challenge the skeleton";
     [Tooltip("Optional mask for interactable items. If empty, Unity default raycast layers are used.")]
     [SerializeField] LayerMask interactMask;
     [NonSerialized] RaycastHit[] _interactCastHitBuffer = new RaycastHit[32];
@@ -597,15 +598,17 @@ public partial class PlayerController : MonoBehaviour
         if (_ragdollController != null && _ragdollController.IsGettingUp)
             return;
 
-        if (PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive)
+        if (PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive
+            || SkeletonRpsOverlayController.IsInteractive)
         {
             CancelThrowCharge();
             _moveInput = Vector2.zero;
             _horizontalVelocity = Vector3.zero;
             SetPickupPromptVisible(false);
-            // While seated at blackjack the game keeps running (time isn't paused), so the locomotion
-            // animator would otherwise loop the last walk pose ("walking in place"). Force idle.
-            if (BlackjackOverlayController.IsInteractive && driveAnimator && animator != null)
+            // While seated at blackjack (or facing the jail skeleton) the game keeps running (time isn't
+            // paused), so the locomotion animator would otherwise loop the last walk pose. Force idle.
+            if ((BlackjackOverlayController.IsInteractive || SkeletonRpsOverlayController.IsInteractive)
+                && driveAnimator && animator != null)
             {
                 animator.SetFloat(speedParameter, 0f);
                 animator.SetBool(groundedParameter, true);
@@ -1252,7 +1255,8 @@ public partial class PlayerController : MonoBehaviour
 
     void ApplyCursorLock()
     {
-        if (!firstPersonLook || !lockCursor || PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive)
+        if (!firstPersonLook || !lockCursor || PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive
+            || SkeletonRpsOverlayController.IsInteractive)
             return;
 
         Cursor.lockState = CursorLockMode.Locked;
@@ -1574,6 +1578,10 @@ public partial class PlayerController : MonoBehaviour
     {
         if (_hasLocalControl)
             UpdateInventoryFlashlightBatteryHud();
+
+        // Layer the Jailor-proximity tremble on top of the look pose written this frame. Runs before the
+        // early-returns below so it applies in first-person mode too (that path returns early here).
+        UpdateJailorProximityShake();
 
         if (!_hasLocalControl)
             return;
@@ -1954,6 +1962,20 @@ public partial class PlayerController : MonoBehaviour
         return true;
     }
 
+    /// <summary>
+    /// True while the local player is in ordinary standing control — not dead, ragdolled, held, carried by the
+    /// Jailor, seated at blackjack, or post-jail locked. Modal stationary interactions (the jail skeleton's
+    /// rock-paper-scissors overlay) gate on this and close the moment it turns false.
+    /// </summary>
+    public bool HasNormalInteractiveControl =>
+        _hasLocalControl
+        && (_playerHealth == null || !_playerHealth.IsDead)
+        && (_ragdollController == null
+            || !(_ragdollController.IsRagdolled || _ragdollController.IsGettingUp || _ragdollController.IsHeld))
+        && (_networkPlayerAvatar == null || !_networkPlayerAvatar.IsCarriedByJailor)
+        && !_blackjackSeated
+        && !IsPostJailMovementLocked;
+
     void UpdatePickupPrompt()
     {
         if (pickupPromptRoot == null)
@@ -1999,6 +2021,12 @@ public partial class PlayerController : MonoBehaviour
                     elevatorFinish.LivingRequiredDisplay);
                 return;
             }
+        }
+
+        if (cam != null && TryFindInteractableSkeletonRps(cam, out _))
+        {
+            SetPickupPromptVisible(true, skeletonRpsPromptMessage);
+            return;
         }
 
         if (cam != null && TryGetCarnivalPromptForCurrentAim(cam, out string carnivalMessage))
@@ -2098,6 +2126,34 @@ public partial class PlayerController : MonoBehaviour
             if (found != null && !found.IsConsumed && found.IsInInteractRange(cam.position))
             {
                 orb = found;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool TryFindInteractableSkeletonRps(Transform cam, out SkeletonRpsChallenge challenge)
+    {
+        challenge = null;
+
+        if (cam == null)
+            return false;
+
+        int mask = interactMask.value == 0 ? Physics.DefaultRaycastLayers : interactMask.value;
+        int count = TryInteractCastNonAlloc(cam, mask);
+        if (count <= 0)
+            return false;
+
+        SortInteractHitsByDistance(count);
+
+        for (int i = 0; i < count; i++)
+        {
+            RaycastHit h = _interactCastHitBuffer[i];
+            SkeletonRpsChallenge found = h.collider.GetComponentInParent<SkeletonRpsChallenge>();
+            if (found != null && found.CanOfferChallenge(cam.position))
+            {
+                challenge = found;
                 return true;
             }
         }

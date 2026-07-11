@@ -616,6 +616,12 @@ public partial class PlayerController
             return;
         }
 
+        if (cam != null && TryFindInteractableSkeletonRps(cam, out SkeletonRpsChallenge rpsChallenge) && rpsChallenge != null)
+        {
+            rpsChallenge.RequestChallengeInteract(this);
+            return;
+        }
+
         // Grabbable items go through the gated reach (arm extends, grant fires at the apex).
         // Chest/door/carnival interactions above stay instant.
         BeginGatedPickup();
