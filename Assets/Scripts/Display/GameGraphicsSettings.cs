@@ -236,6 +236,34 @@ public sealed class GameGraphicsSettings : MonoBehaviour
         return (int)Tier.Low;
     }
 
+    // ----------------------------------------------------------------- stylized render override
+    // MazePostFx (one per gameplay level) drives a fixed-height "retro" render resolution as art
+    // direction (Lethal-Company-style low-res). While active it replaces the user's render scale and
+    // the tier's upscaling filter. The user's stored values are untouched and win again the moment
+    // the level unloads (MazePostFx clears the override in OnDisable). Routing this through the same
+    // Apply* choke points keeps this class the single writer of the URP asset.
+    float _stylizedScale = -1f; // <= 0 means inactive
+    UpscalingFilterSelection _stylizedFilter = UpscalingFilterSelection.Point;
+
+    public bool StylizedRenderActive => _stylizedScale > 0f;
+
+    public void SetStylizedRender(float renderScale, UpscalingFilterSelection filter)
+    {
+        _stylizedScale = Mathf.Clamp(renderScale, 0.1f, 1f);
+        _stylizedFilter = filter;
+        ApplyTierVisuals();
+        ApplyRenderScale();
+    }
+
+    public void ClearStylizedRender()
+    {
+        if (!StylizedRenderActive)
+            return;
+        _stylizedScale = -1f;
+        ApplyTierVisuals();
+        ApplyRenderScale();
+    }
+
     // ----------------------------------------------------------------- apply
     static UniversalRenderPipelineAsset ActiveUrpAsset =>
         (QualitySettings.renderPipeline != null
@@ -264,7 +292,7 @@ public sealed class GameGraphicsSettings : MonoBehaviour
         if (urp != null)
         {
             urp.msaaSampleCount = t.Msaa;
-            urp.upscalingFilter = t.Upscaler;
+            urp.upscalingFilter = StylizedRenderActive ? _stylizedFilter : t.Upscaler;
             urp.shadowDistance = t.ShadowDistance;
             urp.shadowCascadeCount = t.ShadowCascades;
         }
@@ -280,7 +308,7 @@ public sealed class GameGraphicsSettings : MonoBehaviour
     {
         UniversalRenderPipelineAsset urp = ActiveUrpAsset;
         if (urp != null)
-            urp.renderScale = Mathf.Clamp(_renderScale, 0.5f, 1f);
+            urp.renderScale = StylizedRenderActive ? _stylizedScale : Mathf.Clamp(_renderScale, 0.5f, 1f);
     }
 
     void ApplyVSync() => QualitySettings.vSyncCount = Mathf.Clamp(_vSync, 0, 2);

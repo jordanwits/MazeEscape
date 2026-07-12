@@ -489,6 +489,7 @@ GameObject:
   - component: {fileID: 1674470434}
   - component: {fileID: 1674470433}
   - component: {fileID: 1674470435}
+  - component: {fileID: 1674470436}
   m_Layer: 0
   m_Name: WorldRenderCuller
   m_TagString: Untagged
@@ -554,6 +555,39 @@ MonoBehaviour:
   manualStartDistance: 25
   manualEndDistance: 50
   overrideCameraBackground: 1
+  cameraRecheckInterval: 0.5
+--- !u!114 &1674470436
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1674470432}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dd6db20c18f2a0945ab63bab24573663, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MazePostFx
+  enableRetroResolution: 1
+  targetVerticalResolution: 640
+  upscalingFilter: 2
+  enablePostVolume: 1
+  bloomIntensity: 0.7
+  bloomThreshold: 0.95
+  neutralTonemap: 1
+  postExposure: 0.15
+  saturation: 8
+  contrast: 6
+  vignetteIntensity: 0.28
+  filmGrainIntensity: 0.15
+  enablePosterize: 1
+  posterizeSteps: 8
+  posterizeBlend: 0.3
+  depthEdgeThreshold: 0.08
+  luminanceEdgeThreshold: 0.35
+  edgeFadeDistance: 12
+  edgeIntensity: 0.45
+  edgeColor: {r: 0.02, g: 0.02, b: 0.03, a: 1}
   cameraRecheckInterval: 0.5
 --- !u!1 &1870127637
 GameObject:
