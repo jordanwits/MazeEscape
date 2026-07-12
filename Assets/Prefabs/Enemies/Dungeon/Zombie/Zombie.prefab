@@ -10,6 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 9022222220000002}
   - component: {fileID: 9022222220000003}
+  - component: {fileID: 7033828916255365226}
   m_Layer: 6
   m_Name: Zombie_Voice
   m_TagString: Untagged
@@ -129,6 +130,31 @@ AudioSource:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
+--- !u!169 &7033828916255365226
+AudioLowPassFilter:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9022222220000001}
+  m_Enabled: 1
+  serializedVersion: 3
+  m_LowpassResonanceQ: 1
+  lowpassLevelCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0.99999964
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
 --- !u!1 &9033333330000001
 GameObject:
   m_ObjectHideFlags: 0
@@ -139,6 +165,7 @@ GameObject:
   m_Component:
   - component: {fileID: 9033333330000002}
   - component: {fileID: 9033333330000003}
+  - component: {fileID: -1606285814335918997}
   m_Layer: 6
   m_Name: Zombie_Footsteps
   m_TagString: Untagged
@@ -249,6 +276,31 @@ AudioSource:
     - serializedVersion: 3
       time: 0
       value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+--- !u!169 &-1606285814335918997
+AudioLowPassFilter:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9033333330000001}
+  m_Enabled: 1
+  serializedVersion: 3
+  m_LowpassResonanceQ: 1
+  lowpassLevelCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0.99999964
       inSlope: 0
       outSlope: 0
       tangentMode: 0
