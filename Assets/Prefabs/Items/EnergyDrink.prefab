@@ -12,6 +12,8 @@ GameObject:
   - component: {fileID: 2517355441836016161}
   - component: {fileID: 363531693742143211}
   - component: {fileID: 5204783989605651940}
+  - component: {fileID: 5204783989605651941}
+  - component: {fileID: 5204783989605651942}
   m_Layer: 0
   m_Name: EnergyDrink
   m_TagString: Untagged
@@ -112,3 +114,58 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 0.007594232, y: 0.007596737, z: 0.018994724}
   m_Center: {x: 0.000009704966, y: 0.000008704959, z: -0.000008599837}
+--- !u!54 &5204783989605651941
+Rigidbody:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164958555813648190}
+  serializedVersion: 5
+  m_Mass: 0.1
+  m_LinearDamping: 0
+  m_AngularDamping: 0.05
+  m_CenterOfMass: {x: 0, y: 0, z: 0}
+  m_InertiaTensor: {x: 1, y: 1, z: 1}
+  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ImplicitCom: 1
+  m_ImplicitTensor: 1
+  m_UseGravity: 1
+  m_IsKinematic: 0
+  m_Interpolate: 0
+  m_Constraints: 0
+  m_CollisionDetection: 0
+--- !u!114 &5204783989605651942
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2164958555813648190}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e17a2b9c4d3f4e5a8b6c7d0e1f2a3b4c, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::EnergyDrinkItem
+  _itemTypeId: 9
+  _slotIcon: {fileID: 21300000, guid: d4e5f6a7b8c90112233445566778899a, type: 3}
+  itemRigidbody: {fileID: 5204783989605651941}
+  itemColliders:
+  - {fileID: 5204783989605651940}
+  itemRenderers:
+  - {fileID: 363531693742143211}
+  heldLocalPosition: {x: 0, y: -0.05, z: -0.35}
+  heldLocalEulerAngles: {x: 0, y: 0, z: 0}
+  alignRotationWithFollow: 1
+  gripPointRight: {fileID: 0}
+  gripPointLeft: {fileID: 0}
+  heldRotationOffsetEuler: {x: 0, y: 0, z: 0}
+  heldAttachToHandSocket: 1
+  boostDurationSeconds: 5
+  speedMultiplier: 1.25

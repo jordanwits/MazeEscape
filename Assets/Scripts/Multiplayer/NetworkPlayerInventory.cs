@@ -1023,6 +1023,94 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         playerController?.PlayBandageUseSfx();
     }
 
+    public void RequestUseSelectedEnergyDrink()
+    {
+        if (!IsSpawned)
+            return;
+
+        if (IsServer)
+        {
+            ServerUseSelectedEnergyDrink();
+            return;
+        }
+
+        RequestUseSelectedEnergyDrinkServerRpc();
+    }
+
+    [ServerRpc]
+    void RequestUseSelectedEnergyDrinkServerRpc(ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+
+        ServerUseSelectedEnergyDrink();
+    }
+
+    void ServerUseSelectedEnergyDrink()
+    {
+        if (!IsServer)
+            return;
+
+        int sel = SelectedSlotIndex;
+        ulong id = GetSlotItemId(sel);
+        bool slotSaysDrink = GetSlotItemTypeId(sel) == GrabbableInventoryItem.TypeIdEnergyDrink;
+        if (id == 0UL && !slotSaysDrink)
+            return;
+
+        GrabbableInventoryItem g = null;
+        bool resolved = id != 0UL
+            && GrabbableInventoryItem.TryGetRegistered(id, out g)
+            && g is EnergyDrinkItem;
+        if (!resolved && slotSaysDrink)
+        {
+            Vector3 hint = playerController != null ? playerController.transform.position : transform.position;
+            resolved = GrabbableInventoryItem.TryResolveForStateByType(
+                id,
+                hint,
+                GrabbableInventoryItem.TypeIdEnergyDrink,
+                out g)
+                && g is EnergyDrinkItem;
+        }
+
+        if (!resolved || g is not EnergyDrinkItem drink)
+            return;
+
+        // Movement/stamina/HUD are owner-side, so hand the effect to the owner's controller. Read the
+        // buff tunables off the authoritative item instance the server just resolved.
+        StartEnergyDrinkBoostOwnerClientRpc(
+            drink.BoostDurationSeconds,
+            drink.SpeedMultiplier,
+            BuildOwnerClientRpcParams());
+
+        SetSlotItemId(sel, 0UL);
+        SetSlotItemTypeId(sel, GrabbableInventoryItem.TypeIdNone);
+        SetSlotStackCount(sel, 0);
+        _selectedFlashlightLightOn.Value = false;
+        ulong consumeId = g.ItemId;
+        ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
+        ConsumeItemClientRpc(consumeId);
+        Object.Destroy(g.gameObject);
+        SelectAfterDrop();
+        RaiseChangedAndRefresh();
+    }
+
+    ClientRpcParams BuildOwnerClientRpcParams()
+    {
+        return new ClientRpcParams
+        {
+            Send = new ClientRpcSendParams
+            {
+                TargetClientIds = new[] { OwnerClientId }
+            }
+        };
+    }
+
+    [ClientRpc]
+    void StartEnergyDrinkBoostOwnerClientRpc(float durationSeconds, float speedMultiplier, ClientRpcParams clientRpcParams = default)
+    {
+        playerController?.ActivateEnergyDrinkBoost(durationSeconds, speedMultiplier);
+    }
+
     public bool ServerTryConsumeKeyItem()
     {
         if (!IsServer || !IsSpawned)

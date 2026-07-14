@@ -20,6 +20,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     public const byte TypeIdRingBlue = 6;
     public const byte TypeIdRingGreen = 7;
     public const byte TypeIdRingYellow = 8;
+    public const byte TypeIdEnergyDrink = 9;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -77,6 +78,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhRingBlue;
     static Sprite s_hudPhRingGreen;
     static Sprite s_hudPhRingYellow;
+    static Sprite s_hudPhEnergyDrink;
 
     /// <summary>Inspector <see cref="_slotIcon"/> if set; otherwise a simple circular runtime glyph (transparent outside the disk).</summary>
     public Sprite GetEffectiveSlotIconForHud()
@@ -103,6 +105,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdKey;
         if (GetComponent<BandageItem>() != null)
             return TypeIdBandage;
+        if (GetComponent<EnergyDrinkItem>() != null)
+            return TypeIdEnergyDrink;
         if (GetComponent<RingTossItem>() != null)
             return _itemTypeId != TypeIdNone ? _itemTypeId : TypeIdRingBlue;
         if (GetComponent<StarBallItem>() != null)
@@ -118,6 +122,7 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdGlowstick => s_hudPhGlow ??= CreatePlaceholderSprite(0.35f, 1f, 0.35f),
             TypeIdKey => KeyItem.SharedHudSlotIcon ?? (s_hudPhKey ??= CreatePlaceholderSprite(0.92f, 0.75f, 0.2f)),
             TypeIdBandage => BandageItem.SharedHudSlotIcon ?? (s_hudPhBandage ??= CreatePlaceholderSprite(0.95f, 0.35f, 0.35f)),
+            TypeIdEnergyDrink => EnergyDrinkItem.SharedHudSlotIcon ?? (s_hudPhEnergyDrink ??= CreatePlaceholderSprite(0.2f, 0.95f, 0.85f)),
             TypeIdStarBall => s_hudPhStarBall ??= CreatePlaceholderSprite(0.95f, 0.55f, 0.2f),
             TypeIdRingBlue => s_hudPhRingBlue ??= CreatePlaceholderSprite(0.25f, 0.45f, 0.95f),
             TypeIdRingGreen => s_hudPhRingGreen ??= CreatePlaceholderSprite(0.25f, 0.85f, 0.35f),

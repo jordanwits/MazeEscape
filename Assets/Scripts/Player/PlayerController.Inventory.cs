@@ -760,6 +760,12 @@ public partial class PlayerController
                 return;
             }
 
+            if (_networkPlayerInventory.GetSlotItemTypeId(sel) == GrabbableInventoryItem.TypeIdEnergyDrink)
+            {
+                _networkPlayerInventory.RequestUseSelectedEnergyDrink();
+                return;
+            }
+
             if (!HasSelectedFlashlightInWorld())
             {
                 return;
@@ -777,6 +783,12 @@ public partial class PlayerController
         if (_localInventorySlots[_localSelectedSlot] is BandageItem)
         {
             TryUseSelectedBandageLocal();
+            return;
+        }
+
+        if (_localInventorySlots[_localSelectedSlot] is EnergyDrinkItem)
+        {
+            TryUseSelectedEnergyDrinkLocal();
             return;
         }
 
@@ -803,6 +815,20 @@ public partial class PlayerController
         _playerHealth.Heal(BandageItem.HealthRestoreAmount);
         Object.Destroy(b.gameObject);
         PlayBandageUseSfx();
+        RefreshLocalInventoryView();
+    }
+
+    void TryUseSelectedEnergyDrinkLocal()
+    {
+        if (_localInventorySlots[_localSelectedSlot] is not EnergyDrinkItem e)
+            return;
+
+        int slot = _localSelectedSlot;
+        _localInventorySlots[slot] = null;
+        _localSlotStacks[slot] = 0;
+        SelectAfterDropLocal();
+        ActivateEnergyDrinkBoost(e.BoostDurationSeconds, e.SpeedMultiplier);
+        Object.Destroy(e.gameObject);
         RefreshLocalInventoryView();
     }
 

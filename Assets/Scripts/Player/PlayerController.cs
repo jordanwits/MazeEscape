@@ -541,6 +541,8 @@ public partial class PlayerController : MonoBehaviour
         TickPickupReach();
         // Hold-to-activate teleport charging (self-cancels when E is released / not aiming at an orb).
         TickTeleportHold();
+        // Energy-drink buff countdown + HUD pulse (no-op unless the local player drank one).
+        TickEnergyBoost();
 
         // Re-derive the hold pose from the live held state every frame (owner only). Event-driven refreshes
         // can be missed/delayed for a networked throw — the owner simulates the arc locally while the
@@ -721,7 +723,7 @@ public partial class PlayerController : MonoBehaviour
         UpdateStamina(sprintHeld, _isSprinting);
 
         float targetSpeed = inputMagnitude > 0.01f
-            ? inputMagnitude * (_isSprinting ? runSpeed : walkSpeed)
+            ? inputMagnitude * (_isSprinting ? runSpeed : walkSpeed) * EnergyBoostSpeedMultiplier
             : 0f;
         Vector3 desiredHorizontalVelocity = move * targetSpeed;
         float speedChangeRate = GetHorizontalSpeedChangeRate(desiredHorizontalVelocity, targetSpeed);
@@ -888,6 +890,14 @@ public partial class PlayerController : MonoBehaviour
 
     void UpdateStamina(bool sprintHeld, bool isSprinting)
     {
+        // Energy-drink buff: stamina is unlimited — keep the bar pinned full and skip drain/regen entirely.
+        if (EnergyBoostActive)
+        {
+            _currentStamina = maxStamina;
+            RefreshStaminaUI();
+            return;
+        }
+
         if (isSprinting)
         {
             _currentStamina = Mathf.Max(0f, _currentStamina - staminaDrainRate * Time.deltaTime);
@@ -910,6 +920,10 @@ public partial class PlayerController : MonoBehaviour
 
     void SpendStamina(float amount)
     {
+        // Unlimited stamina during the energy-drink buff — jumps/punches cost nothing.
+        if (EnergyBoostActive)
+            return;
+
         if (amount <= 0f)
             return;
 
@@ -1582,6 +1596,10 @@ public partial class PlayerController : MonoBehaviour
         // Layer the Jailor-proximity tremble on top of the look pose written this frame. Runs before the
         // early-returns below so it applies in first-person mode too (that path returns early here).
         UpdateJailorProximityShake();
+
+        // Sprint / energy-drink FOV kick. Before the early-returns so the FOV still eases back to base
+        // while control is lost (ragdoll/death); self-gates to the local player's enabled view camera.
+        TickCameraFov();
 
         if (!_hasLocalControl)
             return;
