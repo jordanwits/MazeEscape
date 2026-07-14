@@ -113,9 +113,9 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] float jumpStaminaCost = 8f;
     [Tooltip("Stamina spent when the player throws a punch.")]
     [SerializeField] float punchStaminaCost = 6f;
-    [Tooltip("Optional UI Image (set to Filled) to display the stamina bar. If empty, one is created automatically.")]
+    [Tooltip("Optional UI Image (set to Filled) to display the stamina bar. If empty, the stamina column on the shared vitals cluster is used.")]
     [SerializeField] Image staminaBarImage;
-    [Tooltip("Auto-create a HUD stamina bar if none is assigned.")]
+    [Tooltip("Auto-create the HUD vitals cluster stamina readout if no image is assigned.")]
     [SerializeField] bool autoCreateStaminaBar = true;
 
     [Header("Heavy Throwable Charge")]
@@ -234,8 +234,7 @@ public partial class PlayerController : MonoBehaviour
     float _staminaRegenTimer;
     bool _isSprinting;
     bool _audiblySprintingForAi;
-    RectTransform _staminaFillRect;
-    GameObject _staminaBarRoot;
+    PlayerVitalsHud _vitalsHud;
     bool _isChargingThrow;
     float _throwChargeTimer;
     GameObject _throwChargeBarRoot;
@@ -417,7 +416,9 @@ public partial class PlayerController : MonoBehaviour
         _currentStamina = maxStamina;
 
         if (staminaBarImage == null && autoCreateStaminaBar)
-            staminaBarImage = CreateStaminaBarUI();
+            _vitalsHud = PlayerVitalsHud.Ensure(gameObject);
+
+        CreateInventoryRowUI();
 
         if (_throwChargeBarRoot == null && autoCreateThrowChargeBar)
             CreateThrowChargeBarUI();
@@ -548,6 +549,9 @@ public partial class PlayerController : MonoBehaviour
         // can be missed/delayed for a networked throw — the owner simulates the arc locally while the
         // authoritative holder value round-trips — which otherwise leaves the arm stuck in the carry pose.
         ApplyHoldPoseAnimatorParameter();
+
+        // Show the carnival ticket counter only while standing inside the Carnival Main room.
+        TickCarnivalRoomPresence();
 
         if (!_hasLocalControl && !ShouldRunDeadRagdollCameraUpdate())
         {
@@ -1022,8 +1026,8 @@ public partial class PlayerController : MonoBehaviour
 
     void RefreshStaminaUI()
     {
-        if (_staminaFillRect != null)
-            _staminaFillRect.anchorMax = new Vector2(StaminaNormalized, 1f);
+        if (_vitalsHud != null)
+            _vitalsHud.SetStamina(StaminaNormalized, EnergyBoostActive);
         else if (staminaBarImage != null)
             staminaBarImage.fillAmount = StaminaNormalized;
     }
@@ -1134,8 +1138,10 @@ public partial class PlayerController : MonoBehaviour
         if (!visible)
             CancelThrowCharge();
 
-        if (_staminaBarRoot != null)
-            _staminaBarRoot.SetActive(visible);
+        // Only the stamina column: health (via PlayerHealth) owns the vitals cluster root, so the
+        // body gauge stays up through control-only losses like the Jailor carry.
+        if (_vitalsHud != null)
+            _vitalsHud.SetStaminaVisible(visible);
         else if (staminaBarImage != null)
             staminaBarImage.enabled = visible;
 
@@ -1145,8 +1151,9 @@ public partial class PlayerController : MonoBehaviour
         if (_crosshairRoot != null)
             _crosshairRoot.SetActive(visible);
 
-        if (_ticketCounterRoot != null)
-            _ticketCounterRoot.SetActive(visible);
+        // The ticket counter additionally requires being inside the Carnival Main room; SetTicketCounterHudAllowed
+        // records the HUD state and RefreshTicketCounterVisibility combines it with the in-room flag.
+        SetTicketCounterHudAllowed(visible);
 
         if (!visible)
             SetPickupPromptVisible(false);
@@ -1339,13 +1346,11 @@ public partial class PlayerController : MonoBehaviour
         CreateTeleportHoldRing(dot.transform);
     }
 
-    Image CreateStaminaBarUI()
+    void CreateInventoryRowUI()
     {
         const float invSlotRowHeight = 96f;
         const float invSlotBorder = 2.5f;
         const float invSlotBottomPad = 6f;
-        const float invSlotStaminaGap = 8f;
-        float staminaBarBottomY = invSlotBottomPad + invSlotRowHeight + invSlotStaminaGap;
 
         Canvas canvas = HudKit.EnsureHudCanvas();
 
@@ -1480,66 +1485,17 @@ public partial class PlayerController : MonoBehaviour
             countRect.offsetMax = new Vector2(-5f, 0f);
         }
         _inventorySlotsRoot = invRow;
-
-        GameObject bg = new GameObject("StaminaBarBG");
-        bg.layer = 5;
-        bg.transform.SetParent(canvas.transform, false);
-        Image bgImage = bg.AddComponent<Image>();
-        bgImage.sprite = MenuTheme.RoundedRect(2);
-        bgImage.type = Image.Type.Sliced;
-        bgImage.color = MenuTheme.WithAlpha(MenuTheme.Ink, 0.72f);
-        bgImage.raycastTarget = false;
-        RectTransform bgRect = bg.GetComponent<RectTransform>();
-        bgRect.anchorMin = new Vector2(0.5f, 0f);
-        bgRect.anchorMax = new Vector2(0.5f, 0f);
-        bgRect.pivot = new Vector2(0.5f, 0f);
-        bgRect.anchoredPosition = new Vector2(0f, staminaBarBottomY);
-        bgRect.sizeDelta = new Vector2(304f, 24f);
-        _staminaBarRoot = bg;
-
-        GameObject fill = new GameObject("StaminaBarFill");
-        fill.layer = 5;
-        fill.transform.SetParent(bg.transform, false);
-        Image fillImage = fill.AddComponent<Image>();
-        fillImage.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.62f);
-        fillImage.raycastTarget = false;
-        RectTransform fillRect = fill.GetComponent<RectTransform>();
-        fillRect.anchorMin = Vector2.zero;
-        fillRect.anchorMax = Vector2.one;
-        fillRect.pivot = new Vector2(0f, 0.5f);
-        fillRect.offsetMin = new Vector2(2.5f, 2.5f);
-        fillRect.offsetMax = new Vector2(-2.5f, -2.5f);
-        _staminaFillRect = fillRect;
-
-        GameObject frameGo = new GameObject("Frame");
-        frameGo.layer = 5;
-        frameGo.transform.SetParent(bg.transform, false);
-        Image frame = frameGo.AddComponent<Image>();
-        frame.sprite = MenuTheme.RoundedOutline(2, 1.6f);
-        frame.type = Image.Type.Sliced;
-        frame.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.20f);
-        frame.raycastTarget = false;
-        RectTransform frameRect = frame.rectTransform;
-        frameRect.anchorMin = Vector2.zero;
-        frameRect.anchorMax = Vector2.one;
-        frameRect.offsetMin = Vector2.zero;
-        frameRect.offsetMax = Vector2.zero;
-
-        return fillImage;
     }
 
     void CreateThrowChargeBarUI()
     {
-        // Sit directly above the stamina bar (which sits above the inventory row), matching its
-        // width and styling. Mirrors the constants used by CreateStaminaBarUI for placement.
+        // Sit directly above the inventory row, matching its width and styling. Mirrors the
+        // constants used by CreateInventoryRowUI for placement.
         const float invSlotRowHeight = 96f;
         const float invSlotBottomPad = 6f;
-        const float invSlotStaminaGap = 8f;
-        const float staminaBarHeight = 24f;
         const float chargeBarHeight = 18f;
-        const float chargeBarGap = 6f;
-        float staminaBarBottomY = invSlotBottomPad + invSlotRowHeight + invSlotStaminaGap;
-        float chargeBarBottomY = staminaBarBottomY + staminaBarHeight + chargeBarGap;
+        const float chargeBarGap = 8f;
+        float chargeBarBottomY = invSlotBottomPad + invSlotRowHeight + chargeBarGap;
 
         Canvas canvas = HudKit.EnsureHudCanvas();
 
@@ -1591,7 +1547,14 @@ public partial class PlayerController : MonoBehaviour
     void LateUpdate()
     {
         if (_hasLocalControl)
+        {
             UpdateInventoryFlashlightBatteryHud();
+            if (_vitalsHud != null)
+            {
+                bool heldFlashlight = TryGetHeldFlashlightChargeForHud(out float charge);
+                _vitalsHud.SetFlashlightCharge(heldFlashlight, charge);
+            }
+        }
 
         // Layer the Jailor-proximity tremble on top of the look pose written this frame. Runs before the
         // early-returns below so it applies in first-person mode too (that path returns early here).

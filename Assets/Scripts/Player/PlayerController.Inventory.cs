@@ -995,6 +995,41 @@ public partial class PlayerController
             RefreshLocalInventoryView();
     }
 
+    /// <summary>
+    /// Charge of the flashlight currently in hand for the vitals-cluster gauge: selected slot holds
+    /// a flashlight and the hotbar is not force-stashed by a heavy throwable carry. Mirrors the
+    /// in-hand rules used by the inventory view refresh.
+    /// </summary>
+    bool TryGetHeldFlashlightChargeForHud(out float normalized)
+    {
+        normalized = 0f;
+        if (IsUsingNetworkedInventory)
+        {
+            NetworkObject self = SelfNetworkObject;
+            ulong holderId = self != null ? self.NetworkObjectId : 0UL;
+            if (IsHeavyThrowableForcingInventoryStash(holderId))
+                return false;
+            int selected = _networkPlayerInventory.SelectedSlotIndex;
+            if (selected < 0 || selected >= 3)
+                return false;
+            ulong id = _networkPlayerInventory.GetSlotItemId(selected);
+            if (id == 0UL
+                || !GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g)
+                || g is not FlashlightItem)
+                return false;
+            normalized = Mathf.Clamp01(_networkPlayerInventory.GetSlotFlashlightBatteryNormalizedForHud(selected));
+            return true;
+        }
+
+        if (NetworkHeavyThrowableHold.FindOfflineHeldBy(this) != null)
+            return false;
+        if (_localSelectedSlot < 0 || _localSelectedSlot >= 3
+            || _localInventorySlots[_localSelectedSlot] is not FlashlightItem f)
+            return false;
+        normalized = f.BatteryFractionNormalized;
+        return true;
+    }
+
     void UpdateInventoryFlashlightBatteryHud()
     {
         if (_inventorySlotFlashlightBatteryFillImages == null

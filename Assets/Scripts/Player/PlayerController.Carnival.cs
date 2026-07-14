@@ -23,6 +23,11 @@ public partial class PlayerController
     TMP_Text _ticketCounterText;
     int _lastDisplayedTicketCount = -1;
 
+    // The ticket counter is only shown while the local player stands inside the Carnival Main room (where
+    // tickets are earned/spent). Both conditions must hold: the HUD is visible AND we are in the room.
+    bool _ticketCounterHudAllowed;
+    bool _inCarnivalRoom;
+
     void HookupCarnivalTickets()
     {
         _networkPlayerCarnivalTickets = GetComponent<NetworkPlayerCarnivalTickets>();
@@ -52,6 +57,33 @@ public partial class PlayerController
         _ticketCounterText.text = count.ToString();
     }
 
+    /// <summary>Poll (local owner only) whether we are inside the Carnival Main room and toggle the counter.</summary>
+    void TickCarnivalRoomPresence()
+    {
+        if (!_hasLocalControl)
+            return;
+
+        bool inside = CarnivalMainRoomZone.IsPointInsideAny(transform.position);
+        if (inside == _inCarnivalRoom)
+            return;
+
+        _inCarnivalRoom = inside;
+        RefreshTicketCounterVisibility();
+    }
+
+    /// <summary>Called by <see cref="SetHudVisible"/> so the counter also respects global HUD visibility.</summary>
+    void SetTicketCounterHudAllowed(bool allowed)
+    {
+        _ticketCounterHudAllowed = allowed;
+        RefreshTicketCounterVisibility();
+    }
+
+    void RefreshTicketCounterVisibility()
+    {
+        if (_ticketCounterRoot != null)
+            _ticketCounterRoot.SetActive(_ticketCounterHudAllowed && _inCarnivalRoom);
+    }
+
     void CreateTicketCounterUI()
     {
         if (_ticketCounterRoot != null)
@@ -63,12 +95,13 @@ public partial class PlayerController
         root.layer = 5;
         root.transform.SetParent(canvas.transform, false);
         RectTransform rootRect = root.AddComponent<RectTransform>();
-        rootRect.anchorMin = new Vector2(0f, 1f);
-        rootRect.anchorMax = new Vector2(0f, 1f);
-        rootRect.pivot = new Vector2(0f, 1f);
-        rootRect.anchoredPosition = new Vector2(24f, -24f);
+        // Top-right corner; the top-left is the vitals cluster (PlayerVitalsHud).
+        rootRect.anchorMin = new Vector2(1f, 1f);
+        rootRect.anchorMax = new Vector2(1f, 1f);
+        rootRect.pivot = new Vector2(1f, 1f);
+        rootRect.anchoredPosition = new Vector2(-24f, -24f);
         rootRect.sizeDelta = new Vector2(150f, 44f);
-        rootRect.localRotation = Quaternion.Euler(0f, 0f, 0.4f);
+        rootRect.localRotation = Quaternion.Euler(0f, 0f, -0.4f);
 
         HudKit.AddPlate(root, 0.72f, 0.20f);
 
@@ -130,6 +163,9 @@ public partial class PlayerController
         _ticketCounterRoot = root;
         _ticketCounterText = count;
         _lastDisplayedTicketCount = -1;
+
+        // Hidden until the local player walks into the Carnival Main room.
+        RefreshTicketCounterVisibility();
     }
 
     bool TryFindInteractableCarnivalStartButton(Transform cam, out CarnivalGameStartButton button)

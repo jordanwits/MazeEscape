@@ -11,16 +11,15 @@ public class PlayerHealth : MonoBehaviour
     [SerializeField] float maxHealth = 100f;
     [SerializeField] UnityEvent onDamaged;
     [SerializeField] UnityEvent onDied;
-    [Tooltip("Optional UI Image (set to Filled) to display the health bar. If empty, one is created automatically.")]
+    [Tooltip("Optional UI Image (set to Filled) to display the health bar. If empty, the body gauge on the shared vitals cluster is used.")]
     [SerializeField] Image healthBarImage;
-    [Tooltip("Auto-create a HUD health bar if none is assigned.")]
+    [Tooltip("Auto-create the HUD vitals cluster health gauge if no image is assigned.")]
     [SerializeField] bool autoCreateHealthBar = true;
     [Tooltip("When CurrentHealth increases, the health bar fill moves toward the new value at this many HP per second. Damage still updates the bar immediately.")]
     [SerializeField, Min(1f)] float healthBarHealFillSpeedHps = 25f;
 
     float _displayHealth;
-    RectTransform _healthFillRect;
-    GameObject _healthBarRoot;
+    PlayerVitalsHud _vitalsHud;
     NetworkObject _networkObject;
 
     public float MaxHealth => maxHealth;
@@ -38,7 +37,7 @@ public class PlayerHealth : MonoBehaviour
         CurrentHealth = Mathf.Max(1f, maxHealth);
 
         if (healthBarImage == null && autoCreateHealthBar)
-            healthBarImage = CreateHealthBarUI();
+            _vitalsHud = PlayerVitalsHud.Ensure(gameObject);
 
         _displayHealth = CurrentHealth;
         UpdateHealthBar();
@@ -83,6 +82,7 @@ public class PlayerHealth : MonoBehaviour
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         _displayHealth = CurrentHealth;
         UpdateHealthBar();
+        _vitalsHud?.NotifyDamaged();
         onDamaged?.Invoke();
         Damaged?.Invoke();
 
@@ -121,10 +121,14 @@ public class PlayerHealth : MonoBehaviour
     public void ApplyReplicatedState(float currentHealth, bool isDead)
     {
         bool wasDead = IsDead;
+        float previousHealth = CurrentHealth;
         CurrentHealth = Mathf.Clamp(currentHealth, 0f, Mathf.Max(1f, maxHealth));
         IsDead = isDead;
         if (CurrentHealth < _displayHealth)
             _displayHealth = CurrentHealth;
+        // Clients take damage via replication (TakeDamage is server-only), so flash on decreases here.
+        if (CurrentHealth < previousHealth)
+            _vitalsHud?.NotifyDamaged();
         UpdateHealthBar();
         if (!wasDead && isDead)
         {
@@ -136,67 +140,17 @@ public class PlayerHealth : MonoBehaviour
     void UpdateHealthBar()
     {
         float t = maxHealth > 0f ? Mathf.Clamp01(_displayHealth / maxHealth) : 0f;
-        if (_healthFillRect != null)
-            _healthFillRect.anchorMax = new Vector2(t, 1f);
+        if (_vitalsHud != null)
+            _vitalsHud.SetHealth(t);
         else if (healthBarImage != null)
             healthBarImage.fillAmount = t;
     }
 
-    Image CreateHealthBarUI()
-    {
-        Canvas canvas = HudKit.EnsureHudCanvas();
-
-        GameObject bg = new GameObject("HealthBarBG");
-        bg.layer = 5;
-        bg.transform.SetParent(canvas.transform, false);
-        Image bgImage = bg.AddComponent<Image>();
-        bgImage.sprite = MenuTheme.RoundedRect(2);
-        bgImage.type = Image.Type.Sliced;
-        bgImage.color = MenuTheme.WithAlpha(MenuTheme.Ink, 0.72f);
-        bgImage.raycastTarget = false;
-        RectTransform bgRect = bg.GetComponent<RectTransform>();
-        bgRect.anchorMin = new Vector2(0.5f, 1f);
-        bgRect.anchorMax = new Vector2(0.5f, 1f);
-        bgRect.pivot = new Vector2(0.5f, 1f);
-        bgRect.anchoredPosition = new Vector2(0f, -60f);
-        bgRect.sizeDelta = new Vector2(304f, 24f);
-        _healthBarRoot = bg;
-
-        GameObject fill = new GameObject("HealthBarFill");
-        fill.layer = 5;
-        fill.transform.SetParent(bg.transform, false);
-        Image fillImage = fill.AddComponent<Image>();
-        fillImage.color = MenuTheme.WithAlpha(MenuTheme.Blood, 0.95f);
-        fillImage.raycastTarget = false;
-        RectTransform fillRect = fill.GetComponent<RectTransform>();
-        fillRect.anchorMin = Vector2.zero;
-        fillRect.anchorMax = Vector2.one;
-        fillRect.pivot = new Vector2(0f, 0.5f);
-        fillRect.offsetMin = new Vector2(2.5f, 2.5f);
-        fillRect.offsetMax = new Vector2(-2.5f, -2.5f);
-        _healthFillRect = fillRect;
-
-        GameObject frameGo = new GameObject("Frame");
-        frameGo.layer = 5;
-        frameGo.transform.SetParent(bg.transform, false);
-        Image frame = frameGo.AddComponent<Image>();
-        frame.sprite = MenuTheme.RoundedOutline(2, 1.6f);
-        frame.type = Image.Type.Sliced;
-        frame.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.20f);
-        frame.raycastTarget = false;
-        RectTransform frameRect = frame.rectTransform;
-        frameRect.anchorMin = Vector2.zero;
-        frameRect.anchorMax = Vector2.one;
-        frameRect.offsetMin = Vector2.zero;
-        frameRect.offsetMax = Vector2.zero;
-
-        return fillImage;
-    }
-
     public void SetHudVisible(bool visible)
     {
-        if (_healthBarRoot != null)
-            _healthBarRoot.SetActive(visible);
+        // Health owns the whole cluster's visibility; PlayerController toggles only the stamina column.
+        if (_vitalsHud != null)
+            _vitalsHud.SetHealthVisible(visible);
         else if (healthBarImage != null)
             healthBarImage.enabled = visible;
     }
