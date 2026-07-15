@@ -238,7 +238,7 @@ public partial class PlayerController : MonoBehaviour
     bool _isChargingThrow;
     float _throwChargeTimer;
     GameObject _throwChargeBarRoot;
-    RectTransform _throwChargeFillRect;
+    Image _throwChargeFill;
     GameObject _crosshairRoot;
     GameObject _inventorySlotsRoot;
     Image[] _inventorySlotBorderImages;
@@ -255,10 +255,6 @@ public partial class PlayerController : MonoBehaviour
     int _localSelectedSlot;
     TMP_Text[] _inventorySlotCountTexts;
     HudPrompt _hudPrompt;
-    Image[] _inventorySlotFlashlightBatteryFillImages;
-    RectTransform[] _inventorySlotFlashlightBatteryFillRects;
-    GameObject[] _inventorySlotFlashlightBatteryBarRoots;
-    static readonly Color FlashlightBatteryBarFill = new Color(0.75f, 0.43f, 0.22f, 0.95f);
     float _footstepTimer;
     bool _playFootstep1Next = true;
     bool _hasLocalControl = true;
@@ -1041,8 +1037,20 @@ public partial class PlayerController : MonoBehaviour
         if (_throwChargeBarRoot.activeSelf != show)
             _throwChargeBarRoot.SetActive(show);
 
-        if (show && _throwChargeFillRect != null)
-            _throwChargeFillRect.anchorMax = new Vector2(ThrowChargeNormalized, 1f);
+        if (show && _throwChargeFill != null)
+        {
+            float t = ThrowChargeNormalized;
+            _throwChargeFill.fillAmount = t;
+            // Warm from the muted accent to the bright accent orange as it tops out, then flicker a
+            // vivid orange at full power — stays firmly in our palette, never washes to white.
+            Color hot = Color.Lerp(MenuTheme.Amber, MenuTheme.AmberBright, Mathf.Clamp01(t * 1.2f));
+            if (t >= 0.999f)
+            {
+                float pulse = 0.75f + 0.25f * Mathf.Sin(Time.unscaledTime * 12f);
+                hot = Color.Lerp(hot, new Color(1f, 0.70f, 0.32f), 0.45f * pulse);
+            }
+            _throwChargeFill.color = MenuTheme.WithAlpha(hot, 0.98f);
+        }
     }
 
     void UpdateFootsteps(bool grounded)
@@ -1377,9 +1385,6 @@ public partial class PlayerController : MonoBehaviour
         _inventorySlotBorderImages = new Image[3];
         _inventorySlotIconImages = new Image[3];
         _inventorySlotCountTexts = new TMP_Text[3];
-        _inventorySlotFlashlightBatteryFillImages = new Image[3];
-        _inventorySlotFlashlightBatteryFillRects = new RectTransform[3];
-        _inventorySlotFlashlightBatteryBarRoots = new GameObject[3];
         for (int i = 0; i < 3; i++)
         {
             GameObject slot = new GameObject("InventorySlot" + (i + 1));
@@ -1428,44 +1433,6 @@ public partial class PlayerController : MonoBehaviour
             iconRect.offsetMax = Vector2.zero;
             _inventorySlotIconImages[i] = icon;
 
-            GameObject batteryBarGo = new GameObject("FlashlightBattery");
-            batteryBarGo.layer = 5;
-            batteryBarGo.transform.SetParent(invSlotFillGo.transform, false);
-            _inventorySlotFlashlightBatteryBarRoots[i] = batteryBarGo;
-            RectTransform batteryBarRt = batteryBarGo.AddComponent<RectTransform>();
-            batteryBarRt.anchorMin = new Vector2(0.1f, 0.04f);
-            batteryBarRt.anchorMax = new Vector2(0.9f, 0.12f);
-            batteryBarRt.pivot = new Vector2(0.5f, 0.5f);
-            batteryBarRt.offsetMin = Vector2.zero;
-            batteryBarRt.offsetMax = Vector2.zero;
-            GameObject trackGo = new GameObject("Track");
-            trackGo.layer = 5;
-            trackGo.transform.SetParent(batteryBarGo.transform, false);
-            Image trackImg = trackGo.AddComponent<Image>();
-            trackImg.raycastTarget = false;
-            trackImg.color = MenuTheme.WithAlpha(MenuTheme.Ink, 0.9f);
-            RectTransform trackRect = trackGo.GetComponent<RectTransform>();
-            trackRect.anchorMin = Vector2.zero;
-            trackRect.anchorMax = Vector2.one;
-            trackRect.pivot = new Vector2(0.5f, 0.5f);
-            trackRect.offsetMin = Vector2.zero;
-            trackRect.offsetMax = Vector2.zero;
-            GameObject batteryFillGo = new GameObject("Fill");
-            batteryFillGo.layer = 5;
-            batteryFillGo.transform.SetParent(batteryBarGo.transform, false);
-            Image batteryFill = batteryFillGo.AddComponent<Image>();
-            batteryFill.raycastTarget = false;
-            batteryFill.color = FlashlightBatteryBarFill;
-            _inventorySlotFlashlightBatteryFillImages[i] = batteryFill;
-            RectTransform batteryFillRect = batteryFill.GetComponent<RectTransform>();
-            batteryFillRect.anchorMin = new Vector2(0f, 0f);
-            batteryFillRect.anchorMax = new Vector2(1f, 1f);
-            batteryFillRect.pivot = new Vector2(0f, 0.5f);
-            batteryFillRect.offsetMin = new Vector2(1.5f, 1.5f);
-            batteryFillRect.offsetMax = new Vector2(-1.5f, -1.5f);
-            _inventorySlotFlashlightBatteryFillRects[i] = batteryFillRect;
-            batteryBarGo.SetActive(false);
-
             GameObject countGo = new GameObject("StackCount");
             countGo.layer = 5;
             countGo.transform.SetParent(invSlotFillGo.transform, false);
@@ -1489,66 +1456,16 @@ public partial class PlayerController : MonoBehaviour
 
     void CreateThrowChargeBarUI()
     {
-        // Sit directly above the inventory row, matching its width and styling. Mirrors the
-        // constants used by CreateInventoryRowUI for placement.
-        const float invSlotRowHeight = 96f;
-        const float invSlotBottomPad = 6f;
-        const float chargeBarHeight = 18f;
-        const float chargeBarGap = 8f;
-        float chargeBarBottomY = invSlotBottomPad + invSlotRowHeight + chargeBarGap;
-
+        // Curved crescent hanging just to the right of the centre crosshair; fills amber as the
+        // heavy-throwable wind-up climbs. See ThrowChargeArc for the sketched-gauge construction.
         Canvas canvas = HudKit.EnsureHudCanvas();
-
-        GameObject bg = new GameObject("ThrowChargeBarBG");
-        bg.layer = 5;
-        bg.transform.SetParent(canvas.transform, false);
-        Image bgImage = bg.AddComponent<Image>();
-        bgImage.sprite = MenuTheme.RoundedRect(2);
-        bgImage.type = Image.Type.Sliced;
-        bgImage.color = MenuTheme.WithAlpha(MenuTheme.Ink, 0.72f);
-        bgImage.raycastTarget = false;
-        RectTransform bgRect = bg.GetComponent<RectTransform>();
-        bgRect.anchorMin = new Vector2(0.5f, 0f);
-        bgRect.anchorMax = new Vector2(0.5f, 0f);
-        bgRect.pivot = new Vector2(0.5f, 0f);
-        bgRect.anchoredPosition = new Vector2(0f, chargeBarBottomY);
-        bgRect.sizeDelta = new Vector2(304f, chargeBarHeight);
-        _throwChargeBarRoot = bg;
-
-        GameObject fill = new GameObject("ThrowChargeBarFill");
-        fill.layer = 5;
-        fill.transform.SetParent(bg.transform, false);
-        Image fillImage = fill.AddComponent<Image>();
-        fillImage.color = MenuTheme.WithAlpha(MenuTheme.Amber, 0.95f);
-        fillImage.raycastTarget = false;
-        RectTransform fillRect = fill.GetComponent<RectTransform>();
-        fillRect.anchorMin = Vector2.zero;
-        fillRect.anchorMax = Vector2.one;
-        fillRect.pivot = new Vector2(0f, 0.5f);
-        fillRect.offsetMin = new Vector2(2.5f, 2.5f);
-        fillRect.offsetMax = new Vector2(-2.5f, -2.5f);
-        _throwChargeFillRect = fillRect;
-
-        GameObject frameGo = new GameObject("Frame");
-        frameGo.layer = 5;
-        frameGo.transform.SetParent(bg.transform, false);
-        Image frame = frameGo.AddComponent<Image>();
-        frame.sprite = MenuTheme.RoundedOutline(2, 1.6f);
-        frame.type = Image.Type.Sliced;
-        frame.color = MenuTheme.WithAlpha(MenuTheme.Bone, 0.20f);
-        frame.raycastTarget = false;
-        RectTransform frameRect = frame.rectTransform;
-        frameRect.anchorMin = Vector2.zero;
-        frameRect.anchorMax = Vector2.one;
-        frameRect.offsetMin = Vector2.zero;
-        frameRect.offsetMax = Vector2.zero;
+        _throwChargeBarRoot = ThrowChargeArc.Create(canvas.transform, out _throwChargeFill);
     }
 
     void LateUpdate()
     {
         if (_hasLocalControl)
         {
-            UpdateInventoryFlashlightBatteryHud();
             if (_vitalsHud != null)
             {
                 bool heldFlashlight = TryGetHeldFlashlightChargeForHud(out float charge);

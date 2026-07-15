@@ -16,8 +16,8 @@ using UnityEngine.UI;
 public sealed class PlayerVitalsHud : MonoBehaviour
 {
     // ---------------------------------------------------------------- layout (canvas units)
-    const float RootX = 24f;
-    const float RootY = -12f;
+    const float RootX = 8f;
+    const float RootY = -2f;
 
     const float FigureHeight = 158f;
     const float FigureCenterX = 108.3f;

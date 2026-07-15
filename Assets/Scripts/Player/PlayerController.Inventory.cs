@@ -1030,47 +1030,4 @@ public partial class PlayerController
         return true;
     }
 
-    void UpdateInventoryFlashlightBatteryHud()
-    {
-        if (_inventorySlotFlashlightBatteryFillImages == null
-            || _inventorySlotFlashlightBatteryFillRects == null
-            || _inventorySlotFlashlightBatteryBarRoots == null
-            || _inventorySlotFlashlightBatteryFillImages.Length < 3
-            || _inventorySlotFlashlightBatteryFillRects.Length < 3)
-            return;
-        for (int i = 0; i < 3; i++)
-        {
-            bool show = false;
-            float t = 0f;
-            if (IsUsingNetworkedInventory)
-            {
-                ulong id = _networkPlayerInventory.GetSlotItemId(i);
-                if (id != 0UL
-                    && GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g)
-                    && g is FlashlightItem)
-                {
-                    show = true;
-                    t = _networkPlayerInventory.GetSlotFlashlightBatteryNormalizedForHud(i);
-                }
-            }
-            else if (_localInventorySlots[i] is FlashlightItem fl)
-            {
-                show = true;
-                t = fl.BatteryFractionNormalized;
-            }
-            GameObject barRoot = _inventorySlotFlashlightBatteryBarRoots[i];
-            if (barRoot != null)
-                barRoot.SetActive(show);
-            if (show
-                && i < _inventorySlotFlashlightBatteryFillImages.Length
-                && i < _inventorySlotFlashlightBatteryFillRects.Length
-                && _inventorySlotFlashlightBatteryFillImages[i] != null
-                && _inventorySlotFlashlightBatteryFillRects[i] != null)
-            {
-                float normalized = Mathf.Clamp01(t);
-                RectTransform fillRect = _inventorySlotFlashlightBatteryFillRects[i];
-                fillRect.anchorMax = new Vector2(normalized, 1f);
-            }
-        }
-    }
 }
