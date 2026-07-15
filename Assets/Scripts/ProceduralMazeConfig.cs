@@ -85,6 +85,10 @@ public class ProceduralMazeConfig : ScriptableObject
     [SerializeField] int interiorRoomCount;
     [Tooltip("Minimum Chebyshev grid distance between two interior rooms (e.g. 3 means at least a 2-cell gap on diagonals). Use 1 to only avoid same-cell overlap.")]
     [SerializeField] int interiorRoomMinChebyshevSeparation = 3;
+    [Tooltip("Optional per-prefab placement caps parallel to Interior Room Prefabs indices; 0 or missing entries = no cap. "
+        + "Capped prefabs place first, in list order, until each cap is met (e.g. caps [1, 2] with Interior Room Count 3 "
+        + "places exactly one of prefab 0, then up to two of prefab 1).")]
+    [SerializeField] int[] interiorRoomPrefabCounts;
 
     [Header("Start Cell")]
     [Tooltip("When set, the maze start cell always uses this prefab. For a one-opening (end-cap) piece, enable Force Start Cell Single Opening too, or use open faces that cover every start pattern (e.g. a cross).")]
@@ -174,6 +178,15 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Prefab spawned at each child transform named ChestAnchor on generated maze pieces. Use a NetworkObject prefab for multiplayer. Leave empty to skip.")]
     [SerializeField] GameObject mazeChestPrefab;
 
+    [Header("Maze Item Pickups (Anchor-Based)")]
+    [Tooltip("Loot pool for child transforms whose name starts with ItemSpawn on generated maze pieces. Each marker rolls "
+        + "Maze Item Spawn Chance, then spawns one random prefab from this list (maze-seeded). Spawned locally on every peer "
+        + "with a stable item id, chest-loot style — use plain GrabbableInventoryItem pickup prefabs, not NetworkObjects.")]
+    [SerializeField] GameObject[] mazeItemSpawnPrefabs = EmptyPrefabs;
+    [Tooltip("Per ItemSpawn marker, probability [0,1] that an item spawns this build.")]
+    [Range(0f, 1f)]
+    [SerializeField] float mazeItemSpawnChance = 1f;
+
     [Header("Teleport Orbs (Anchor-Based)")]
     [Tooltip("Prefab spawned at each child transform named TeleportOrbAnchor on generated maze pieces. Use the TeleportOrb NetworkObject prefab. Leave empty to skip.")]
     [SerializeField] GameObject mazeTeleportOrbPrefab;
@@ -235,6 +248,15 @@ public class ProceduralMazeConfig : ScriptableObject
         Mathf.Max(1, interiorRoomGridFootprint.y));
     public int InteriorRoomCount => Mathf.Max(0, interiorRoomCount);
     public int InteriorRoomMinChebyshevSeparation => Mathf.Max(1, interiorRoomMinChebyshevSeparation);
+    /// <summary>Placement cap for <see cref="InteriorRoomPrefabs"/> index <paramref name="poolIndex"/> this build; 0 means uncapped.</summary>
+    public int ResolveInteriorRoomPrefabCap(int poolIndex)
+    {
+        int[] caps = interiorRoomPrefabCounts;
+        if (caps == null || poolIndex < 0 || poolIndex >= caps.Length)
+            return 0;
+
+        return Mathf.Max(0, caps[poolIndex]);
+    }
     public GameObject ForcedStartPiecePrefab => forcedStartPiecePrefab;
     public bool ForceStartCellSingleOpening => forceStartCellSingleOpening;
     public GameObject CrossPrefab => crossPrefab;
@@ -296,6 +318,9 @@ public class ProceduralMazeConfig : ScriptableObject
     public bool MazeTrapExcludeExitCell => mazeTrapExcludeExitCell;
     public float MazeTrapMinSeparation => mazeTrapMinSeparation;
     public GameObject MazeChestPrefab => mazeChestPrefab;
+    public GameObject[] MazeItemSpawnPrefabs => mazeItemSpawnPrefabs ?? EmptyPrefabs;
+    /// <summary>Per <c>ItemSpawn</c> marker, probability [0,1] of spawning a pickup for this maze build.</summary>
+    public float MazeItemSpawnChance => Mathf.Clamp01(mazeItemSpawnChance);
     public GameObject MazeTeleportOrbPrefab => mazeTeleportOrbPrefab;
     public int MazeTeleportOrbCount => Mathf.Max(0, mazeTeleportOrbCount);
     /// <summary>Per <c>PosterSpawn</c> anchor, probability [0,1] of spawning a poster for this maze build.</summary>

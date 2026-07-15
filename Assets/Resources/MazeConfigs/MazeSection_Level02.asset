@@ -56,9 +56,11 @@ MonoBehaviour:
   allowAdjacentDuplicatePieces: 0
   interiorRoomPrefabs:
   - {fileID: 1340219762442870727, guid: 20063e6f5dbeace4a8ad912a56b31cbe, type: 3}
+  - {fileID: 7579941229836724268, guid: 35290c026d6881e4882d38745a0cd172, type: 3}
   interiorRoomGridFootprint: {x: 4, y: 4}
-  interiorRoomCount: 1
+  interiorRoomCount: 3
   interiorRoomMinChebyshevSeparation: 3
+  interiorRoomPrefabCounts: 0100000002000000
   forcedStartPiecePrefab: {fileID: 7963473589751181286, guid: 9f872c5cdc736dd488e862a990c5f8e1, type: 3}
   forceStartCellSingleOpening: 1
   crossPrefab: {fileID: 7531800331161147241, guid: 0a312456b008b2946858f7b16908e798, type: 3}
@@ -108,6 +110,12 @@ MonoBehaviour:
   mazeTrapExcludeExitCell: 1
   mazeTrapMinSeparation: 1
   mazeChestPrefab: {fileID: 7786454923030501191, guid: e621573098a2cb04a8ec9019443befb6, type: 3}
+  mazeItemSpawnPrefabs:
+  - {fileID: 6200471747207828773, guid: 88fbd24a3c94b7449bae2b07282b95c4, type: 3}
+  - {fileID: 2164958555813648190, guid: ee9733773cfe6a440922b56442c1d0d9, type: 3}
+  - {fileID: 5194082878846942669, guid: 8443967f44b8a34489862946f10b2b29, type: 3}
+  - {fileID: 7328506109978203443, guid: 4f1b1ddb8a2d50848aa35c5643acaa6b, type: 3}
+  mazeItemSpawnChance: 1
   mazeTeleportOrbPrefab: {fileID: 6503207978257455889, guid: 57af5772f43301f44b2190988f5251bf, type: 3}
   mazeTeleportOrbCount: 3
   mazePosterSpawnChance: 0.25

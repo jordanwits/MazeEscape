@@ -112,6 +112,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     const string ChestMountPointName = "ChestMount";
     const string TeleportOrbAnchorName = "TeleportOrbAnchor";
     const string PosterSpawnName = "PosterSpawn";
+    const string ItemSpawnNamePrefix = "ItemSpawn";
     const string LightSpawnNamePrefix = "LightSpawn";
 
     static readonly DirectionStep[] Steps =
@@ -602,6 +603,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             MultiplayerSpawnRegistry.Instance.ResetInitialJoinRoundRobin();
         }
         TryRebuildRuntimeNavMesh(root);
+        TrySpawnMazeItemPickups(root.transform, builtCellRoots, seed);
         TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize, interiorPlan, mazeTrapCells, mazeTrapRoots);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);
 
@@ -1381,6 +1383,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         ShuffleList(candidateAnchors, new System.Random(MixSeed(seed, unchecked((int)0x4C7552D3))));
 
         List<(Vector2Int min, Vector2Int size)> placedRects = new();
+        int[] placedPerPrefab = new int[pool.Length];
+        bool[] prefabFailedEverywhere = new bool[pool.Length];
 
         // Iteratively pick the anchor with the fewest orphaned cells from the remaining
         // candidates. Re-scoring after each placement is necessary because placing a room
@@ -1388,8 +1392,14 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         // anchor would orphan cells.
         while (anchors.Count < want)
         {
+            List<int> eligiblePrefabIndices = SelectEligibleInteriorRoomPrefabIndices(
+                pool, placedPerPrefab, prefabFailedEverywhere, out bool eligibleIsSingleCapped);
+            if (eligiblePrefabIndices.Count == 0)
+                break;
+
             Vector2Int? bestAnchor = null;
             InteriorRoomPlacementEntry bestEntry = default;
+            int bestPoolIndex = -1;
             Vector2Int bestFootprint = default;
             Dictionary<Vector2Int, MazeFaceMask> bestGridChanges = null;
             int bestOrphans = int.MaxValue;
@@ -1419,12 +1429,14 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                         exit,
                         anchor,
                         pool,
+                        eligiblePrefabIndices,
                         configFootprint,
                         seed,
                         width,
                         height,
                         cellsReservedByForcedStart,
                         out InteriorRoomPlacementEntry entry,
+                        out int entryPoolIndex,
                         out Vector2Int footprint,
                         out Dictionary<Vector2Int, MazeFaceMask> gridChanges,
                         out int orphans,
@@ -1450,6 +1462,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                     bestOrphans = orphans;
                     bestAnchor = anchor;
                     bestEntry = entry;
+                    bestPoolIndex = entryPoolIndex;
                     bestFootprint = footprint;
                     bestGridChanges = gridChanges;
 
@@ -1459,7 +1472,22 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             }
 
             if (bestAnchor == null)
+            {
+                // A capped prefab that fits nowhere must not dead-lock the rest of the pool
+                // (e.g. the big main room failing on a cramped seed still lets small rooms try).
+                if (eligibleIsSingleCapped)
+                {
+                    int failedIndex = eligiblePrefabIndices[0];
+                    LogMazeWarningOnce(
+                        $"interior-room-capped-unplaceable:{failedIndex}",
+                        $"[Maze] Capped interior room prefab \"{pool[failedIndex].name}\" could not be placed at any candidate anchor this build; continuing with the rest of the pool.",
+                        this);
+                    prefabFailedEverywhere[failedIndex] = true;
+                    continue;
+                }
+
                 break;
+            }
 
             Vector2Int chosen = bestAnchor.Value;
             foreach (KeyValuePair<Vector2Int, MazeFaceMask> kvp in bestGridChanges)
@@ -1478,6 +1506,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
             anchors[chosen] = bestEntry;
             placedRects.Add((chosen, bestFootprint));
+            if (bestPoolIndex >= 0)
+                placedPerPrefab[bestPoolIndex]++;
         }
 
         if (anchors.Count < want)
@@ -1486,7 +1516,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 $"interior-room-undershoot:{want}:{anchors.Count}",
                 $"[Maze] Requested {want} interior room(s) but only placed {anchors.Count}. " +
                 $"Tried {candidateAnchors.Count} candidate anchor(s). " +
-                "Consider adding more doorway markers, lowering Interior Room Count, or lowering Min Chebyshev Separation.",
+                "Consider adding more doorway markers, lowering Interior Room Count, lowering Min Chebyshev Separation, or raising Interior Room Prefab Counts caps.",
                 this);
         }
 
@@ -1497,6 +1527,50 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         return new InteriorRoomBuildPlan(anchors, skipCells);
+    }
+
+    /// <summary>
+    /// Pool indices allowed for the next interior room placement. Prefabs with a positive
+    /// <see cref="ProceduralMazeConfig.ResolveInteriorRoomPrefabCap"/> place first, one pool slot at a
+    /// time in list order, until each cap is met; afterwards every uncapped prefab competes as before.
+    /// <paramref name="singleCapped"/> reports that mode so a nowhere-fitting capped prefab can be
+    /// skipped instead of ending placement for the whole pool.
+    /// </summary>
+    List<int> SelectEligibleInteriorRoomPrefabIndices(
+        GameObject[] pool,
+        int[] placedPerPrefab,
+        bool[] prefabFailedEverywhere,
+        out bool singleCapped)
+    {
+        singleCapped = false;
+        List<int> eligible = new();
+        for (int i = 0; i < pool.Length; i++)
+        {
+            if (pool[i] == null || prefabFailedEverywhere[i])
+                continue;
+
+            int cap = _config.ResolveInteriorRoomPrefabCap(i);
+            if (cap <= 0)
+                continue;
+
+            if (placedPerPrefab[i] < cap)
+            {
+                eligible.Add(i);
+                singleCapped = true;
+                return eligible;
+            }
+        }
+
+        for (int i = 0; i < pool.Length; i++)
+        {
+            if (pool[i] == null || prefabFailedEverywhere[i])
+                continue;
+
+            if (_config.ResolveInteriorRoomPrefabCap(i) <= 0)
+                eligible.Add(i);
+        }
+
+        return eligible;
     }
 
     bool HasAnchorWithFittingPrefab(
@@ -1572,10 +1646,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     }
 
     /// <summary>
-    /// Picks the first prefab/rotation that can be stamped at <paramref name="anchor"/> while
+    /// Picks the first eligible prefab/rotation that can be stamped at <paramref name="anchor"/> while
     /// keeping every visited cell reachable from <paramref name="start"/>. Returns the proposed
     /// grid changes in <paramref name="gridChanges"/> so the caller can apply them after the
-    /// neighbor-separation check passes.
+    /// neighbor-separation check passes. <paramref name="eligiblePoolIndices"/> restricts which pool
+    /// slots may be used (per-prefab cap budgets); <paramref name="poolIndexUsed"/> reports the winner.
     /// </summary>
     bool TryStampInteriorRoomAtAnchor(
         MazeCell[,] grid,
@@ -1583,32 +1658,33 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         Vector2Int exit,
         Vector2Int anchor,
         GameObject[] pool,
+        IReadOnlyList<int> eligiblePoolIndices,
         Vector2Int configFootprint,
         int seed,
         int width,
         int height,
         HashSet<Vector2Int> cellsReservedByForcedStart,
         out InteriorRoomPlacementEntry entry,
+        out int poolIndexUsed,
         out Vector2Int footprintUsed,
         out Dictionary<Vector2Int, MazeFaceMask> gridChanges,
         out int orphanedCells,
         out string rejectionReason)
     {
         entry = default;
+        poolIndexUsed = -1;
         footprintUsed = default;
         gridChanges = null;
         orphanedCells = int.MaxValue;
         rejectionReason = "no interior room prefabs were considered";
 
-        List<int> order = new(pool.Length);
-        for (int i = 0; i < pool.Length; i++)
-            order.Add(i);
-
+        List<int> order = new(eligiblePoolIndices);
         ShuffleList(order, new System.Random(MixSeed(seed, MixSeed(anchor.x, anchor.y))));
 
         for (int o = 0; o < order.Count; o++)
         {
-            GameObject prefab = pool[order[o]];
+            int poolIndex = order[o];
+            GameObject prefab = pool[poolIndex];
             if (prefab == null)
                 continue;
 
@@ -1647,6 +1723,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                     out orphanedCells,
                     out string prefabReason))
             {
+                poolIndexUsed = poolIndex;
                 footprintUsed = fp;
                 rejectionReason = null;
                 return true;
@@ -3731,6 +3808,152 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 continue;
 
             if (string.Equals(candidate.name, TeleportOrbAnchorName, StringComparison.Ordinal))
+                into.Add(candidate);
+        }
+    }
+
+    /// <summary>
+    /// Spawns pickup items at child transforms whose name starts with <see cref="ItemSpawnNamePrefix"/> on
+    /// generated maze pieces. Unlike chests/orbs these are NOT server-spawned NetworkObjects: every peer
+    /// (and offline play) builds the same pickups locally from the maze seed, chest-loot style, and stamps
+    /// a stable item id so pickup/consumption replicates through the usual item stores.
+    /// </summary>
+    void TrySpawnMazeItemPickups(Transform mazeRoot, IReadOnlyDictionary<Vector2Int, Transform> cellRoots, int mazeSeed)
+    {
+        GameObject[] itemPrefabs = _config.MazeItemSpawnPrefabs;
+        int nonNullItems = 0;
+        for (int i = 0; i < itemPrefabs.Length; i++)
+        {
+            if (itemPrefabs[i] != null)
+                nonNullItems++;
+        }
+
+        float chance = _config.MazeItemSpawnChance;
+        if (nonNullItems == 0 || chance <= 0f)
+            return;
+
+        Transform itemsRoot = CreateChild(mazeRoot, "GeneratedItemPickups");
+        List<Transform> cellItemSpawns = new(4);
+
+        foreach (KeyValuePair<Vector2Int, Transform> pair in cellRoots)
+        {
+            Vector2Int cell = pair.Key;
+            Transform cellRoot = pair.Value;
+            if (cellRoot == null)
+                continue;
+
+            cellItemSpawns.Clear();
+            CollectItemSpawnMarkers(cellRoot, cellItemSpawns);
+
+            for (int a = 0; a < cellItemSpawns.Count; a++)
+            {
+                Transform marker = cellItemSpawns[a];
+                if (marker == null)
+                    continue;
+
+                // Per-marker seeds derive from maze seed + cell + marker index (not iteration order),
+                // so every peer rolls identical loot regardless of dictionary enumeration order.
+                int gateSeed = MixSeed(
+                    mazeSeed,
+                    MixSeed(cell.x, MixSeed(cell.y, MixSeed(a, unchecked((int)0x17E3A0B5)))));
+                if (!RollUnitInterval(gateSeed, chance))
+                    continue;
+
+                int pickSeed = MixSeed(gateSeed, unchecked((int)0x5EEDBA11));
+                int prefabIndex = PickNonNullPrefabIndex(itemPrefabs, nonNullItems, pickSeed);
+                if (prefabIndex < 0)
+                    continue;
+
+                SpawnMazeItemPickup(itemPrefabs[prefabIndex], marker, itemsRoot, mazeSeed, cell, a, prefabIndex);
+            }
+        }
+    }
+
+    static int PickNonNullPrefabIndex(GameObject[] prefabs, int nonNullCount, int pickSeed)
+    {
+        if (prefabs == null || prefabs.Length == 0 || nonNullCount <= 0)
+            return -1;
+
+        int pick = (int)((uint)MixSeed(pickSeed, unchecked((int)0x9E3779B9)) % (uint)nonNullCount);
+        for (int i = 0; i < prefabs.Length; i++)
+        {
+            if (prefabs[i] == null)
+                continue;
+
+            if (pick == 0)
+                return i;
+
+            pick--;
+        }
+
+        return -1;
+    }
+
+    void SpawnMazeItemPickup(
+        GameObject prefab,
+        Transform marker,
+        Transform itemsRoot,
+        int mazeSeed,
+        Vector2Int cell,
+        int markerIndex,
+        int prefabIndex)
+    {
+        GameObject instance = Instantiate(prefab, marker.position, marker.rotation, itemsRoot);
+        if (instance.TryGetComponent(out GrabbableInventoryItem grabbable))
+            grabbable.AssignNetworkItemId(ComputeMazeItemPickupId(mazeSeed, cell, markerIndex, prefabIndex));
+
+        if (instance.TryGetComponent(out GlowstickItem glowstick))
+            glowstick.SetStackCount(GlowstickItem.MaxStack);
+
+        ApplyMazeItemPickupAtRest(instance);
+    }
+
+    static ulong ComputeMazeItemPickupId(int mazeSeed, Vector2Int cell, int markerIndex, int prefabIndex)
+    {
+        return ComputeStableItemHash($"maze-item:{mazeSeed}:{cell.x}:{cell.y}:{markerIndex}:{prefabIndex}");
+    }
+
+    static ulong ComputeStableItemHash(string key)
+    {
+        const ulong fnvOffset = 14695981039346656037UL;
+        const ulong fnvPrime = 1099511628211UL;
+        ulong hash = fnvOffset;
+        for (int i = 0; i < key.Length; i++)
+        {
+            hash ^= key[i];
+            hash *= fnvPrime;
+        }
+
+        return hash;
+    }
+
+    /// <summary>Maze pickups wait in place until grabbed (kinematic, no gravity), matching chest loot; pickup/drop restores physics.</summary>
+    static void ApplyMazeItemPickupAtRest(GameObject root)
+    {
+        Rigidbody[] bodies = root.GetComponentsInChildren<Rigidbody>(true);
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            Rigidbody rb = bodies[i];
+            if (rb == null)
+                continue;
+
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+            rb.useGravity = false;
+            rb.isKinematic = true;
+        }
+    }
+
+    static void CollectItemSpawnMarkers(Transform root, List<Transform> into)
+    {
+        Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            Transform candidate = transforms[i];
+            if (candidate == null)
+                continue;
+
+            if (candidate.name.StartsWith(ItemSpawnNamePrefix, StringComparison.Ordinal))
                 into.Add(candidate);
         }
     }
