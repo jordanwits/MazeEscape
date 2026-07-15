@@ -829,6 +829,7 @@ public partial class PlayerController
         SelectAfterDropLocal();
         ActivateEnergyDrinkBoost(e.BoostDurationSeconds, e.SpeedMultiplier);
         Object.Destroy(e.gameObject);
+        PlayEnergyDrinkUseSfx();
         RefreshLocalInventoryView();
     }
 
@@ -846,6 +847,14 @@ public partial class PlayerController
             return;
 
         footstepAudioSource.PlayOneShot(bandageUseClip, Mathf.Max(0f, bandageUseVolume));
+    }
+
+    public void PlayEnergyDrinkUseSfx()
+    {
+        if (energyDrinkUseClip == null || footstepAudioSource == null)
+            return;
+
+        footstepAudioSource.PlayOneShot(energyDrinkUseClip, Mathf.Max(0f, energyDrinkUseVolume));
     }
 
     void TryUnlockHingeDoorWithKeyLocal(HingeInteractDoor door)

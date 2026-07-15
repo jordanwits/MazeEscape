@@ -1,5 +1,8 @@
 using Unity.Netcode;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 /// <summary>
 /// Physical ticket roll spawned by a carnival minigame on round end. Carries a ticket value;
@@ -11,12 +14,62 @@ using UnityEngine;
 [RequireComponent(typeof(NetworkObject))]
 public sealed class CarnivalTicketBundle : NetworkBehaviour
 {
+    const string DefaultPrintClipPath = "Assets/Audio/SFX/Carnival/TicketPrint.wav";
+
+    [Header("Print SFX")]
+    [Tooltip("One-shot played on every peer when the bundle spawns (the ticket-dispenser print sound).")]
+    [SerializeField] AudioClip printClip;
+    [SerializeField, Range(0f, 1f)] float printVolume = 0.75f;
+    [SerializeField, Min(0.5f)] float printSpatialMinDistance = 1.5f;
+    [SerializeField, Min(1f)] float printSpatialMaxDistance = 22f;
+
     readonly NetworkVariable<int> _value = new NetworkVariable<int>(
         0,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
+    AudioSource _printAudio;
+
     public int Value => _value.Value;
+
+#if UNITY_EDITOR
+    void OnValidate()
+    {
+        if (printClip == null)
+            printClip = AssetDatabase.LoadAssetAtPath<AudioClip>(DefaultPrintClipPath);
+    }
+#endif
+
+    public override void OnNetworkSpawn()
+    {
+        base.OnNetworkSpawn();
+        // The spawn itself replicates to every connected peer, so this fires once per machine near the
+        // booth — no extra RPC needed. It's the moment the minigame "prints" the ticket roll.
+        PlayPrintSfx();
+    }
+
+    void PlayPrintSfx()
+    {
+        if (printClip == null)
+            return;
+
+        if (_printAudio == null)
+        {
+            _printAudio = GetComponent<AudioSource>();
+            if (_printAudio == null)
+                _printAudio = gameObject.AddComponent<AudioSource>();
+        }
+
+        _printAudio.playOnAwake = false;
+        _printAudio.loop = false;
+        _printAudio.spatialBlend = 1f;
+        _printAudio.dopplerLevel = 0f;
+        _printAudio.rolloffMode = AudioRolloffMode.Linear;
+        _printAudio.minDistance = printSpatialMinDistance;
+        _printAudio.maxDistance = printSpatialMaxDistance;
+        GameAudioManager.RouteSfxSource(_printAudio);
+        _printAudio.PlayOneShot(printClip, Mathf.Clamp01(printVolume));
+    }
 
     /// <summary>Server-only. Call after <see cref="NetworkObject.Spawn"/> so the change replicates to all connected clients.</summary>
     public void ServerSetValue(int v)

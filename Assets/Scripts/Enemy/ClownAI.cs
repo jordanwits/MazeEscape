@@ -263,6 +263,10 @@ public class ClownAI : MonoBehaviour
     PlayerHealth _attackTargetHealth;
     PlayerRagdollController _attackTargetRagdoll;
     NetworkPlayerRagdoll _attackTargetNetRagdoll;
+    // Set when the current swing targets a wind-up monkey (a knock-over, not a player ragdoll).
+    WindupMonkeyAI _attackTargetMonkey;
+    // The wind-up monkey whose clap last lured the Clown; smashed on arrival when no player is around to chase.
+    WindupMonkeyAI _lureMonkey;
     float _suppressAttackAndChaseUntil;
 
     const string EnemyLayerName = "Enemy";
@@ -684,8 +688,18 @@ public class ClownAI : MonoBehaviour
         {
             if (_hasInvestigationPoint)
             {
-                EnterInvestigating();
-                desiredHorizontal = UpdateInvestigating();
+                // Lured to a wind-up monkey with no player to chase: once in hammer reach, smash the monkey
+                // (knocking it over/silencing it) instead of just lingering around it.
+                if (ShouldSmashMonkey())
+                {
+                    EnterAttackingMonkey(_lureMonkey);
+                    desiredHorizontal = Vector3.zero;
+                }
+                else
+                {
+                    EnterInvestigating();
+                    desiredHorizontal = UpdateInvestigating();
+                }
             }
             else
             {
@@ -1803,6 +1817,7 @@ public class ClownAI : MonoBehaviour
         _state = ClownState.Attacking;
         _hammerHitDone = false;
         _attackStartedTime = Time.time;
+        _attackTargetMonkey = null;
         _attackTargetHealth = _targetHealth;
         _attackTargetRagdoll = _targetHealth != null ? _targetHealth.GetComponent<PlayerRagdollController>() : null;
         _attackTargetNetRagdoll = _targetHealth != null ? _targetHealth.GetComponent<NetworkPlayerRagdoll>() : null;
@@ -1834,6 +1849,59 @@ public class ClownAI : MonoBehaviour
         // NetworkAnimator replicates parameter state but NOT one-shot triggers, so a client that joins
         // mid-swing would see an idle Clown. Record the swing animation so the late-join path in
         // NetworkClownAvatar can Play() the right state at the right normalized time.
+        if (_networkObject != null && _networkObject.IsSpawned && _networkClownAvatar != null)
+            _networkClownAvatar.ServerMarkAttackAnimationStarted(_swingStateHash, swingClipDurationFallback);
+    }
+
+    /// <summary>
+    /// True when the Clown has been lured to a wind-up monkey, has no player to chase, and the (still-standing)
+    /// monkey is within hammer reach — so it should club the toy over instead of merely lingering by it. Uses the
+    /// monkey's live position (not the possibly-stale investigation point), so it only fires when genuinely next
+    /// to the toy. The no-player condition is guaranteed by the call site (the target-less branch of Update).
+    /// </summary>
+    bool ShouldSmashMonkey()
+    {
+        if (Time.time < _suppressAttackAndChaseUntil)
+            return false;
+        if (_lureMonkey == null || _lureMonkey.IsKnockedOver)
+            return false;
+
+        Vector3 to = _lureMonkey.transform.position - transform.position;
+        if (Mathf.Abs(to.y) > Mathf.Max(0.1f, maxAttackVerticalDelta))
+            return false;
+
+        Vector3 flat = new Vector3(to.x, 0f, to.z);
+        float reach = (attackRange + Mathf.Max(0f, attackRangePadding)) * Mathf.Max(1f, transform.lossyScale.x);
+        return flat.magnitude <= reach;
+    }
+
+    /// <summary>
+    /// Begin a hammer swing aimed at a wind-up monkey. Reuses the same Hammer Swing clip/timing as the player
+    /// attack; only the impact differs (<see cref="ServerHammerHit"/> knocks the monkey over rather than
+    /// ragdolling a player). No player target/ragdoll fields are set.
+    /// </summary>
+    void EnterAttackingMonkey(WindupMonkeyAI monkey)
+    {
+        _state = ClownState.Attacking;
+        _hammerHitDone = false;
+        _attackStartedTime = Time.time;
+        _attackTargetMonkey = monkey;
+        _attackTargetHealth = null;
+        _attackTargetRagdoll = null;
+        _attackTargetNetRagdoll = null;
+
+        // Triggers must route through the NetworkAnimator to replicate; fall back to the local animator offline.
+        if (_hasSwingTriggerParameter && animator != null)
+        {
+            bool fired = _networkObject != null
+                && _networkObject.IsSpawned
+                && _networkClownAvatar != null
+                && _networkClownAvatar.TryServerSetAnimatorTrigger(swingTriggerParameter);
+            if (!fired)
+                animator.SetTrigger(swingTriggerParameter);
+        }
+
+        // Record the swing so a client joining mid-swing can Play() the right state at the right time.
         if (_networkObject != null && _networkObject.IsSpawned && _networkClownAvatar != null)
             _networkClownAvatar.ServerMarkAttackAnimationStarted(_swingStateHash, swingClipDurationFallback);
     }
@@ -1883,11 +1951,22 @@ public class ClownAI : MonoBehaviour
         // giant's hammer connect with someone who gave a little ground. Gravity/grounding still run via
         // ApplyMovement(zero) so the capsule stays on the floor (and the post-hit anchor below is then seamless,
         // since there is no lunge velocity left to kill).
-        bool targetValid = _target != null && _targetHealth != null && !_targetHealth.IsDead
-            && !ShouldIgnorePlayer(_targetHealth);
-        if (targetValid)
+        Vector3 facePoint = Vector3.zero;
+        bool hasFacePoint = false;
+        if (_attackTargetMonkey != null && !_attackTargetMonkey.IsKnockedOver)
         {
-            Vector3 face = _target.position - transform.position;
+            facePoint = _attackTargetMonkey.transform.position;
+            hasFacePoint = true;
+        }
+        else if (_target != null && _targetHealth != null && !_targetHealth.IsDead
+            && !ShouldIgnorePlayer(_targetHealth))
+        {
+            facePoint = _target.position;
+            hasFacePoint = true;
+        }
+        if (hasFacePoint)
+        {
+            Vector3 face = facePoint - transform.position;
             face.y = 0f;
             if (face.sqrMagnitude > 1e-4f)
                 transform.rotation = Quaternion.RotateTowards(
@@ -1951,6 +2030,13 @@ public class ClownAI : MonoBehaviour
         // through the non-convex maze floor.
         _attackFrozenPosition = transform.position;
 
+        // Wind-up monkey smash: knock the toy over (silencing the Clown lure) instead of ragdolling a player.
+        if (_attackTargetMonkey != null)
+        {
+            ServerHammerHitMonkey();
+            return;
+        }
+
         if (_attackTargetHealth == null || _attackTargetHealth.IsDead)
             return;
 
@@ -2010,6 +2096,30 @@ public class ClownAI : MonoBehaviour
             }
             _attackTargetRagdoll.ActivateRagdoll(force, hitPoint, knockbackForceMode, allowAutoRecovery: survived);
         }
+    }
+
+    /// <summary>
+    /// The hammer connects with a wind-up monkey: knock it over — the same effect a crouched player punch has
+    /// (freeze/silence + physics topple). One-shot; whiffs cleanly if the toy shuffled out of reach during the
+    /// wind-up. The knock-over direction points from the Clown to the monkey (matching the player-punch convention).
+    /// </summary>
+    void ServerHammerHitMonkey()
+    {
+        WindupMonkeyAI monkey = _attackTargetMonkey;
+        if (monkey == null || monkey.IsKnockedOver)
+            return;
+
+        // Only connect if the monkey is still within the hammer's reach at the impact frame (it keeps shuffling
+        // forward). Mirrors the player-hit reach re-check.
+        float reach = (attackRange + Mathf.Max(0f, attackRangePadding))
+            * Mathf.Max(1f, transform.lossyScale.x) * Mathf.Max(1f, hammerHitReachMultiplier);
+        Vector3 flatTo = monkey.transform.position - transform.position;
+        flatTo.y = 0f;
+        if (flatTo.magnitude > reach)
+            return; // monkey stepped out of reach
+
+        Vector3 knockDir = flatTo.sqrMagnitude > 1e-4f ? flatTo.normalized : transform.forward;
+        monkey.ServerKnockOver(knockDir);
     }
 
     /// <summary>
@@ -2127,6 +2237,10 @@ public class ClownAI : MonoBehaviour
         _attackTargetHealth = null;
         _attackTargetRagdoll = null;
         _attackTargetNetRagdoll = null;
+        _attackTargetMonkey = null;
+        // If the swing toppled the lured monkey, drop the reference so we don't try to re-smash a dead toy.
+        if (_lureMonkey != null && _lureMonkey.IsKnockedOver)
+            _lureMonkey = null;
 
         // Keep chasing the same live target; only drop it if it died / became unreachable so we don't loiter
         // on a stale target (the normal chase flow re-acquires or falls back to patrol next frame).
@@ -2161,10 +2275,13 @@ public class ClownAI : MonoBehaviour
     /// how far away he is. Won't pull him off a player he's actively chasing/attacking. If he's already lingering
     /// at that spot, just refreshes the linger so he keeps hanging around the monkey.
     /// </summary>
-    public void LureToPosition(Vector3 worldPoint)
+    public void LureToPosition(Vector3 worldPoint, WindupMonkeyAI monkey = null)
     {
         if (_state == ClownState.Chase || _state == ClownState.Attacking)
             return;
+
+        // Track the monkey behind this lure so the Clown can club it over once it arrives (ShouldSmashMonkey).
+        _lureMonkey = monkey;
 
         if (_state == ClownState.Investigating && _isLingerAtInvestigationPoint
             && (worldPoint - _investigationPoint).sqrMagnitude

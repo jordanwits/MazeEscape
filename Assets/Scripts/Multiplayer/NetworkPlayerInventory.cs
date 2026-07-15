@@ -1082,6 +1082,9 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             drink.SpeedMultiplier,
             BuildOwnerClientRpcParams());
 
+        // The gulp is diegetic (positional), so play it on every observer like the bandage — not owner-only.
+        PlayEnergyDrinkUseObserversClientRpc();
+
         SetSlotItemId(sel, 0UL);
         SetSlotItemTypeId(sel, GrabbableInventoryItem.TypeIdNone);
         SetSlotStackCount(sel, 0);
@@ -1109,6 +1112,12 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
     void StartEnergyDrinkBoostOwnerClientRpc(float durationSeconds, float speedMultiplier, ClientRpcParams clientRpcParams = default)
     {
         playerController?.ActivateEnergyDrinkBoost(durationSeconds, speedMultiplier);
+    }
+
+    [ClientRpc]
+    void PlayEnergyDrinkUseObserversClientRpc()
+    {
+        playerController?.PlayEnergyDrinkUseSfx();
     }
 
     public bool ServerTryConsumeKeyItem()

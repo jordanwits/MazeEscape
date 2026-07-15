@@ -100,6 +100,8 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField, Range(0f, 1f)] float flashlightClickVolume = 0.65f;
     [SerializeField] AudioClip bandageUseClip;
     [SerializeField, Range(0f, 1f)] float bandageUseVolume = 0.75f;
+    [SerializeField] AudioClip energyDrinkUseClip;
+    [SerializeField, Range(0f, 1f)] float energyDrinkUseVolume = 0.8f;
 
     [Header("Stamina")]
     [SerializeField] float maxStamina = 100f;
@@ -1315,6 +1317,9 @@ public partial class PlayerController : MonoBehaviour
 
         if (bandageUseClip == null)
             bandageUseClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Bandage.mp3");
+
+        if (energyDrinkUseClip == null)
+            energyDrinkUseClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/General/Gulp.mp3");
 
         if (meleeSwooshClip == null)
             meleeSwooshClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Swoosh.wav");

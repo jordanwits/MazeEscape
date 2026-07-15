@@ -326,7 +326,7 @@ public class WindupMonkeyAI : NetworkBehaviour
             {
                 ClownAI clown = clowns[i];
                 if (clown != null)
-                    clown.LureToPosition(transform.position);
+                    clown.LureToPosition(transform.position, this);
             }
         }
     }

@@ -130,8 +130,12 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c0a1c0a1c0a1c0a1c0a1c0a1c0a1c005, type: 3}
-  m_Name: 
+  m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::CarnivalTicketBundle
+  printClip: {fileID: 8300000, guid: 095c50d8a98f036489781782ceb76be1, type: 3}
+  printVolume: 0.75
+  printSpatialMinDistance: 1.5
+  printSpatialMaxDistance: 22
   ShowTopMostFoldoutHeaderGroup: 1
 --- !u!54 &3363545439274992652
 Rigidbody:
