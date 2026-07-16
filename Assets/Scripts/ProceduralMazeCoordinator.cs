@@ -1443,6 +1443,24 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                         out _))
                     continue;
 
+                // Reject candidates whose stamp would orphan an already-placed interior room's
+                // anchor: the connectivity pass prunes that cell to None, so the earlier room's
+                // piece silently drops at build time and leaves its footprint as an empty gap.
+                // (The main room is placed first, so it is the usual victim of a later small room.)
+                bool orphansPlacedRoom = false;
+                foreach (Vector2Int placedAnchor in anchors.Keys)
+                {
+                    if (gridChanges.TryGetValue(placedAnchor, out MazeFaceMask placedMask)
+                        && placedMask == MazeFaceMask.None)
+                    {
+                        orphansPlacedRoom = true;
+                        break;
+                    }
+                }
+
+                if (orphansPlacedRoom)
+                    continue;
+
                 bool tooClose = false;
                 for (int i = 0; i < placedRects.Count; i++)
                 {
@@ -1989,7 +2007,18 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             }
         }
 
-        return IsConnectivityPreservedAfterStamp(grid, proposed, start, exit, width, height, out orphanedCells);
+        if (!IsConnectivityPreservedAfterStamp(grid, proposed, start, exit, width, height, out orphanedCells))
+            return false;
+
+        // If stamping the room orphaned its own footprint, IsConnectivityPreservedAfterStamp pruned
+        // those cells to None. The cell-build loop skips any cell with Openings==None *before* it
+        // checks for an interior-room anchor, so the room piece would be silently dropped while its
+        // footprint stays reserved as an empty gap (and would be unreachable even if drawn). Reject
+        // such placements so the room lands at a reachable anchor instead of vanishing.
+        if (!proposed.TryGetValue(anchor, out MazeFaceMask anchorOpenings) || anchorOpenings == MazeFaceMask.None)
+            return false;
+
+        return true;
     }
 
     static bool TryAddAuthoredDoorway(
