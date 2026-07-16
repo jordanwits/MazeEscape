@@ -193,6 +193,12 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("How many teleport orbs to actually spawn this build. If there are more TeleportOrbAnchor markers in the maze than this, a random subset (seeded by the maze seed, so reproducible per seed) is chosen; if there are fewer anchors, one orb spawns at each available anchor. 0 = spawn no orbs even if anchors exist.")]
     [SerializeField, Min(0)] int mazeTeleportOrbCount = 3;
 
+    [Header("RatBot (Anchor-Based)")]
+    [Tooltip("Prefab spawned at child transforms named RatSpawn on generated maze pieces / interior rooms. Use the RatBot NetworkObject prefab. Leave empty to skip.")]
+    [SerializeField] GameObject mazeRatBotPrefab;
+    [Tooltip("How many RatBots to actually spawn this build. If there are more RatSpawn markers in the maze than this, a random subset (seeded by the maze seed, so reproducible per seed) is chosen; if there are fewer markers, one spawns at each. 0 = spawn none even if markers exist. Default 1 = a single rat somewhere in the maze.")]
+    [SerializeField, Min(0)] int mazeRatBotCount = 1;
+
     [Header("Maze Posters (Cosmetic)")]
     [Tooltip("Child transforms named PosterSpawn on maze pieces: each site rolls this chance (maze seed) then picks a random non-null prefab from the list. Use non-networked prefabs so host and clients match.")]
     [Range(0f, 1f)]
@@ -323,6 +329,8 @@ public class ProceduralMazeConfig : ScriptableObject
     public float MazeItemSpawnChance => Mathf.Clamp01(mazeItemSpawnChance);
     public GameObject MazeTeleportOrbPrefab => mazeTeleportOrbPrefab;
     public int MazeTeleportOrbCount => Mathf.Max(0, mazeTeleportOrbCount);
+    public GameObject MazeRatBotPrefab => mazeRatBotPrefab;
+    public int MazeRatBotCount => Mathf.Max(0, mazeRatBotCount);
     /// <summary>Per <c>PosterSpawn</c> anchor, probability [0,1] of spawning a poster for this maze build.</summary>
     public float MazePosterSpawnChance => Mathf.Clamp01(mazePosterSpawnChance);
     public GameObject[] MazePosterPrefabs => mazePosterPrefabs ?? EmptyPrefabs;

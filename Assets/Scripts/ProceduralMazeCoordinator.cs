@@ -111,6 +111,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     const string ChestAnchorName = "ChestAnchor";
     const string ChestMountPointName = "ChestMount";
     const string TeleportOrbAnchorName = "TeleportOrbAnchor";
+    const string RatBotSpawnMarkerName = "RatSpawn";
     const string PosterSpawnName = "PosterSpawn";
     const string ItemSpawnNamePrefix = "ItemSpawn";
     const string LightSpawnNamePrefix = "LightSpawn";
@@ -605,6 +606,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         TryRebuildRuntimeNavMesh(root);
         TrySpawnMazeItemPickups(root.transform, builtCellRoots, seed);
         TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize, interiorPlan, mazeTrapCells, mazeTrapRoots);
+        TrySpawnMazeRatBots(root.transform, seed);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);
 
         MarkLocalMazeCollidersReadyAndResyncClientPlayer();
@@ -3838,6 +3840,69 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
             if (string.Equals(candidate.name, TeleportOrbAnchorName, StringComparison.Ordinal))
                 into.Add(candidate);
+        }
+    }
+
+    /// <summary>
+    /// Spawns the configured RatBot prefab at up to <see cref="ProceduralMazeConfig.MazeRatBotCount"/> of the
+    /// child transforms named <see cref="RatBotSpawnMarkerName"/> anywhere under the maze root (maze pieces AND
+    /// interior rooms — unlike the per-cell orb collection, this is one whole-hierarchy scan). More markers than
+    /// the count → a maze-seeded random subset, reproducible per seed. Called after the runtime NavMesh bake so
+    /// the RatBots' NavMeshAgents land on a valid mesh. Server-spawned NetworkObjects are torn down each level by
+    /// <see cref="ServerDespawnAllLevelNetworkObjects"/>.
+    /// </summary>
+    void TrySpawnMazeRatBots(Transform mazeRoot, int mazeSeed)
+    {
+        GameObject prefab = _config.MazeRatBotPrefab;
+        int requestedCount = _config.MazeRatBotCount;
+        if (prefab == null || requestedCount <= 0)
+            return;
+
+        if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
+            return;
+
+        List<Transform> markers = new();
+        Transform[] transforms = mazeRoot.GetComponentsInChildren<Transform>(true);
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            Transform candidate = transforms[i];
+            if (candidate != null && string.Equals(candidate.name, RatBotSpawnMarkerName, StringComparison.Ordinal))
+                markers.Add(candidate);
+        }
+
+        if (markers.Count == 0)
+            return;
+
+        List<Transform> chosen = markers;
+        if (markers.Count > requestedCount)
+        {
+            System.Random rng = new(MixSeed(mazeSeed, unchecked((int)0x7A7B0757)));
+            // Partial Fisher-Yates: shuffle only the prefix we need (teleport-orb idiom).
+            for (int i = 0; i < requestedCount; i++)
+            {
+                int j = i + rng.Next(markers.Count - i);
+                (markers[i], markers[j]) = (markers[j], markers[i]);
+            }
+            chosen = markers.GetRange(0, requestedCount);
+        }
+
+        Transform ratBotsRoot = CreateChild(mazeRoot, "GeneratedRatBots");
+        bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
+
+        for (int a = 0; a < chosen.Count; a++)
+        {
+            Transform marker = chosen[a];
+            if (marker == null)
+                continue;
+
+            GameObject instance = Instantiate(prefab, marker.position, Quaternion.Euler(0f, marker.eulerAngles.y, 0f), ratBotsRoot);
+
+            if (!spawnWithNetcode)
+                continue;
+
+            NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+            if (networkObject != null)
+                networkObject.Spawn();
         }
     }
 
