@@ -61,10 +61,10 @@ public class RatBotAI : NetworkBehaviour
     [SerializeField, Min(0f)] float unfreezeDelay = 0.25f;
 
     [Header("Locomotion")]
-    [SerializeField, Min(0f)] float sneakSpeed = 2.4f;
-    [SerializeField, Min(0f)] float crawlSpeed = 1.4f;
-    [Tooltip("Speed while sprinting after a fleeing player (and while fleeing). Player run speed is 4.8, so keep this a touch higher so he slowly closes on a sprinter rather than falling behind.")]
-    [SerializeField, Min(0f)] float sprintSpeed = 5.2f;
+    [SerializeField, Min(0f)] float sneakSpeed = 3.2f;
+    [SerializeField, Min(0f)] float crawlSpeed = 2f;
+    [Tooltip("Speed while sprinting after a fleeing player (chase only — flee uses fleeSpeed). Player run speed is 4.8, so keep this a bit higher so he slowly closes on a sprinter rather than falling behind.")]
+    [SerializeField, Min(0f)] float sprintSpeed = 6.5f;
     [Tooltip("Chance [0,1] that a movement burst uses the Low Crawl instead of a sneak. Re-rolled every time he unfreezes.")]
     [SerializeField, Range(0f, 1f)] float crawlChance = 0.35f;
     [Tooltip("While stalking unobserved, if the target is fleeing faster than this (m/s), he drops the creep and sprints to keep up. Below it he returns to the rolled sneak/crawl.")]
@@ -100,8 +100,8 @@ public class RatBotAI : NetworkBehaviour
     [Header("Flee (after a throw, or when the target escapes)")]
     [Tooltip("While stalking, if he can't see his target (and isn't being watched) for this long, he gives up and flees. Set 0 to disable the escape-flee (he'd then only flee after a throw).")]
     [SerializeField, Min(0f)] float loseSightFleeDelay = 2f;
-    [Tooltip("Flee runs at sprintSpeed and plays the Sprint clip; this is a fallback only if sprintSpeed is 0.")]
-    [SerializeField, Min(0f)] float fleeSpeed = 3.6f;
+    [Tooltip("Speed while fleeing (after a throw or an escape). Plays the Sprint clip but moves at this speed — deliberately faster than the chase sprint so he bolts away hard.")]
+    [SerializeField, Min(0f)] float fleeSpeed = 10.4f;
     [Tooltip("How far away the flee destination is sampled — how far he bolts before settling back to dormant.")]
     [SerializeField, Min(1f)] float fleeDistance = 42f;
     [Tooltip("Candidate NavMesh points sampled; the one farthest from every living player wins. More samples = better odds of a genuinely far, reachable point at long flee distances.")]
@@ -454,7 +454,7 @@ public class RatBotAI : NetworkBehaviour
             navMeshAgent.SetDestination(_fleeDestination);
         }
 
-        MoveAlongPath(sprintSpeed > 0f ? sprintSpeed : fleeSpeed);
+        MoveAlongPath(fleeSpeed);
     }
 
     // ------------------------------------------------------------------ state transitions (server)
