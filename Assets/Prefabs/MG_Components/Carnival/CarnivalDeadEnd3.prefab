@@ -3000,6 +3000,7 @@ Transform:
   - {fileID: 4549370797023520562}
   - {fileID: 7161782354763153921}
   - {fileID: 2021907869022786660}
+  - {fileID: 1492305739225380768}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 90, z: 0}
 --- !u!114 &1535456475375830542
@@ -3854,6 +3855,140 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 5178683672958928210, guid: 8c73d135f341a844296fa692e9eed523, type: 3}
   m_PrefabInstance: {fileID: 4902347269459415389}
   m_PrefabAsset: {fileID: 0}
+--- !u!1001 &5177146554491414396
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 138740321855229633}
+    m_Modifications:
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalScale.y
+      value: 202.67053
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalScale.z
+      value: 202.67053
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0.013
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 4.288
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 1.934
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.7673015
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0.64128655
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: -79.776
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6351913693800254054, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      propertyPath: m_Name
+      value: RopeLight
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 5192699380882447602, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 8487202718111907338}
+    - targetCorrespondingSourceObject: {fileID: 8629920078892816740, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 5417406336253932207}
+  m_SourcePrefab: {fileID: 100100000, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+--- !u!1 &1137378600811150222 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 5192699380882447602, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+  m_PrefabInstance: {fileID: 5177146554491414396}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &8487202718111907338
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1137378600811150222}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e185214f3ca7f0a4e82140c254b4ad63, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RopeLightFlicker
+  includeChildLights: 1
+  lightsOverride: []
+  onLevel: 1
+  offLevel: 0
+  minOnTime: 0.12
+  maxOnTime: 2.2
+  minOffTime: 0.04
+  maxOffTime: 0.3
+  stutterChance: 0.4
+  maxStutterBlinks: 5
+  minStutterBlink: 0.02
+  maxStutterBlink: 0.09
+--- !u!4 &1492305739225380768 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 6011557239114371292, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+  m_PrefabInstance: {fileID: 5177146554491414396}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &3466445471012355608 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 8629920078892816740, guid: b715a2d7bbad3084097b1cf0b2f0c059, type: 3}
+  m_PrefabInstance: {fileID: 5177146554491414396}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &5417406336253932207
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3466445471012355608}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e185214f3ca7f0a4e82140c254b4ad63, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RopeLightFlicker
+  includeChildLights: 1
+  lightsOverride: []
+  onLevel: 1
+  offLevel: 0
+  minOnTime: 0.12
+  maxOnTime: 2.2
+  minOffTime: 0.04
+  maxOffTime: 0.3
+  stutterChance: 0.4
+  maxStutterBlinks: 5
+  minStutterBlink: 0.02
+  maxStutterBlink: 0.09
 --- !u!1001 &6542242527599840289
 PrefabInstance:
   m_ObjectHideFlags: 0
