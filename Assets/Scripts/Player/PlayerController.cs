@@ -1746,6 +1746,12 @@ public partial class PlayerController : MonoBehaviour
         }
         else if (!wantAttach && _cameraPitchParentedToHead)
             DetachCameraPitchFromHead();
+
+        // While held by an enemy grab, aim the damped view at the grabber (the victim stares at it) instead of
+        // riding the rolled head bone; any other ragdoll/getting-up keeps the raw head-follow tumble.
+        if (_cameraPitchParentedToHead && _ragdollCameraDamper != null)
+            _ragdollCameraDamper.LookTarget =
+                (_ragdollController != null && _ragdollController.IsHeld) ? _ragdollController.HeldTarget : null;
     }
 
     void DetachCameraPitchFromHead()
@@ -1773,6 +1779,20 @@ public partial class PlayerController : MonoBehaviour
         Transform cam = CameraTransformForFacing;
         if (cam == null)
             return;
+
+        // Enemy grab hold: lock the view onto the grabber (the damper proxy already faces it). The victim is
+        // forced to watch the scream, and there's no accumulated free-look to reconcile when the throw releases.
+        if (_ragdollController != null && _ragdollController.IsHeld && _ragdollController.HeldTarget != null)
+        {
+            if (cameraPitchTransform != null && _cameraPitchParentedToHead)
+            {
+                cameraPitchTransform.localRotation = Quaternion.identity;
+                cam.localRotation = Quaternion.identity;
+            }
+            _lookYawDegrees = 0f;
+            _lookPitchDegrees = 0f;
+            return;
+        }
 
         AccumulateFirstPersonLookDeltas(look);
 

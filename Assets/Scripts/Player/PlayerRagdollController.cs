@@ -115,6 +115,10 @@ public class PlayerRagdollController : MonoBehaviour
     RigidbodyInterpolation _hipsInterpolationBeforeHold;
     public bool IsHeld => _isHeld;
 
+    /// <summary>The transform the victim is pinned to while held (the enemy's grab bone), or null. Used by the
+    /// camera path to aim a held victim's view at the grabber instead of at the rolled head bone.</summary>
+    public Transform HeldTarget => _heldTarget;
+
     /// <summary>
     /// The hips/pelvis transform — the heavy central bone the physics engine keeps inside the level.
     /// Used as a guaranteed-inside anchor for camera containment. Resolved in <see cref="ResolveHips"/>.

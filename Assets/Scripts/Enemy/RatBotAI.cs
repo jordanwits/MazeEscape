@@ -14,10 +14,10 @@ using UnityEngine.AI;
 /// idling until everyone looks away. While Stalking it only moves when unobserved: each movement burst
 /// re-rolls crawl vs left/right sneak, and the instant any player sees it mid-move it freezes on the
 /// exact animation frame (state hash + normalized time replicate so every peer shows the same statue).
-/// Reaching a player unobserved triggers the placeholder pounce: freeze, jaw snaps open, scream, and the
-/// player is ragdoll-thrown via the server-authoritative hit path (a real grab/lift/throw animation can
-/// replace the visuals later — the sequencing hooks are already here). After the throw it flees to a far
-/// NavMesh point (deliberately ignoring observation) and goes fully Dormant there, re-armable by sight.
+/// Reaching a player unobserved triggers the grab: the victim is pinned to a grab bone (held rigid, can't
+/// escape) while the Grab Throw clip lifts him to face level, the jaw snaps open + screams, and at the throw
+/// gesture he's launched as a forward chest-pass via the shared enemy grab/slam path. After the throw he
+/// flees to a far NavMesh point (deliberately ignoring observation) and goes fully Dormant, re-armable by sight.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
@@ -36,6 +36,7 @@ public class RatBotAI : NetworkBehaviour
     const int LocomotionSneakRight = 2;
     const int LocomotionCrawl = 3;
     const int LocomotionSprint = 4;
+    const int LocomotionGrabThrow = 5; // plays the one-shot Grab Throw clip (Any State transition on Locomotion==5)
 
     [Header("Refs (auto-resolved if left empty)")]
     [SerializeField] Animator animator;
@@ -46,6 +47,21 @@ public class RatBotAI : NetworkBehaviour
     [SerializeField] AudioSource screamAudioSource;
     [Tooltip("One-shot played on every peer when the pounce starts. Fine to leave empty until a scream is recorded.")]
     [SerializeField] AudioClip screamClip;
+
+    [Header("Footstep audio (plays on every peer, 3D-positioned from the replicated gait)")]
+    [Tooltip("Dedicated source for footsteps. Falls back to the scream AudioSource if left empty.")]
+    [SerializeField] AudioSource footstepAudioSource;
+    [Tooltip("Sneak + crawl footsteps — alternated one clip per step.")]
+    [SerializeField] AudioClip[] sneakFootstepClips;
+    [Tooltip("Run footsteps (chase + flee) — alternated one clip per step.")]
+    [SerializeField] AudioClip[] runFootstepClips;
+    [Tooltip("Seconds between steps while sneaking or crawling.")]
+    [SerializeField, Min(0.05f)] float sneakStepInterval = 0.5f;
+    [Tooltip("Seconds between steps while sprint-chasing a fleeing player.")]
+    [SerializeField, Min(0.05f)] float chaseStepInterval = 0.34f;
+    [Tooltip("Seconds between steps while fleeing — deliberately faster than the chase cadence.")]
+    [SerializeField, Min(0.05f)] float fleeStepInterval = 0.22f;
+    [SerializeField, Range(0f, 1f)] float footstepVolume = 0.9f;
 
     [Header("Observation (what counts as 'a player is looking at him')")]
     [Tooltip("Players farther than this can never observe (or activate) him — roughly the distance fog/cull edge where he stops being visible anyway.")]
@@ -82,17 +98,23 @@ public class RatBotAI : NetworkBehaviour
     [Tooltip("Facing offset for the Sprint run. The run clip faces straight ahead (~0°), so he runs where his chest points.")]
     [SerializeField] float sprintFacingYawOffsetDegrees = 0f;
 
-    [Header("Pounce (placeholder until a grab/scream/throw animation exists)")]
-    [Tooltip("Horizontal catch distance while moving unobserved.")]
+    [Header("Grab / scream / throw attack")]
+    [Tooltip("Horizontal catch distance while moving unobserved — reaching this grabs the victim.")]
     [SerializeField, Min(0.1f)] float catchRadius = 1.5f;
-    [Tooltip("Extra reach allowed at the impact frame so a target sprinting away right as the pounce starts can still be clipped.")]
-    [SerializeField, Min(0f)] float catchReachPadding = 0.5f;
-    [Tooltip("Seconds after the pounce starts (jaw open + scream) before the throw lands.")]
-    [SerializeField, Min(0f)] float pounceHitDelay = 0.25f;
-    [Tooltip("Total pounce length; after this he closes the jaw and flees.")]
-    [SerializeField, Min(0.1f)] float pounceDuration = 1.1f;
+    [Tooltip("Which grab bone the victim is pinned to while held (NetworkPlayerRagdoll grab bones: 0 RightHand, 1 LeftHand, 2 Hips, 3 Spine1).")]
+    [SerializeField, Range(0, 3)] int grabBoneIndex = 2;
+    [Tooltip("Local offset (grab-bone space) of the held victim's hips — places him in front of the face. Tune in play.")]
+    [SerializeField] Vector3 holdLocalOffset = new Vector3(0f, -0.04f, 0.5f);
+    [Tooltip("Local euler (grab-bone space) of the held victim — spin him to face the RatBot. Tune in play.")]
+    [SerializeField] Vector3 holdLocalEuler = new Vector3(0f, 180f, 0f);
+    [Tooltip("Seconds after the grab before the jaw snaps open + scream fires (the clip lifts the victim to face level by ~0.9s).")]
+    [SerializeField, Min(0f)] float screamDelay = 0.9f;
+    [Tooltip("Seconds after the grab before the throw releases — align with the clip's chest-pass release (~2.83s).")]
+    [SerializeField, Min(0f)] float pounceHitDelay = 2.83f;
+    [Tooltip("Total attack length; after this he closes the jaw and flees. A short beat past the release for follow-through.")]
+    [SerializeField, Min(0.1f)] float pounceDuration = 3.4f;
     [SerializeField, Min(0f)] float pounceDamage = 15f;
-    [Tooltip("Horizontal throw speed (matches the Clown hammer scale — ForceMode.VelocityChange).")]
+    [Tooltip("Horizontal throw speed (chest-pass; matches the Clown hammer scale — ForceMode.VelocityChange).")]
     [SerializeField, Min(0f)] float knockbackForwardSpeed = 13f;
     [SerializeField, Min(0f)] float knockbackUpwardSpeed = 5f;
     [SerializeField] ForceMode knockbackForceMode = ForceMode.VelocityChange;
@@ -138,6 +160,7 @@ public class RatBotAI : NetworkBehaviour
     NetworkPlayerRagdoll _pounceTargetNetRagdoll;
     float _pounceStartTime;
     bool _pounceHitApplied;
+    bool _screamStarted;
 
     // flee
     Vector3 _fleeDestination;
@@ -155,6 +178,10 @@ public class RatBotAI : NetworkBehaviour
     // jaw visual (mirrored locally so offline play works without NetworkVariables)
     float _jawOpenTarget;
     Quaternion _jawClosedLocalRotation = Quaternion.identity;
+
+    // footstep audio (ticked on every peer from the replicated gait/state)
+    float _nextFootstepTime;
+    int _footstepFlip;
 
     // Clients re-Play the freeze frame for a couple frames after (spawn|freeze) so NetworkAnimator's own
     // state sync can't land a frame later and shift the statue pose.
@@ -201,6 +228,12 @@ public class RatBotAI : NetworkBehaviour
 
         if (screamAudioSource != null)
             GameAudioManager.RouteSfxSource(screamAudioSource);
+
+        // Footsteps reuse the (already-routed) scream source unless a dedicated one is assigned.
+        if (footstepAudioSource == null)
+            footstepAudioSource = screamAudioSource;
+        else if (footstepAudioSource != screamAudioSource)
+            GameAudioManager.RouteSfxSource(footstepAudioSource);
 
         EnsureAnimationSync();
     }
@@ -258,6 +291,7 @@ public class RatBotAI : NetworkBehaviour
     void Update()
     {
         UpdateJawVisual();
+        UpdateFootstepAudio();
 
         if (!ShouldSimulate)
         {
@@ -419,13 +453,25 @@ public class RatBotAI : NetworkBehaviour
     {
         ApplyMotion(Vector3.zero);
 
-        if (!_pounceHitApplied && Time.time >= _pounceStartTime + pounceHitDelay)
+        float elapsed = Time.time - _pounceStartTime;
+
+        // Scream beat: jaw snaps open (replicates via _netJawOpen; the scream one-shot fires on that value's
+        // rising edge on every peer, so the audio and the open mouth stay in sync without an extra RPC).
+        if (!_screamStarted && elapsed >= screamDelay)
         {
-            _pounceHitApplied = true;
-            TryApplyPounceHit();
+            _screamStarted = true;
+            SetJawOpen(1f);
         }
 
-        if (Time.time >= _pounceStartTime + pounceDuration)
+        // Throw: release the held victim as a forward chest-pass at the clip's throw gesture.
+        if (!_pounceHitApplied && elapsed >= pounceHitDelay)
+        {
+            _pounceHitApplied = true;
+            ReleasePounceThrow();
+            SetJawOpen(0f); // mouth closes as he throws
+        }
+
+        if (elapsed >= pounceDuration)
         {
             SetJawOpen(0f);
             Unfreeze();
@@ -478,57 +524,64 @@ public class RatBotAI : NetworkBehaviour
         _pounceTargetNetRagdoll = target != null ? target.GetComponent<NetworkPlayerRagdoll>() : null;
         _pounceStartTime = Time.time;
         _pounceHitApplied = false;
+        _screamStarted = false;
 
         if (target != null)
             FaceInstant(target.transform.position);
 
-        // Placeholder attack visual: statue-freeze mid-stride with the jaw snapping open + scream.
-        // When a real grab/lift/throw clip exists, replace this freeze with the attack state and keep
-        // the same timing hooks (pounceHitDelay → throw, pounceDuration → flee).
-        FreezeNow();
-        SetJawOpen(1f);
+        // Grab: pin the victim to a grab bone so he can't escape while the Grab Throw clip lifts him to face
+        // level. The jaw/scream fires at screamDelay and the throw releases at pounceHitDelay (UpdatePouncing).
+        GrabPounceTarget();
+
+        // Play the grab/scream/throw clip at full speed (NOT frozen); the Locomotion int replicates it.
+        if (_frozen)
+            Unfreeze();
+        SetLocomotion(LocomotionGrabThrow);
         SetState(RatBotState.Pouncing);
     }
 
-    void TryApplyPounceHit()
+    void GrabPounceTarget()
     {
-        if (_pounceTargetHealth == null || _pounceTargetHealth.IsDead)
-            return;
-
-        // Clean dodge whiffs: only connect if they're still within reach at the impact frame (Clown idiom).
-        Vector3 flatToTarget = _pounceTargetHealth.transform.position - transform.position;
-        flatToTarget.y = 0f;
-        if (flatToTarget.magnitude > catchRadius + catchReachPadding)
-            return;
-
-        Vector3 knockDir = flatToTarget;
-        if (knockDir.sqrMagnitude > 1e-4f)
-            knockDir.Normalize();
-        else
+        bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+        if (inNetSession && _pounceTargetNetRagdoll != null)
         {
-            Vector3 fwd = transform.forward;
-            fwd.y = 0f;
-            knockDir = fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.forward;
+            _pounceTargetNetRagdoll.BeginHeldByEnemyFromServer(
+                NetworkObject.NetworkObjectId, grabBoneIndex, holdLocalOffset, holdLocalEuler);
         }
+        else if (_pounceTargetRagdoll != null)
+        {
+            // Offline play mode: pin directly against the resolved grab bone (the same bone the RPC uses).
+            Transform grabBone = NetworkPlayerRagdoll.FindGrabBone(transform, grabBoneIndex);
+            if (grabBone != null)
+                _pounceTargetRagdoll.BeginHeldByPoint(grabBone, holdLocalOffset, Quaternion.Euler(holdLocalEuler));
+        }
+    }
 
-        Vector3 hitPoint = _pounceTargetHealth.transform.position + Vector3.up;
-        Vector3 force = (knockDir * knockbackForwardSpeed) + (Vector3.up * knockbackUpwardSpeed);
+    void ReleasePounceThrow()
+    {
+        // Forward chest-pass: throw along his facing with a little lift, from a point just in front of his
+        // chest (the still-rigid held body is snapped there before it goes limp, so it never starts in a wall).
+        Vector3 fwd = transform.forward;
+        fwd.y = 0f;
+        fwd = fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.forward;
+        Vector3 force = (fwd * knockbackForwardSpeed) + (Vector3.up * knockbackUpwardSpeed);
+        Vector3 releasePosition = transform.position + fwd * 0.6f + Vector3.up * 1.1f;
 
         bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
         if (inNetSession && _pounceTargetNetRagdoll != null)
         {
-            _pounceTargetNetRagdoll.RequestTrapHitFromServer(force, hitPoint, pounceDamage, knockbackForceMode);
+            _pounceTargetNetRagdoll.ReleaseSlamFromServer(force, releasePosition, pounceDamage, (byte)knockbackForceMode);
         }
-        // No networked ragdoll on the target: local damage + ragdoll path (matches ClownAI/RagdollTrap).
+        // Offline play mode: damage + release the local rigid hold into a ragdoll throw.
         else if (_pounceTargetRagdoll != null)
         {
             bool survived = true;
-            if (pounceDamage > 0f)
+            if (pounceDamage > 0f && _pounceTargetHealth != null)
             {
                 _pounceTargetHealth.TakeDamage(pounceDamage);
                 survived = !_pounceTargetHealth.IsDead;
             }
-            _pounceTargetRagdoll.ActivateRagdoll(force, hitPoint, knockbackForceMode, allowAutoRecovery: survived);
+            _pounceTargetRagdoll.ReleaseFromHeld(force, releasePosition, knockbackForceMode, allowAutoRecovery: survived);
         }
     }
 
@@ -977,12 +1030,27 @@ public class RatBotAI : NetworkBehaviour
     void SetJawOpen(float openAmount)
     {
         openAmount = Mathf.Clamp01(openAmount);
+        float previous = _jawOpenTarget;
         _jawOpenTarget = openAmount;
         if (IsNetworkedAuthority)
-            _netJawOpen.Value = openAmount;
+            _netJawOpen.Value = openAmount; // OnValueChanged fires on server + clients → HandleNetJawOpenChanged
+        else
+            MaybeScreamOnJawEdge(previous, openAmount); // offline play mode has no NetworkVariable callback
     }
 
-    void HandleNetJawOpenChanged(float previousValue, float currentValue) => _jawOpenTarget = currentValue;
+    void HandleNetJawOpenChanged(float previousValue, float currentValue)
+    {
+        _jawOpenTarget = currentValue;
+        MaybeScreamOnJawEdge(previousValue, currentValue);
+    }
+
+    // Fire the scream one-shot on the rising edge of the jaw opening, on whichever peers see the change — ties
+    // the audio to the visible mouth-open (the scream beat) and stays in sync via the replicated jaw value.
+    void MaybeScreamOnJawEdge(float previousOpen, float currentOpen)
+    {
+        if (previousOpen < 0.5f && currentOpen >= 0.5f)
+            PlayScream();
+    }
 
     void HandleNetStateChanged(byte previousValue, byte currentValue)
     {
@@ -992,15 +1060,59 @@ public class RatBotAI : NetworkBehaviour
 
     void ApplyStateVisual(RatBotState state)
     {
-        // Only side effect a state *change* carries for every peer: the pounce scream.
-        if (state == RatBotState.Pouncing)
-            PlayScream();
+        // The scream is no longer tied to the state change — it fires with the jaw-open beat a moment after
+        // the grab (see MaybeScreamOnJawEdge), matching the clip instead of the instant the pounce starts.
     }
 
     void PlayScream()
     {
         if (screamAudioSource != null && screamClip != null)
             screamAudioSource.PlayOneShot(screamClip);
+    }
+
+    // Runs on EVERY peer. Reads the replicated animator gait + freeze state (and the mirrored _state) so the
+    // footsteps are heard by all players from the rat's position, without per-step RPCs. Sneak/crawl use the
+    // sneak clips; sprint uses the run clips, faster while fleeing than while chasing. Clips alternate each step.
+    void UpdateFootstepAudio()
+    {
+        AudioSource src = footstepAudioSource;
+        if (src == null || animator == null)
+            return;
+
+        int gait = animator.GetInteger(locomotionIntParam);
+        // Not stepping: idle/dormant, mid-grab, or frozen statue (animator paused). Prime for an immediate first
+        // step the moment real movement resumes.
+        bool stepping = gait != LocomotionIdle && gait != LocomotionGrabThrow && animator.speed > 0.01f;
+        if (!stepping)
+        {
+            _nextFootstepTime = Time.time;
+            return;
+        }
+
+        if (Time.time < _nextFootstepTime)
+            return;
+
+        AudioClip[] pair;
+        float interval;
+        if (gait == LocomotionSprint)
+        {
+            pair = runFootstepClips;
+            interval = _state == RatBotState.Fleeing ? fleeStepInterval : chaseStepInterval;
+        }
+        else // sneak L/R + crawl
+        {
+            pair = sneakFootstepClips;
+            interval = sneakStepInterval;
+        }
+
+        _nextFootstepTime = Time.time + interval;
+
+        if (pair == null || pair.Length == 0)
+            return;
+        AudioClip clip = pair[_footstepFlip % pair.Length];
+        _footstepFlip++;
+        if (clip != null)
+            src.PlayOneShot(clip, footstepVolume);
     }
 
     void UpdateJawVisual()

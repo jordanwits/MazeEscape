@@ -535,12 +535,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5011123456789012000}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.15580316, y: 0.012422206, z: 0.018627498, w: 0.9875344}
-  m_LocalPosition: {x: 0.128, y: 0.244, z: 0.505}
+  m_LocalRotation: {x: -0.59100187, y: 0.4466014, z: 0.30090094, w: 0.6006019}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 129338757031835197}
+  m_Father: {fileID: 8072092809784358095}
   m_LocalEulerAnglesHint: {x: -17.95, y: 1.128, z: 1.983}
 --- !u!1 &5216182934242048562
 GameObject:
@@ -1072,6 +1072,7 @@ GameObject:
   - component: {fileID: 7541107775037098470}
   - component: {fileID: 8811223344556677888}
   - component: {fileID: 7713415644906319568}
+  - component: {fileID: 5775616932469712695}
   m_Layer: 7
   m_Name: Jailor
   m_TagString: Untagged
@@ -1185,7 +1186,7 @@ MonoBehaviour:
   carryAttach: {fileID: 5011123456789012001}
   carriedPlayerLocalPositionOffset: {x: 0, y: 0, z: 0}
   carriedPlayerLocalEulerOffset: {x: 0, y: 0, z: 0}
-  playerRootToCarryAlignPointLocal: {x: 0, y: 1, z: 0}
+  playerRootToCarryAlignPointLocal: {x: 0, y: 1.27, z: -0.12}
   carryDestination: {fileID: 0}
   carryDestinationObjectName: 
   jailCellDoor: {fileID: 0}
@@ -1203,12 +1204,13 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 115
   detectionLineOfSightHeight: 1.1
+  sensingInterval: 0.1
   grabRange: 1.3
   grabHitRangePadding: 0.15
   grabHitHalfAngle: 55
   maxGrabVerticalDelta: 0.9
   grabTriggerParameter: Grab
-  grabClipDurationFallback: 1.93
+  grabClipDurationFallback: 1.73
   attachFallbackDelay: 0.95
   carrySpeed: 6
   carryStoppingDistance: 0.65
@@ -1219,6 +1221,10 @@ MonoBehaviour:
   minCarrySecondsBeforeDrop: 0.85
   carryDestinationNavSnapMaxDistance: 24
   jailDoorPremptiveOpenDistance: 16
+  jailExitDistance: 3.25
+  jailExitArrivalDistance: 0.85
+  jailExitMaxSeconds: 6
+  sealedJailInteriorAvoidRadius: 3.75
   jailorKeyWorldPrefab: {fileID: 281694000005607643, guid: 682f72a1f8155ec4d8669ff542be63f6, type: 3}
   jailorKeyDropLocalOffset: {x: 0, y: 0.12, z: 0.55}
   walkSpeed: 2.6
@@ -1229,6 +1235,31 @@ MonoBehaviour:
   destinationRefreshInterval: 0.1
   destinationRefreshMinDistance: 0.2
   alwaysRunWhenChasing: 1
+  propStuckDesiredSpeedThreshold: 0.28
+  propStuckActualSpeedThreshold: 0.06
+  propStuckAccumulateSeconds: 0.55
+  propStuckRecoveryCooldown: 1.1
+  propStuckSampleAttempts: 12
+  propStuckNudgeMinRadius: 0.4
+  propStuckNudgeMaxRadius: 2.1
+  propStuckNavSampleRadius: 3.5
+  chaseCenterInCorridor: 1
+  chaseWallSideClearance: 0.9
+  chaseWallLookAhead: 1.4
+  chaseCenterSteerStrength: 0.65
+  chaseWallProbeHeight: 1
+  pitStuckCheckInterval: 0.25
+  pitStuckBelowNavMeshThreshold: 1.5
+  pitStuckVerticalSearchHeight: 12
+  pitStuckSampleRadii:
+  - 4
+  - 8
+  - 16
+  - 28
+  pitStuckLowSpeedThreshold: 0.25
+  pitStuckAccumulateSeconds: 1.75
+  pitStuckRescueCooldown: 1.5
+  pitStuckRescueLift: 0.1
   patrolSpeed: 2.2
   patrolMinWaypointDistance: 6
   patrolMaxWaypointDistance: 14
@@ -1252,6 +1283,7 @@ MonoBehaviour:
   groundedParameter: Grounded
   verticalVelocityParameter: VerticalVelocity
   grabStateName: Grab
+  carryingBoolParameter: Carrying
   jumpTriggerParameter: Jump
   animatorSpeedLerp: 12
   idleSpeedDeadZone: 0.08
@@ -1362,6 +1394,22 @@ MonoBehaviour:
   navMeshAgent: {fileID: 7001733651103369478}
   characterController: {fileID: 4689613813191485252}
   maxFootstepObserverDistance: 18
+--- !u!114 &5775616932469712695
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7644638518217413858}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 94d0f7259faa7a6429394123b6c9deb1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::JailorCarryArmLayer
+  animator: {fileID: 3908310291460958626}
+  carryingParameter: Carrying
+  carryLayerName: Carry Hold
+  blendSpeed: 10
 --- !u!1 &7777923338331262405
 GameObject:
   m_ObjectHideFlags: 0
@@ -1608,6 +1656,7 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 5923021465367630369}
+  - {fileID: 5011123456789012001}
   m_Father: {fileID: 367757436125109638}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &8470257673465102131
@@ -1704,7 +1753,6 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 4183897183171009139}
-  - {fileID: 5011123456789012001}
   m_Father: {fileID: 6901442877957057706}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &8894222143174897548

@@ -62,6 +62,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     bool _isAlive = true;
     SkinnedMeshRenderer[] _skinnedRenderers;
     bool _skinnedRenderersOffscreenForced;
+    bool _localViewHeadHidden;
     NetworkManager _networkManager;
     OwnerNetworkAnimator _ownerNetworkAnimator;
     Light _remoteFlashlightProxyLight;
@@ -267,6 +268,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         SetDormant(false);
         _carriedByJailor.OnValueChanged += OnCarriedByJailorChanged;
         _sealedInJailCell.OnValueChanged += OnSealedInJailCellChanged;
+        PlanarMirror.ReflectionPass += OnMirrorReflectionPass;
         ApplyOwnershipState();
 
         if (IsOwner
@@ -292,6 +294,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     {
         _carriedByJailor.OnValueChanged -= OnCarriedByJailorChanged;
         _sealedInJailCell.OnValueChanged -= OnSealedInJailCellChanged;
+        PlanarMirror.ReflectionPass -= OnMirrorReflectionPass;
         _networkManager = null;
         SetDormant(false);
         ApplyPresentation(true);
@@ -630,6 +633,11 @@ public class NetworkPlayerAvatar : NetworkBehaviour
                         : UnityEngine.Rendering.ShadowCastingMode.On;
             }
         }
+        // Only the local owner's head is ShadowsOnly (hidden from the FP camera) — that is the state a
+        // mirror needs to temporarily undo so the reflection isn't headless. See OnMirrorReflectionPass.
+        _localViewHeadHidden = isLocalOwner
+            && localViewShadowOnlyRenderers != null
+            && localViewShadowOnlyRenderers.Length > 0;
 
         ApplyFirstPersonOffscreenCulling(isLocalOwner);
     }
@@ -656,6 +664,30 @@ public class NetworkPlayerAvatar : NetworkBehaviour
                 skinned.updateWhenOffscreen = true;
         }
         _skinnedRenderersOffscreenForced = true;
+    }
+
+    /// <summary>
+    /// While a mirror renders its reflection, temporarily draw the local owner's first-person-hidden
+    /// renderers (the head — normally <see cref="UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly"/>
+    /// so the FP camera never shows the inside of the skull) so the player sees a complete reflection
+    /// instead of a headless body. Restored the instant the reflection pass ends, so the main
+    /// first-person view is unchanged. No-op for remote avatars — their head is already drawn — and
+    /// when nothing is hidden. Driven by <see cref="PlanarMirror.ReflectionPass"/>.
+    /// </summary>
+    void OnMirrorReflectionPass(bool revealing)
+    {
+        if (!_localViewHeadHidden || localViewShadowOnlyRenderers == null)
+            return;
+
+        UnityEngine.Rendering.ShadowCastingMode mode = revealing
+            ? UnityEngine.Rendering.ShadowCastingMode.On
+            : UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly;
+
+        foreach (Renderer rendererComponent in localViewShadowOnlyRenderers)
+        {
+            if (rendererComponent != null)
+                rendererComponent.shadowCastingMode = mode;
+        }
     }
 
     void SetDormant(bool dormant)

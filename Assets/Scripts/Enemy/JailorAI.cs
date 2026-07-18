@@ -210,6 +210,8 @@ public class JailorAI : MonoBehaviour
     [SerializeField] string groundedParameter = "Grounded";
     [SerializeField] string verticalVelocityParameter = "VerticalVelocity";
     [SerializeField] string grabStateName = "Grab";
+    [Tooltip("Bool set true while carrying a player; drives the 'Carry Hold' override layer (right arm held out) via JailorCarryArmLayer on all peers.")]
+    [SerializeField] string carryingBoolParameter = "Carrying";
     [SerializeField] string jumpTriggerParameter = "Jump";
     [Tooltip("Use actual horizontal move speed for the blend tree (matches feet). 0 = instant; higher = less flicker between idle and move.")]
     [SerializeField] float animatorSpeedLerp = 12f;
@@ -268,6 +270,7 @@ public class JailorAI : MonoBehaviour
     bool _hasVerticalVelocityParameter = true;
     bool _hasGrabTriggerParameter = true;
     bool _hasJumpTriggerParameter = true;
+    bool _hasCarryingParameter = true;
     bool _loggedMissingAnimatorParams;
     bool _loggedMissingJumpTriggerParam;
     const string EnemyLayerName = "Enemy";
@@ -689,6 +692,7 @@ public class JailorAI : MonoBehaviour
         _hasVerticalVelocityParameter = HasAnimatorParameter(verticalVelocityParameter, AnimatorControllerParameterType.Float);
         _hasGrabTriggerParameter = HasAnimatorParameter(grabTriggerParameter, AnimatorControllerParameterType.Trigger);
         _hasJumpTriggerParameter = HasAnimatorParameter(jumpTriggerParameter, AnimatorControllerParameterType.Trigger);
+        _hasCarryingParameter = HasAnimatorParameter(carryingBoolParameter, AnimatorControllerParameterType.Bool);
     }
 
     bool HasAnimatorParameter(string parameterName, AnimatorControllerParameterType parameterType)
@@ -704,6 +708,17 @@ public class JailorAI : MonoBehaviour
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Set server-side; replicated by <see cref="ServerNetworkAnimator"/> (same channel as Speed/Grab).
+    /// <see cref="JailorCarryArmLayer"/> on every peer reads it to blend the held-arm override layer.
+    /// </summary>
+    void SetCarryingAnimatorBool(bool value)
+    {
+        if (animator == null || !_hasCarryingParameter)
+            return;
+        animator.SetBool(carryingBoolParameter, value);
     }
 
     void ApplyAgentSettings()
@@ -1520,6 +1535,8 @@ public class JailorAI : MonoBehaviour
         _grabAttachCompleted = false;
         _enteredCarrying = false;
         _grabbingStartedTime = Time.time;
+        // Arm plays the full reach on the base layer during the grab; the held override engages at carry.
+        SetCarryingAnimatorBool(false);
 
         if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
         {
@@ -1724,6 +1741,8 @@ public class JailorAI : MonoBehaviour
             return;
         _enteredCarrying = true;
         _state = JailorState.Carrying;
+        // Hold the right arm in the grab end-pose (extended) for the whole carry.
+        SetCarryingAnimatorBool(true);
         _lastCarryPathDestination = Vector3.zero;
         _carryPhaseStartedTime = Time.time;
 
@@ -1936,6 +1955,7 @@ public class JailorAI : MonoBehaviour
             _suppressChaseUntil = Time.time + Mathf.Max(0.5f, postDropChaseCooldownSeconds);
         _grabAttachCompleted = false;
         _enteredCarrying = false;
+        SetCarryingAnimatorBool(false);
         ClearTarget();
     }
 
@@ -2186,6 +2206,7 @@ public class JailorAI : MonoBehaviour
         _suppressChaseUntil = Time.time + Mathf.Max(0.5f, postDropChaseCooldownSeconds);
         _grabAttachCompleted = false;
         _enteredCarrying = false;
+        SetCarryingAnimatorBool(false);
         ClearTarget();
         _state = JailorState.Idle;
     }
@@ -2199,10 +2220,17 @@ public class JailorAI : MonoBehaviour
             return;
         }
 
-        Quaternion localOffset = Quaternion.Euler(carriedPlayerLocalEulerOffset);
-        worldRotation = carryAttach.rotation * localOffset;
-        Vector3 nudge = carryAttach.rotation * carriedPlayerLocalPositionOffset;
-        // Root follows feet; without this, feet sit on CarryAttach. Subtract so e.g. chest lands on CarryAttach.
+        // Orientation stays upright and stable off the Jailor's yaw. The carry hand bone wobbles with the
+        // run/torso animation (the spine is not in the held-arm mask), so tying the prisoner to
+        // carryAttach.rotation swung it horizontally. Only the hand POSITION tracks the animated hand.
+        Vector3 flatForward = transform.forward;
+        flatForward.y = 0f;
+        Quaternion baseYaw = flatForward.sqrMagnitude > 1e-4f
+            ? Quaternion.LookRotation(flatForward.normalized, Vector3.up)
+            : transform.rotation;
+        worldRotation = baseYaw * Quaternion.Euler(carriedPlayerLocalEulerOffset);
+        Vector3 nudge = worldRotation * carriedPlayerLocalPositionOffset;
+        // playerRootToCarryAlignPointLocal is the body point (e.g. the mid-back) placed at the hand.
         worldPosition = carryAttach.position + nudge - worldRotation * playerRootToCarryAlignPointLocal;
     }
 

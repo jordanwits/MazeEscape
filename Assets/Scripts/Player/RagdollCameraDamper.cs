@@ -29,8 +29,29 @@ public class RagdollCameraDamper : MonoBehaviour
 
     Transform _proxy;
     Transform _head;
+    Transform _lookTarget;
     bool _following;
     Vector3 _positionVelocity;
+
+    /// <summary>
+    /// When set (enemy grab hold), the proxy faces this target with a level horizon instead of copying the
+    /// head bone's raw, rolled rotation — so a held victim looks at the grabber rather than at the floor.
+    /// Cleared by <see cref="EndFollow"/>; set per-frame by the controller while the player is held.
+    /// </summary>
+    public Transform LookTarget
+    {
+        get => _lookTarget;
+        set
+        {
+            if (_lookTarget == value)
+                return;
+            bool wasNull = _lookTarget == null;
+            _lookTarget = value;
+            // Snap to face the target on the frame the grab starts so the view doesn't swing up from the floor.
+            if (_lookTarget != null && wasNull && _head != null)
+                Proxy.rotation = ComputeDesiredRotation();
+        }
+    }
 
     /// <summary>The smoothed transform the camera pitch is parented to during ragdoll. Created lazily.</summary>
     public Transform Proxy
@@ -62,6 +83,7 @@ public class RagdollCameraDamper : MonoBehaviour
     {
         _following = false;
         _head = null;
+        _lookTarget = null;
     }
 
     void SnapToHead()
@@ -69,8 +91,22 @@ public class RagdollCameraDamper : MonoBehaviour
         if (_head == null)
             return;
 
-        Proxy.SetPositionAndRotation(_head.position, _head.rotation);
+        Proxy.SetPositionAndRotation(_head.position, ComputeDesiredRotation());
         _positionVelocity = Vector3.zero;
+    }
+
+    // The rotation the proxy chases: face the grabber with a level horizon while held, else the head's raw pose.
+    Quaternion ComputeDesiredRotation()
+    {
+        if (_head == null)
+            return Quaternion.identity;
+        if (_lookTarget == null)
+            return _head.rotation;
+        Vector3 flat = _lookTarget.position - _head.position;
+        flat.y = 0f;
+        if (flat.sqrMagnitude < 1e-4f)
+            return _head.rotation;
+        return Quaternion.LookRotation(flat.normalized, Vector3.up);
     }
 
     void OnDisable()
@@ -90,7 +126,7 @@ public class RagdollCameraDamper : MonoBehaviour
             return;
 
         Vector3 headPos = _head.position;
-        Quaternion headRot = _head.rotation;
+        Quaternion headRot = ComputeDesiredRotation();
         float dt = Time.deltaTime;
 
         // A large one-frame jump means a slam reposition / teleport / respawn moved the body, not the ragdoll
