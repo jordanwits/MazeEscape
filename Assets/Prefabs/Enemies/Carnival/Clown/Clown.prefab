@@ -1717,6 +1717,7 @@ MonoBehaviour:
   pitStuckAccumulateSeconds: 1.75
   pitStuckRescueCooldown: 1.5
   pitStuckRescueLift: 0.1
+  floorTunnelMaxExtraDrop: 0.3
   patrolSpeed: 2.2
   patrolMinWaypointDistance: 6
   patrolMaxWaypointDistance: 14
@@ -1761,7 +1762,7 @@ MonoBehaviour:
   swingClipDurationFallback: 3.9
   attackRange: 1.7
   attackRangePadding: 0.2
-  attackHalfAngle: 75
+  attackHalfAngle: 50
   maxAttackVerticalDelta: 1.2
   hammerHitReachMultiplier: 1.5
   hammerHitNormalizedTime: 0.5
@@ -1779,7 +1780,7 @@ MonoBehaviour:
   knockbackForwardFullSpeedClearance: 4
   knockbackForceMode: 2
   hammerDamage: 50
-  postAttackCooldownSeconds: 1.5
+  postAttackCooldownSeconds: 3
 --- !u!114 &7755825303672424257
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1902,6 +1903,7 @@ MonoBehaviour:
   bendSmoothTime: 0.18
   capCollisionRadius: 1
   maxCollisionRadius: 0.6
+  capCollisionHeight: 1
   environmentMask:
     serializedVersion: 2
     m_Bits: 4294965823

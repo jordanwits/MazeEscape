@@ -4596,7 +4596,7 @@ AudioReverbZone:
   m_ReverbPreset: 27
   m_Room: -1000
   m_RoomHF: -100
-  m_DecayTime: 1.49
+  m_DecayTime: 0.745
   m_DecayHFRatio: 0.83
   m_Reflections: -2602
   m_ReflectionsDelay: 0.007
@@ -28706,6 +28706,10 @@ MonoBehaviour:
   maxStutterBlinks: 5
   minStutterBlink: 0.02
   maxStutterBlink: 0.09
+  flickerLoopClip: {fileID: 8300000, guid: 173154ed485b4a141aec509e9c33956d, type: 3}
+  audioVolume: 0.175
+  audioMinDistance: 1.5
+  audioMaxDistance: 8
 --- !u!4 &8747595011875479171 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 8197479891752161606, guid: 488c945401981434c968c5038c009aea, type: 3}
@@ -30020,6 +30024,10 @@ MonoBehaviour:
   maxStutterBlinks: 5
   minStutterBlink: 0.02
   maxStutterBlink: 0.09
+  flickerLoopClip: {fileID: 8300000, guid: 173154ed485b4a141aec509e9c33956d, type: 3}
+  audioVolume: 0.175
+  audioMinDistance: 1.5
+  audioMaxDistance: 8
 --- !u!4 &5844834018119749418 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 8197479891752161606, guid: 488c945401981434c968c5038c009aea, type: 3}
@@ -31944,6 +31952,10 @@ MonoBehaviour:
   maxStutterBlinks: 5
   minStutterBlink: 0.02
   maxStutterBlink: 0.09
+  flickerLoopClip: {fileID: 8300000, guid: 173154ed485b4a141aec509e9c33956d, type: 3}
+  audioVolume: 0.175
+  audioMinDistance: 1.5
+  audioMaxDistance: 8
 --- !u!4 &3599506699200435948 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 8197479891752161606, guid: 488c945401981434c968c5038c009aea, type: 3}
@@ -32529,6 +32541,10 @@ MonoBehaviour:
   maxStutterBlinks: 5
   minStutterBlink: 0.02
   maxStutterBlink: 0.09
+  flickerLoopClip: {fileID: 8300000, guid: 173154ed485b4a141aec509e9c33956d, type: 3}
+  audioVolume: 0.175
+  audioMinDistance: 1.5
+  audioMaxDistance: 8
 --- !u!1001 &5194489199759430676
 PrefabInstance:
   m_ObjectHideFlags: 0

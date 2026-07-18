@@ -6214,7 +6214,7 @@ AudioReverbZone:
   m_ReverbPreset: 27
   m_Room: -1000
   m_RoomHF: -100
-  m_DecayTime: 1.49
+  m_DecayTime: 0.745
   m_DecayHFRatio: 0.83
   m_Reflections: -2602
   m_ReflectionsDelay: 0.007
@@ -8990,6 +8990,10 @@ MonoBehaviour:
   maxStutterBlinks: 5
   minStutterBlink: 0.02
   maxStutterBlink: 0.09
+  flickerLoopClip: {fileID: 8300000, guid: 173154ed485b4a141aec509e9c33956d, type: 3}
+  audioVolume: 0.175
+  audioMinDistance: 1.5
+  audioMaxDistance: 8
 --- !u!1 &5157114529848531216
 GameObject:
   m_ObjectHideFlags: 0
@@ -9890,7 +9894,7 @@ AudioReverbZone:
   m_ReverbPreset: 27
   m_Room: -1000
   m_RoomHF: -100
-  m_DecayTime: 1.49
+  m_DecayTime: 0.745
   m_DecayHFRatio: 0.83
   m_Reflections: -2602
   m_ReflectionsDelay: 0.007
