@@ -615,14 +615,16 @@ MonoBehaviour:
   grabBoneIndex: 2
   holdLocalOffset: {x: -0.04233292, y: 0.3, z: 0.6}
   holdLocalEuler: {x: 356.66516, y: 264.7641, z: 266.7612}
+  grabApproachLocalOffset: {x: -0.0911347, y: -0.019964907, z: 0.9282389}
+  grabConnectDelay: 0.9
   screamDelay: 0.6
   pounceHitDelay: 2.83
   pounceDuration: 3.4
-  pounceDamage: 15
+  pounceDamage: 50
   knockbackForwardSpeed: 13
   knockbackUpwardSpeed: 5
   knockbackForceMode: 2
-  loseSightFleeDelay: 2
+  loseSightFleeDelay: 4
   fleeSpeed: 10.4
   fleeDistance: 42
   fleeSampleCount: 12

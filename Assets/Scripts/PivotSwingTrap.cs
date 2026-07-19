@@ -96,6 +96,24 @@ public class PivotSwingTrap : NetworkBehaviour
 
     public bool IsSwingTrapReturning => ReadReturningForDamageGate();
 
+    /// <summary>
+    /// World-space direction the pad surface travels while swinging OUT, evaluated at a world point and
+    /// flattened horizontally — the direction a struck body is batted. Mid-swing this runs along the
+    /// corridor, so knockback sends the victim down the hallway instead of radially off the blade.
+    /// Pure geometry (axis and swing sign), not measured angular speed, so it stays valid during the
+    /// full-swing hold. Returns Vector3.zero when degenerate (point on the hinge axis).
+    /// </summary>
+    public Vector3 GetOutwardSwingTangent(Vector3 worldPoint)
+    {
+        Transform p = pivot != null ? pivot : transform;
+        Vector3 axisLocal = localSwingAxis.sqrMagnitude > 1e-6f ? localSwingAxis.normalized : Vector3.up;
+        Vector3 axisWorld = p.rotation * axisLocal;
+        float sign = swingAngleDegrees >= restAngleDegrees ? 1f : -1f;
+        Vector3 tangent = Vector3.Cross(axisWorld * sign, worldPoint - p.position);
+        tangent.y = 0f;
+        return tangent.sqrMagnitude > 1e-6f ? tangent.normalized : Vector3.zero;
+    }
+
     void Awake()
     {
         if (pivot == null)

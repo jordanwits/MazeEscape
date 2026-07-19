@@ -20,6 +20,8 @@ public class RagdollTrap : MonoBehaviour
         TrapForward,
         [Tooltip("From trap position toward the player on the floor — works even if trap forward is wrong.")]
         PushAwayFromTrapHorizontal,
+        [Tooltip("Along the parent PivotSwingTrap's swing-out direction at the hit point — bats the victim down the corridor like the pad actually would. Falls back to Push Away From Trap Horizontal when no swing trap is present.")]
+        AlongSwingArcHorizontal,
     }
 
     [SerializeField] KnockbackDirectionMode knockbackDirection = KnockbackDirectionMode.PushAwayFromTrapHorizontal;
@@ -249,12 +251,14 @@ public class RagdollTrap : MonoBehaviour
         switch (knockbackDirection)
         {
             case KnockbackDirectionMode.PushAwayFromTrapHorizontal:
-                dir = otherBoundsCenter - transform.position;
-                dir.y = 0f;
-                if (dir.sqrMagnitude < 0.0001f)
-                    dir = -transform.forward;
-                dir.y = 0f;
-                return dir.sqrMagnitude > 1e-6f ? dir.normalized : Vector3.forward;
+                return PushAwayFromTrapHorizontalDirection(otherBoundsCenter);
+            case KnockbackDirectionMode.AlongSwingArcHorizontal:
+                Vector3 tangent = swingTrapDamageGate != null
+                    ? swingTrapDamageGate.GetOutwardSwingTangent(otherBoundsCenter)
+                    : Vector3.zero;
+                return tangent.sqrMagnitude > 1e-6f
+                    ? tangent
+                    : PushAwayFromTrapHorizontalDirection(otherBoundsCenter);
             case KnockbackDirectionMode.TrapForward:
                 dir = transform.forward;
                 break;
@@ -274,6 +278,16 @@ public class RagdollTrap : MonoBehaviour
             dir.y = 0f;
         }
 
+        return dir.sqrMagnitude > 1e-6f ? dir.normalized : Vector3.forward;
+    }
+
+    Vector3 PushAwayFromTrapHorizontalDirection(Vector3 otherBoundsCenter)
+    {
+        Vector3 dir = otherBoundsCenter - transform.position;
+        dir.y = 0f;
+        if (dir.sqrMagnitude < 0.0001f)
+            dir = -transform.forward;
+        dir.y = 0f;
         return dir.sqrMagnitude > 1e-6f ? dir.normalized : Vector3.forward;
     }
 }

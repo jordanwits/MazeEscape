@@ -273,12 +273,15 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     /// Server: an enemy (e.g. the Clown) grabs this player. The player goes limp and the hips are pinned to
     /// the enemy's grab bone on every client. Pair with <see cref="ReleaseSlamFromServer"/>.
     /// </summary>
-    public void BeginHeldByEnemyFromServer(ulong enemyNetworkObjectId, int grabBoneIndex, Vector3 localPos, Vector3 localEuler)
+    public void BeginHeldByEnemyFromServer(ulong enemyNetworkObjectId, int grabBoneIndex, Vector3 localPos, Vector3 localEuler,
+        Vector3 approachLocalPos, float approachSeconds)
     {
         if (!IsServer || ragdoll == null)
             return;
 
         _serverRagdollActive = true;
+        // The persistent snapshot stores only the final hold offset — a late joiner adopts the settled grip,
+        // it does not replay the approach glide (a sub-second transient).
         _heldByEnemy.Value = new HeldByEnemyState
         {
             Held = 1,
@@ -287,7 +290,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             LocalPos = localPos,
             LocalEuler = localEuler,
         };
-        StartHeldRagdollClientRpc(enemyNetworkObjectId, grabBoneIndex, localPos, localEuler);
+        StartHeldRagdollClientRpc(enemyNetworkObjectId, grabBoneIndex, localPos, localEuler, approachLocalPos, approachSeconds);
     }
 
     /// <summary>
@@ -326,7 +329,8 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     }
 
     [ClientRpc]
-    void StartHeldRagdollClientRpc(ulong enemyNetObjId, int grabBoneIndex, Vector3 localPos, Vector3 localEuler)
+    void StartHeldRagdollClientRpc(ulong enemyNetObjId, int grabBoneIndex, Vector3 localPos, Vector3 localEuler,
+        Vector3 approachLocalPos, float approachSeconds)
     {
         if (ragdoll == null)
             return;
@@ -335,7 +339,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         if (grabBone == null)
             return;
 
-        ragdoll.BeginHeldByPoint(grabBone, localPos, Quaternion.Euler(localEuler));
+        ragdoll.BeginHeldByPoint(grabBone, localPos, Quaternion.Euler(localEuler), approachLocalPos, approachSeconds);
     }
 
     [ClientRpc]

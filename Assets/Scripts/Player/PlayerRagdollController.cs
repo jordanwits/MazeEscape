@@ -113,6 +113,12 @@ public class PlayerRagdollController : MonoBehaviour
     Vector3 _heldLocalPos;
     Quaternion _heldLocalRot;
     RigidbodyInterpolation _hipsInterpolationBeforeHold;
+    // Approach glide: the hips ease from a "caught" offset into the hold offset over a short window, so the
+    // victim is pulled into the grip in sync with the grab animation instead of snapping to the hold instantly.
+    Vector3 _heldApproachFrom;
+    float _heldApproachStartTime;
+    float _heldApproachDuration;
+    bool _heldApproaching;
     public bool IsHeld => _isHeld;
 
     /// <summary>The transform the victim is pinned to while held (the enemy's grab bone), or null. Used by the
@@ -278,6 +284,15 @@ public class PlayerRagdollController : MonoBehaviour
     /// transform all clients agree on, so it stays in sync with no per-frame streaming.
     /// </summary>
     public void BeginHeldByPoint(Transform target, Vector3 localPosOffset, Quaternion localRotOffset)
+        => BeginHeldByPoint(target, localPosOffset, localRotOffset, localPosOffset, 0f);
+
+    /// <summary>
+    /// As <see cref="BeginHeldByPoint(Transform,Vector3,Quaternion)"/>, but the hips glide from
+    /// <paramref name="approachLocalPos"/> to <paramref name="localPosOffset"/> (grab-bone local space) over
+    /// <paramref name="approachSeconds"/> — pulls the victim into the grip in sync with the grab animation
+    /// rather than snapping to the hold instantly. 0 seconds reproduces the original snap.
+    /// </summary>
+    public void BeginHeldByPoint(Transform target, Vector3 localPosOffset, Quaternion localRotOffset, Vector3 approachLocalPos, float approachSeconds)
     {
         if (target == null)
             return;
@@ -303,6 +318,11 @@ public class PlayerRagdollController : MonoBehaviour
         _isHeld = true;
         _heldRigid = true;
 
+        _heldApproaching = approachSeconds > 0f;
+        _heldApproachFrom = approachLocalPos;
+        _heldApproachStartTime = Time.time;
+        _heldApproachDuration = approachSeconds;
+
         // Pin the hips kinematically; the rest of the (frozen) skeleton follows it rigidly.
         _hipsInterpolationBeforeHold = hipsRigidbody.interpolation;
         hipsRigidbody.isKinematic = true;
@@ -324,6 +344,7 @@ public class PlayerRagdollController : MonoBehaviour
         _isHeld = false;
         _heldRigid = false;
         _heldTarget = null;
+        _heldApproaching = false;
 
         if (hipsRigidbody != null)
             hipsRigidbody.interpolation = _hipsInterpolationBeforeHold;
@@ -386,6 +407,7 @@ public class PlayerRagdollController : MonoBehaviour
         _isHeld = false;
         _heldRigid = false;
         _heldTarget = null;
+        _heldApproaching = false;
         if (hipsRigidbody != null)
             hipsRigidbody.interpolation = _hipsInterpolationBeforeHold;
     }
@@ -406,9 +428,21 @@ public class PlayerRagdollController : MonoBehaviour
         if (!_isHeld || _heldTarget == null || hipsRigidbody == null)
             return;
 
+        Vector3 localPos = _heldLocalPos;
+        if (_heldApproaching)
+        {
+            float t = _heldApproachDuration > 1e-4f
+                ? Mathf.Clamp01((Time.time - _heldApproachStartTime) / _heldApproachDuration)
+                : 1f;
+            float s = t * t * (3f - 2f * t); // smoothstep ease into the grip
+            localPos = Vector3.Lerp(_heldApproachFrom, _heldLocalPos, s);
+            if (t >= 1f)
+                _heldApproaching = false;
+        }
+
         // MovePosition/MoveRotation (vs. setting .position) keeps interpolation smooth and lets the
         // joint-connected limbs drag along naturally each physics step.
-        hipsRigidbody.MovePosition(_heldTarget.TransformPoint(_heldLocalPos));
+        hipsRigidbody.MovePosition(_heldTarget.TransformPoint(localPos));
         hipsRigidbody.MoveRotation(_heldTarget.rotation * _heldLocalRot);
     }
 

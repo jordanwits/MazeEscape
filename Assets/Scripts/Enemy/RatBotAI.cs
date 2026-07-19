@@ -107,6 +107,10 @@ public class RatBotAI : NetworkBehaviour
     [SerializeField] Vector3 holdLocalOffset = new Vector3(0f, -0.04f, 0.5f);
     [Tooltip("Local euler (grab-bone space) of the held victim — spin him to face the RatBot. Tune in play.")]
     [SerializeField] Vector3 holdLocalEuler = new Vector3(0f, 180f, 0f);
+    [Tooltip("Local offset (grab-bone space) of the victim at the instant of the grab — he glides from here into the hold over Grab Connect Delay, synced to the reach/lift instead of snapping in. Tune in play.")]
+    [SerializeField] Vector3 grabApproachLocalOffset;
+    [Tooltip("Seconds the victim takes to glide from the grab (approach) offset into the hold — match the clip's reach+lift (~0.9s).")]
+    [SerializeField, Min(0f)] float grabConnectDelay = 0.9f;
     [Tooltip("Seconds after the grab before the jaw snaps open + scream fires (the clip lifts the victim to face level by ~0.9s).")]
     [SerializeField, Min(0f)] float screamDelay = 0.9f;
     [Tooltip("Seconds after the grab before the throw releases — align with the clip's chest-pass release (~2.83s).")]
@@ -546,14 +550,16 @@ public class RatBotAI : NetworkBehaviour
         if (inNetSession && _pounceTargetNetRagdoll != null)
         {
             _pounceTargetNetRagdoll.BeginHeldByEnemyFromServer(
-                NetworkObject.NetworkObjectId, grabBoneIndex, holdLocalOffset, holdLocalEuler);
+                NetworkObject.NetworkObjectId, grabBoneIndex, holdLocalOffset, holdLocalEuler,
+                grabApproachLocalOffset, grabConnectDelay);
         }
         else if (_pounceTargetRagdoll != null)
         {
             // Offline play mode: pin directly against the resolved grab bone (the same bone the RPC uses).
             Transform grabBone = NetworkPlayerRagdoll.FindGrabBone(transform, grabBoneIndex);
             if (grabBone != null)
-                _pounceTargetRagdoll.BeginHeldByPoint(grabBone, holdLocalOffset, Quaternion.Euler(holdLocalEuler));
+                _pounceTargetRagdoll.BeginHeldByPoint(grabBone, holdLocalOffset, Quaternion.Euler(holdLocalEuler),
+                    grabApproachLocalOffset, grabConnectDelay);
         }
     }
 
