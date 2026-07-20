@@ -591,7 +591,7 @@ MonoBehaviour:
   chaseStepInterval: 0.34
   fleeStepInterval: 0.26
   footstepVolume: 0.1
-  maxObserveDistance: 26
+  maxObserveDistance: 30
   viewConeHalfAngleDegrees: 48
   lineOfSightMask:
     serializedVersion: 2
@@ -599,8 +599,8 @@ MonoBehaviour:
   lowSightSampleHeight: 0.25
   highSightSampleHeight: 1.6
   unfreezeDelay: 0.25
-  sneakSpeed: 3.2
-  crawlSpeed: 2
+  sneakSpeed: 4
+  crawlSpeed: 3.2
   sprintSpeed: 6.5
   crawlChance: 0.35
   sprintChaseSpeedThreshold: 3.6
@@ -612,24 +612,29 @@ MonoBehaviour:
   sneakRightFacingYawOffsetDegrees: 114
   sprintFacingYawOffsetDegrees: 0
   catchRadius: 1.6
+  contactGrabReach: 0.85
   grabBoneIndex: 2
-  holdLocalOffset: {x: -0.04233292, y: 0.3, z: 0.6}
+  holdLocalOffset: {x: -0.04233292, y: 0.1, z: 0.7}
   holdLocalEuler: {x: 356.66516, y: 264.7641, z: 266.7612}
   grabApproachLocalOffset: {x: -0.0911347, y: -0.019964907, z: 0.9282389}
   grabConnectDelay: 0.9
-  screamDelay: 0.6
+  screamDelay: 0.3
   pounceHitDelay: 2.83
   pounceDuration: 3.4
   pounceDamage: 50
   knockbackForwardSpeed: 13
   knockbackUpwardSpeed: 5
   knockbackForceMode: 2
-  loseSightFleeDelay: 4
+  loseSightFleeDelay: 6
   fleeSpeed: 10.4
   fleeDistance: 42
   fleeSampleCount: 12
   fleeTimeoutSeconds: 24
   fleeArriveRadius: 1.5
+  screamShakeInnerRadius: 3
+  screamShakeOuterRadius: 14
+  screamShakeStrength: 1
+  screamShakeFallbackSeconds: 1.5
   jawOpenEuler: {x: 35, y: 0, z: 0}
   jawLerpSpeed: 14
 --- !u!1 &2097496351782056845

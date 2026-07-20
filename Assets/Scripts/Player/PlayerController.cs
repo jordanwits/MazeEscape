@@ -1482,6 +1482,10 @@ public partial class PlayerController : MonoBehaviour
         // early-returns below so it applies in first-person mode too (that path returns early here).
         UpdateJailorProximityShake();
 
+        // One-shot scream jolt (RatBot grab, etc.). Also before the early-returns so it plays while the victim
+        // is held — that's exactly whose view we want to rattle.
+        UpdateScreamImpulseShake();
+
         // Sprint / energy-drink FOV kick. Before the early-returns so the FOV still eases back to base
         // while control is lost (ragdoll/death); self-gates to the local player's enabled view camera.
         TickCameraFov();

@@ -27,6 +27,12 @@ public class RagdollCameraDamper : MonoBehaviour
     [Tooltip("If the head jumps farther than this in one frame (slam reposition, respawn, teleport), snap the proxy instead of lerping the camera through geometry. 0 = never snap.")]
     [SerializeField] float snapDistance = 1.25f;
 
+    [Header("Enemy-grab hold view offset")]
+    [Tooltip("Only while held by an enemy (LookTarget set): lift the eye this far (m) so the view clears the player's own chest/collar instead of clipping it. The held eye rides the head bone with no forward offset, so it otherwise sits right on the chest.")]
+    [SerializeField] float heldViewUpOffset = 0.15f;
+    [Tooltip("Only while held by an enemy: push the eye this far (m) toward the grabber. Combined with the lift this drops the chest fully out of frame and squares you up with the scream.")]
+    [SerializeField] float heldViewForwardOffset = 0.12f;
+
     Transform _proxy;
     Transform _head;
     Transform _lookTarget;
@@ -91,8 +97,24 @@ public class RagdollCameraDamper : MonoBehaviour
         if (_head == null)
             return;
 
-        Proxy.SetPositionAndRotation(_head.position, ComputeDesiredRotation());
+        Proxy.SetPositionAndRotation(DesiredHeadPosition(), ComputeDesiredRotation());
         _positionVelocity = Vector3.zero;
+    }
+
+    /// <summary>
+    /// Where the proxy should sit: the head bone, plus a small lift/forward nudge while held by an enemy so the
+    /// locked view clears the player's own chest (the held eye has no forward offset of its own). No offset in the
+    /// ordinary ragdoll-tumble case (no LookTarget).
+    /// </summary>
+    Vector3 DesiredHeadPosition()
+    {
+        Vector3 pos = _head.position;
+        if (_lookTarget != null && (heldViewUpOffset != 0f || heldViewForwardOffset != 0f))
+        {
+            Vector3 forward = ComputeDesiredRotation() * Vector3.forward;
+            pos += forward * heldViewForwardOffset + Vector3.up * heldViewUpOffset;
+        }
+        return pos;
     }
 
     // The rotation the proxy chases: face the grabber with a level horizon while held, else the head's raw pose.
@@ -125,7 +147,7 @@ public class RagdollCameraDamper : MonoBehaviour
         if (!_following || _head == null)
             return;
 
-        Vector3 headPos = _head.position;
+        Vector3 headPos = DesiredHeadPosition();
         Quaternion headRot = ComputeDesiredRotation();
         float dt = Time.deltaTime;
 

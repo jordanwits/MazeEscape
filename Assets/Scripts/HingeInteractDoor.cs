@@ -535,7 +535,9 @@ public class HingeInteractDoor : NetworkBehaviour
             if (_isOpenOffline)
                 _openPromptOffline = false;
             StartMoveToState(_isOpenOffline, false);
-            SyncPairedLeafLocalOpen(_isOpenOffline, playSfx: false);
+            // Let the mate route through PlayDoorOpenSfx too: the emitter gate guarantees exactly one leaf
+            // sounds, so the clip still plays once even when the player interacted with the non-emitter leaf.
+            SyncPairedLeafLocalOpen(_isOpenOffline, playSfx: true);
             return;
         }
 
@@ -1074,9 +1076,24 @@ public class HingeInteractDoor : NetworkBehaviour
             GameAudioManager.RouteSfxSource(_sfx);
     }
 
+    /// <summary>
+    /// Double-door leaves each fire their own open/close/unlock audio, so one interact would play the
+    /// clip twice (both spawned leaves' NetworkVariable callbacks, or both procedural leaves being driven).
+    /// To play it once, only a single leaf of a pair emits: deterministically the one with the smaller
+    /// <see cref="DoorId"/>. Every peer computes DoorId identically from the hierarchy, so all peers pick
+    /// (and silence) the same leaf. Single (unpaired) doors always emit.
+    /// </summary>
+    bool IsDoorAudioEmitter()
+    {
+        HingeInteractDoor mate = pairedLeaf;
+        return mate == null || DoorId < mate.DoorId;
+    }
+
     void PlayDoorUnlockSfx()
     {
         if (doorUnlockClip == null)
+            return;
+        if (!IsDoorAudioEmitter())
             return;
         EnsureSfxSource();
         if (_sfx == null)
@@ -1089,6 +1106,9 @@ public class HingeInteractDoor : NetworkBehaviour
     /// <param name="opening">True when swinging toward open, false when closing.</param>
     void PlayDoorOpenSfx(bool opening)
     {
+        if (!IsDoorAudioEmitter())
+            return;
+
         AudioClip clip;
         if (opening)
             clip = doorOpenClip;

@@ -101,6 +101,8 @@ public class RatBotAI : NetworkBehaviour
     [Header("Grab / scream / throw attack")]
     [Tooltip("Horizontal catch distance while moving unobserved — reaching this grabs the victim.")]
     [SerializeField, Min(0.1f)] float catchRadius = 1.5f;
+    [Tooltip("Extra reach (metres) BEYOND the two capsules physically touching at which a player pressing toward him is grabbed, REGARDLESS of observation — walk into him (even while staring) and he snaps. Measured surface-to-surface (his capsule radius + the player's), so it's identical from every side and forgiving of the exact standoff. Larger = he grabs from farther out.")]
+    [SerializeField, Min(0f)] float contactGrabReach = 0.85f;
     [Tooltip("Which grab bone the victim is pinned to while held (NetworkPlayerRagdoll grab bones: 0 RightHand, 1 LeftHand, 2 Hips, 3 Spine1).")]
     [SerializeField, Range(0, 3)] int grabBoneIndex = 2;
     [Tooltip("Local offset (grab-bone space) of the held victim's hips — places him in front of the face. Tune in play.")]
@@ -136,6 +138,16 @@ public class RatBotAI : NetworkBehaviour
     [SerializeField, Min(1f)] float fleeTimeoutSeconds = 24f;
     [SerializeField, Min(0.2f)] float fleeArriveRadius = 1.5f;
 
+    [Header("Scream screen shake")]
+    [Tooltip("Local players within this distance of the scream feel the full jolt (the grabbed victim is right at his face, ~0.5m).")]
+    [SerializeField, Min(0f)] float screamShakeInnerRadius = 3f;
+    [Tooltip("Beyond this distance the scream doesn't shake the view at all; between the two radii it fades out.")]
+    [SerializeField, Min(0.1f)] float screamShakeOuterRadius = 14f;
+    [Tooltip("Full-strength scream shake trauma (0-1) applied at/inside the inner radius. 1 = the player's own screamShakeMaxAngleDegrees.")]
+    [SerializeField, Range(0f, 1f)] float screamShakeStrength = 1f;
+    [Tooltip("Shake duration (seconds) used only when no scream clip is assigned. When a clip IS assigned the shake matches its exact length instead.")]
+    [SerializeField, Min(0f)] float screamShakeFallbackSeconds = 1.5f;
+
     [Header("Jaw")]
     [Tooltip("Local euler rotation added to the jaw hinge's rest pose when fully open. Sign/axis depends on how the hinge was authored — tune in the prefab.")]
     [SerializeField] Vector3 jawOpenEuler = new Vector3(-30f, 0f, 0f);
@@ -165,6 +177,9 @@ public class RatBotAI : NetworkBehaviour
     float _pounceStartTime;
     bool _pounceHitApplied;
     bool _screamStarted;
+    // Every peer: view-shake runs until this time (= scream start + clip length), so it matches the audio, not
+    // the longer jaw-open window. Set on the scream's rising edge; PlayerController decays the tail after.
+    float _screamShakeEndTime;
 
     // flee
     Vector3 _fleeDestination;
@@ -296,6 +311,7 @@ public class RatBotAI : NetworkBehaviour
     {
         UpdateJawVisual();
         UpdateFootstepAudio();
+        UpdateScreamShake();
 
         if (!ShouldSimulate)
         {
@@ -324,6 +340,10 @@ public class RatBotAI : NetworkBehaviour
     {
         ApplyMotion(Vector3.zero); // gravity only, so he settles onto the floor at spawn
 
+        // Walk into the "prop" and he grabs you — physical contact overrides the whole weeping-angel dance.
+        if (TryContactGrab())
+            return;
+
         // The first genuine look wakes him. He keeps looping Idle (still reads as a prop) and won't
         // take a single step until everyone looks away — see UpdateStalking.
         if (IsObservedByAnyLivingPlayer())
@@ -336,6 +356,11 @@ public class RatBotAI : NetworkBehaviour
 
     void UpdateStalking()
     {
+        // Physical contact grabs even while he's frozen/being watched — if you press into the statue, he gets
+        // you. This runs before the observed freeze-and-return below, which is why staring no longer saves you.
+        if (TryContactGrab())
+            return;
+
         bool observed = IsObservedByAnyLivingPlayer();
 
         // Keep a valid target and its velocity fresh every frame (both the freeze read below and the
@@ -519,6 +544,52 @@ public class RatBotAI : NetworkBehaviour
             _netState.Value = (byte)newState; // OnValueChanged fires on server + clients → ApplyStateVisual
         else
             ApplyStateVisual(newState);       // offline play mode
+    }
+
+    /// <summary>
+    /// Grab the nearest valid player pressing into him (horizontal contact), ignoring observation. This is the
+    /// "walk into him and he snaps" path — distinct from the unobserved stalk-catch in UpdateStalking. Returns
+    /// true (and starts the pounce) if someone was in contact.
+    /// </summary>
+    bool TryContactGrab()
+    {
+        var players = PlayerHealthRegistry.All;
+        float ratRadius = characterController != null ? characterController.radius : 0.45f;
+
+        PlayerHealth best = null;
+        float bestGap = float.PositiveInfinity;
+        for (int i = 0; i < players.Count; i++)
+        {
+            PlayerHealth player = players[i];
+            if (!IsValidStalkTarget(player))
+                continue;
+
+            // Surface-to-surface horizontal gap between his capsule and the player's — negative once they overlap.
+            // Using the real capsule radii makes the trigger identical from the front, back, or side (the fixed
+            // centre-distance it replaced was marginal head-on, where the player's own capsule ate the slack).
+            Vector3 flat = player.transform.position - transform.position;
+            flat.y = 0f;
+            float playerRadius = ResolvePlayerRadius(player);
+            float gap = flat.magnitude - ratRadius - playerRadius;
+
+            if (gap <= contactGrabReach && gap < bestGap)
+            {
+                bestGap = gap;
+                best = player;
+            }
+        }
+
+        if (best == null)
+            return false;
+
+        StartPounce(best);
+        return true;
+    }
+
+    float ResolvePlayerRadius(PlayerHealth player)
+    {
+        CharacterController cc = player.GetComponent<CharacterController>();
+        return cc != null ? cc.radius : 0.3f;
     }
 
     void StartPounce(PlayerHealth target)
@@ -1052,10 +1123,29 @@ public class RatBotAI : NetworkBehaviour
 
     // Fire the scream one-shot on the rising edge of the jaw opening, on whichever peers see the change — ties
     // the audio to the visible mouth-open (the scream beat) and stays in sync via the replicated jaw value.
+    // Runs on EVERY peer. Tops up the local view shake for as long as the scream audio is playing (its clip
+    // length, captured on the rising edge below), so the rattle matches the sound rather than the longer
+    // jaw-open window. Once the window ends the top-up stops and PlayerController decays the tail out.
+    void UpdateScreamShake()
+    {
+        if (Time.time >= _screamShakeEndTime)
+            return;
+
+        PlayerController.AddScreamShakeToLocalPlayer(
+            transform.position + Vector3.up * highSightSampleHeight,
+            screamShakeInnerRadius, screamShakeOuterRadius, screamShakeStrength);
+    }
+
     void MaybeScreamOnJawEdge(float previousOpen, float currentOpen)
     {
+        // The scream one-shot fires on the rising edge; open the shake window for exactly the clip's length so
+        // the rattle ends with the audio (the jaw stays open past the sound, up to the throw).
         if (previousOpen < 0.5f && currentOpen >= 0.5f)
+        {
             PlayScream();
+            float duration = screamClip != null ? screamClip.length : screamShakeFallbackSeconds;
+            _screamShakeEndTime = Time.time + duration;
+        }
     }
 
     void HandleNetStateChanged(byte previousValue, byte currentValue)
