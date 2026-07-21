@@ -138,6 +138,20 @@ public class PlayerRagdollController : MonoBehaviour
     /// </summary>
     public Transform HipsTransform => hipsRigidbody != null ? hipsRigidbody.transform : null;
 
+    /// <summary>
+    /// Index of the hips Rigidbody inside the cached ragdoll-body list (the order streamed by
+    /// <see cref="SampleOwnerRagdollPose"/>), or -1. The networking layer uses it to measure the gap
+    /// between the observer's local sim and the streamed pose when deciding the handover moment.
+    /// </summary>
+    public int HipsBodyIndex
+    {
+        get
+        {
+            ResolveHips();
+            return hipsRigidbody != null ? _ragdollBodies.IndexOf(hipsRigidbody) : -1;
+        }
+    }
+
     void Awake()
     {
         if (characterController == null)

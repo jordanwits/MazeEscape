@@ -22,11 +22,18 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     // observers reach the latest sample just as the next one arrives; if a sample is delayed by jitter, the
     // body holds at the last target briefly.
     const float RagdollPoseInterpDuration = 0.05f;
-    // When the observer's local presentation launch (BeginObserverRagdollWithLocalLaunch) hands over to the
-    // authoritative stream at the first received sample, the blend runs over this longer window: the local
-    // sim has flown ~the owner's RTT further than the (older) streamed pose, and easing across that gap
-    // hides the pull-back that a single 50 ms step would show as a flick.
-    const float RagdollHandoverBlendSeconds = 0.18f;
+    // Handover from the observer's local presentation launch (BeginObserverRagdollWithLocalLaunch) to the
+    // authoritative stream. The stream renders the owner's flight a constant delay behind real time
+    // (owner→server→observer legs + tick/frame latency), so handing over at the FIRST sample rewinds the
+    // body by the whole in-flight gap — measured ~2.2 m of backward yank in a live trap test. Instead the
+    // local sim keeps flying while the stream is tracked in the background, and the puppet takes over only
+    // once the stream's current pose has caught up to the sim (the gap ≈ speed × stream-lag, so it shrinks
+    // naturally as the body slows) — or at the hard cap, whichever comes first.
+    const float ObserverHandoverHipsGapMeters = 0.35f;
+    const float ObserverHandoverMaxCoverSeconds = 2.0f;
+    // Crossfade from the sim's frozen handover pose onto the live stream. Short, and by construction the
+    // gap it must hide is at most ObserverHandoverHipsGapMeters (or the residual settle divergence at cap).
+    const float ObserverHandoverCrossfadeSeconds = 0.25f;
 
     // Grab bone the enemy holds this player by, resolved by Mixamo bone name on every client so the hips
     // pin (see PlayerRagdollController.BeginHeldByPoint) tracks a transform all clients already agree on.
@@ -106,10 +113,13 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     Vector3[] _observerLerpPosBuffer;
     Quaternion[] _observerLerpRotBuffer;
     float _observerInterpStart;
-    // Duration of the interp window currently in flight (RagdollHandoverBlendSeconds for the local-sim
-    // handover, RagdollPoseInterpDuration for every normal sample-to-sample window).
-    float _observerInterpDuration = RagdollPoseInterpDuration;
     bool _observerHasInterpData;
+
+    float _observerLocalSimStartTime;
+    Vector3[] _handoverFromPos;
+    Quaternion[] _handoverFromRot;
+    bool _handoverCrossfadeActive;
+    float _handoverCrossfadeStart;
 
     NetworkPlayerAvatar _avatar;
 
@@ -272,7 +282,9 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             if (_avatar != null)
                 _avatar.SetBlockingProxySuppressedForRagdoll(true);
             ragdoll.BeginObserverRagdollWithLocalLaunch(worldForce, worldForcePosition, (ForceMode)forceMode);
+            _observerLocalSimStartTime = Time.time;
             _observerHasInterpData = false;
+            _handoverCrossfadeActive = false;
         }
     }
 
@@ -479,12 +491,13 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         if (ragdoll == null)
             return;
 
-        // A stop can theoretically land while the local launch sim is still covering (no pose sample seen
-        // yet), so put the bones back to kinematic BEFORE the proxy capsule returns. Both calls are no-ops
-        // in the normal case (sim already handed over, suppression already released).
+        // A stop can land while the local launch sim is still covering (recovery before the gap ever
+        // closed), so put the bones back to kinematic BEFORE the proxy capsule returns. All of these are
+        // no-ops in the normal case (sim already handed over, suppression already released).
         ragdoll.EndObserverLocalSimToPuppet();
         if (_avatar != null)
             _avatar.SetBlockingProxySuppressedForRagdoll(false);
+        _handoverCrossfadeActive = false;
 
         if (!playRecoveryAnimation)
         {
@@ -552,14 +565,82 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         if (_observerLerpRotBuffer == null || _observerLerpRotBuffer.Length != count)
             _observerLerpRotBuffer = new Quaternion[count];
 
-        float t = Mathf.Clamp01((Time.time - _observerInterpStart) / _observerInterpDuration);
+        float t = Mathf.Clamp01((Time.time - _observerInterpStart) / RagdollPoseInterpDuration);
         for (int i = 0; i < count; i++)
         {
             _observerLerpPosBuffer[i] = Vector3.Lerp(_observerPrevPos[i], _observerTargetPos[i], t);
             _observerLerpRotBuffer[i] = Quaternion.Slerp(_observerPrevRot[i], _observerTargetRot[i], t);
         }
 
+        // While the local launch sim covers, the stream above is tracking only. Hand the bones to the
+        // puppet once the stream has caught up (or the cap forces it); until then physics keeps rendering.
+        if (ragdoll.IsObserverLocalSimActive && !TryBeginObserverHandover(count))
+            return;
+
+        if (_handoverCrossfadeActive)
+        {
+            float w = Mathf.Clamp01((Time.time - _handoverCrossfadeStart) / ObserverHandoverCrossfadeSeconds);
+            w = w * w * (3f - 2f * w); // smoothstep ease onto the stream
+            for (int i = 0; i < count && i < _handoverFromPos.Length; i++)
+            {
+                _observerLerpPosBuffer[i] = Vector3.Lerp(_handoverFromPos[i], _observerLerpPosBuffer[i], w);
+                _observerLerpRotBuffer[i] = Quaternion.Slerp(_handoverFromRot[i], _observerLerpRotBuffer[i], w);
+            }
+            if (w >= 1f)
+                _handoverCrossfadeActive = false;
+        }
+
         ragdoll.ApplyObserverRagdollPose(_observerLerpPosBuffer, _observerLerpRotBuffer);
+    }
+
+    /// <summary>
+    /// Decides the local-sim → stream handover. The stream renders a constant delay behind the sim, so the
+    /// hips gap between them is ~speed × lag and shrinks as the flight slows; waiting for it to close means
+    /// the violent part of the knockback always renders from the immediate local sim and the puppet takes
+    /// over in the slow tail, where the crossfade is imperceptible. The cap bounds settle-position
+    /// divergence (different local contacts) — at cap the crossfade absorbs whatever residual gap remains.
+    /// Returns true once the puppet owns the bones (crossfade started).
+    /// </summary>
+    bool TryBeginObserverHandover(int count)
+    {
+        int hipsIndex = ragdoll.HipsBodyIndex;
+        Transform hips = ragdoll.HipsTransform;
+        float gap = float.MaxValue;
+        if (hips != null && hipsIndex >= 0 && hipsIndex < count)
+            gap = (hips.position - _observerLerpPosBuffer[hipsIndex]).magnitude;
+
+        bool capReached = Time.time - _observerLocalSimStartTime >= ObserverHandoverMaxCoverSeconds;
+        if (gap > ObserverHandoverHipsGapMeters && !capReached)
+            return false;
+
+        if (_handoverFromPos == null || _handoverFromPos.Length != count)
+        {
+            _handoverFromPos = new Vector3[count];
+            _handoverFromRot = new Quaternion[count];
+        }
+
+        if (count == ragdoll.RagdollBodyCount)
+        {
+            ragdoll.SampleOwnerRagdollPose(_handoverFromPos, _handoverFromRot); // sim's final pose
+        }
+        else
+        {
+            // Bone-count mismatch (shouldn't happen — all peers run the same rig): degrade to a plain cut.
+            for (int i = 0; i < count; i++)
+            {
+                _handoverFromPos[i] = _observerLerpPosBuffer[i];
+                _handoverFromRot[i] = _observerLerpRotBuffer[i];
+            }
+        }
+
+        // Bones kinematic first, then the blocking proxy may return — never both dynamic and solid.
+        ragdoll.EndObserverLocalSimToPuppet();
+        if (_avatar != null)
+            _avatar.SetBlockingProxySuppressedForRagdoll(false);
+
+        _handoverCrossfadeActive = true;
+        _handoverCrossfadeStart = Time.time;
+        return true;
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
@@ -584,6 +665,9 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         if (count == 0 || boneRotations.Length != count)
             return;
 
+        // While the local launch sim is active, these samples are only TRACKED (prev/target updated) so the
+        // stream's current pose is always known — ObserverInterpolatePose decides when the puppet takes
+        // over (gap-gated handover) and until then never applies them to the dynamic bones.
         bool needAlloc = !_observerHasInterpData
                          || _observerPrevPos == null
                          || _observerPrevPos.Length != count;
@@ -594,46 +678,9 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             _observerPrevRot = new Quaternion[count];
             _observerTargetPos = new Vector3[count];
             _observerTargetRot = new Quaternion[count];
-        }
 
-        if (ragdoll.IsObserverLocalSimActive)
-        {
-            // First sample while the local presentation launch is still simulating: hand the bones back to
-            // the kinematic puppet and glide from the sim's CURRENT pose onto the (slightly older) streamed
-            // pose over the handover window, instead of snapping onto it.
-            if (count == ragdoll.RagdollBodyCount)
-            {
-                ragdoll.SampleOwnerRagdollPose(_observerPrevPos, _observerPrevRot); // current local-sim pose
-                for (int i = 0; i < count; i++)
-                {
-                    _observerTargetPos[i] = bonePositions[i];
-                    _observerTargetRot[i] = boneRotations[i];
-                }
-                _observerInterpDuration = RagdollHandoverBlendSeconds;
-            }
-            else
-            {
-                // Bone-count mismatch (shouldn't happen — all peers run the same rig): fall back to the
-                // plain snap so the stream can still take over.
-                for (int i = 0; i < count; i++)
-                {
-                    _observerPrevPos[i] = bonePositions[i];
-                    _observerPrevRot[i] = boneRotations[i];
-                    _observerTargetPos[i] = bonePositions[i];
-                    _observerTargetRot[i] = boneRotations[i];
-                }
-                _observerInterpDuration = RagdollPoseInterpDuration;
-            }
-
-            // Bones kinematic first, then the blocking proxy may return — never both dynamic and solid.
-            ragdoll.EndObserverLocalSimToPuppet();
-            if (_avatar != null)
-                _avatar.SetBlockingProxySuppressedForRagdoll(false);
-        }
-        else if (needAlloc)
-        {
-            // First snapshot for this ragdoll (late-join reconstruction / slam puppet): prev == target, so
-            // the very next frame applies the sample with no interp lurch.
+            // First snapshot for this ragdoll: prev == target, so the very next frame applies the sample with
+            // no interp lurch.
             for (int i = 0; i < count; i++)
             {
                 _observerPrevPos[i] = bonePositions[i];
@@ -641,15 +688,13 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
                 _observerTargetPos[i] = bonePositions[i];
                 _observerTargetRot[i] = boneRotations[i];
             }
-            _observerInterpDuration = RagdollPoseInterpDuration;
         }
         else
         {
             // Anchor prev at the pose we're rendering RIGHT NOW (the in-flight lerp value), then aim the next
             // interp at the new sample. Without this, a sample arriving before the prior interp completed
-            // would discontinuously snap back to the old prev. The anchor uses the duration of the window
-            // being interrupted (which may be the longer handover blend).
-            float t = Mathf.Clamp01((Time.time - _observerInterpStart) / _observerInterpDuration);
+            // would discontinuously snap back to the old prev.
+            float t = Mathf.Clamp01((Time.time - _observerInterpStart) / RagdollPoseInterpDuration);
             for (int i = 0; i < count; i++)
             {
                 _observerPrevPos[i] = Vector3.Lerp(_observerPrevPos[i], _observerTargetPos[i], t);
@@ -657,7 +702,6 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
                 _observerTargetPos[i] = bonePositions[i];
                 _observerTargetRot[i] = boneRotations[i];
             }
-            _observerInterpDuration = RagdollPoseInterpDuration;
         }
 
         _observerInterpStart = Time.time;
