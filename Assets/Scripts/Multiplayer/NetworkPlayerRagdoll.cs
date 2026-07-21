@@ -25,15 +25,22 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     // Handover from the observer's local presentation launch (BeginObserverRagdollWithLocalLaunch) to the
     // authoritative stream. The stream renders the owner's flight a constant delay behind real time
     // (owner→server→observer legs + tick/frame latency), so handing over at the FIRST sample rewinds the
-    // body by the whole in-flight gap — measured ~2.2 m of backward yank in a live trap test. Instead the
-    // local sim keeps flying while the stream is tracked in the background, and the puppet takes over only
-    // once the stream's current pose has caught up to the sim (the gap ≈ speed × stream-lag, so it shrinks
-    // naturally as the body slows) — or at the hard cap, whichever comes first.
-    const float ObserverHandoverHipsGapMeters = 0.35f;
+    // body by the whole in-flight gap — measured ~2.2 m of backward yank in a live trap test. The catch-up
+    // test must be TEMPORAL, not spatial: near the arc's apex the trajectory is slow and spatially
+    // compact, so a raw sim-vs-stream distance check fires mid-air while the stream is still ~half a
+    // second behind, which rendered as the body hanging frozen at the apex until the stream caught up.
+    // Instead both hips' cumulative path lengths are tracked from launch, and the puppet takes over only
+    // once the stream has TRAVELED to within this many meters of the sim's path distance — or at the hard
+    // cap, whichever comes first.
+    const float ObserverHandoverPathCatchupMeters = 0.35f;
     const float ObserverHandoverMaxCoverSeconds = 2.0f;
-    // Crossfade from the sim's frozen handover pose onto the live stream. Short, and by construction the
-    // gap it must hide is at most ObserverHandoverHipsGapMeters (or the residual settle divergence at cap).
-    const float ObserverHandoverCrossfadeSeconds = 0.25f;
+    // The handover blend adds a decaying offset (sim pose − stream pose at handover) on top of the LIVE
+    // stream, so the body always keeps moving with the stream's velocity — a frozen-pose lerp would hover
+    // in place whenever the stream is still approaching the handover point. The decay duration scales with
+    // the offset being absorbed (≈ this many m/s), clamped to the min/max window.
+    const float ObserverHandoverBlendMetersPerSecond = 2.0f;
+    const float ObserverHandoverBlendMinSeconds = 0.25f;
+    const float ObserverHandoverBlendMaxSeconds = 0.6f;
 
     // Grab bone the enemy holds this player by, resolved by Mixamo bone name on every client so the hips
     // pin (see PlayerRagdollController.BeginHeldByPoint) tracks a transform all clients already agree on.
@@ -116,10 +123,17 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     bool _observerHasInterpData;
 
     float _observerLocalSimStartTime;
-    Vector3[] _handoverFromPos;
-    Quaternion[] _handoverFromRot;
+    float _simHipsPathLen;
+    Vector3 _simHipsPathLastPos;
+    bool _simHipsPathInit;
+    float _streamHipsPathLen;
+    Vector3 _streamHipsPathLastPos;
+    bool _streamHipsPathInit;
+    Vector3[] _handoverPosOffset;
+    Quaternion[] _handoverRotOffset;
     bool _handoverCrossfadeActive;
     float _handoverCrossfadeStart;
+    float _handoverCrossfadeDuration;
 
     NetworkPlayerAvatar _avatar;
 
@@ -285,6 +299,10 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             _observerLocalSimStartTime = Time.time;
             _observerHasInterpData = false;
             _handoverCrossfadeActive = false;
+            _simHipsPathInit = false;
+            _simHipsPathLen = 0f;
+            _streamHipsPathInit = false;
+            _streamHipsPathLen = 0f;
         }
     }
 
@@ -519,9 +537,32 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             return;
 
         if (IsOwner)
+        {
             OwnerSampleAndBroadcastPose();
+        }
         else
+        {
+            // Sim path must accumulate from launch, including the pre-first-sample window — the stream
+            // path replays that same stretch later, and undercounting the sim side would make the
+            // catch-up test fire early (the mid-air freeze all over again).
+            if (ragdoll.IsObserverLocalSimActive)
+                AccumulateSimHipsPath();
             ObserverInterpolatePose();
+        }
+    }
+
+    void AccumulateSimHipsPath()
+    {
+        Transform hips = ragdoll.HipsTransform;
+        if (hips == null)
+            return;
+
+        Vector3 p = hips.position;
+        if (_simHipsPathInit)
+            _simHipsPathLen += (p - _simHipsPathLastPos).magnitude;
+        else
+            _simHipsPathInit = true;
+        _simHipsPathLastPos = p;
     }
 
     void OwnerSampleAndBroadcastPose()
@@ -574,62 +615,97 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
         // While the local launch sim covers, the stream above is tracking only. Hand the bones to the
         // puppet once the stream has caught up (or the cap forces it); until then physics keeps rendering.
-        if (ragdoll.IsObserverLocalSimActive && !TryBeginObserverHandover(count))
-            return;
+        if (ragdoll.IsObserverLocalSimActive)
+        {
+            AccumulateStreamHipsPath(count);
+            if (!TryBeginObserverHandover(count))
+                return;
+        }
 
         if (_handoverCrossfadeActive)
         {
-            float w = Mathf.Clamp01((Time.time - _handoverCrossfadeStart) / ObserverHandoverCrossfadeSeconds);
-            w = w * w * (3f - 2f * w); // smoothstep ease onto the stream
-            for (int i = 0; i < count && i < _handoverFromPos.Length; i++)
+            float w = Mathf.Clamp01((Time.time - _handoverCrossfadeStart) / _handoverCrossfadeDuration);
+            w = 1f - w * w * (3f - 2f * w); // smoothstep decay 1 → 0
+            if (w <= 0f)
             {
-                _observerLerpPosBuffer[i] = Vector3.Lerp(_handoverFromPos[i], _observerLerpPosBuffer[i], w);
-                _observerLerpRotBuffer[i] = Quaternion.Slerp(_handoverFromRot[i], _observerLerpRotBuffer[i], w);
-            }
-            if (w >= 1f)
                 _handoverCrossfadeActive = false;
+            }
+            else
+            {
+                // Live stream pose + decaying offset: the body keeps the stream's velocity throughout the
+                // blend instead of hovering at a frozen handover pose while the stream approaches it.
+                for (int i = 0; i < count && i < _handoverPosOffset.Length; i++)
+                {
+                    _observerLerpPosBuffer[i] += _handoverPosOffset[i] * w;
+                    _observerLerpRotBuffer[i] =
+                        Quaternion.Slerp(Quaternion.identity, _handoverRotOffset[i], w) * _observerLerpRotBuffer[i];
+                }
+            }
         }
 
         ragdoll.ApplyObserverRagdollPose(_observerLerpPosBuffer, _observerLerpRotBuffer);
     }
 
+    void AccumulateStreamHipsPath(int count)
+    {
+        int hipsIndex = ragdoll.HipsBodyIndex;
+        if (hipsIndex < 0 || hipsIndex >= count)
+            return;
+
+        Vector3 p = _observerLerpPosBuffer[hipsIndex];
+        if (_streamHipsPathInit)
+            _streamHipsPathLen += (p - _streamHipsPathLastPos).magnitude;
+        else
+            _streamHipsPathInit = true;
+        _streamHipsPathLastPos = p;
+    }
+
     /// <summary>
-    /// Decides the local-sim → stream handover. The stream renders a constant delay behind the sim, so the
-    /// hips gap between them is ~speed × lag and shrinks as the flight slows; waiting for it to close means
-    /// the violent part of the knockback always renders from the immediate local sim and the puppet takes
-    /// over in the slow tail, where the crossfade is imperceptible. The cap bounds settle-position
-    /// divergence (different local contacts) — at cap the crossfade absorbs whatever residual gap remains.
-    /// Returns true once the puppet owns the bones (crossfade started).
+    /// Decides the local-sim → stream handover. Both trajectories cover the same flight, offset by the
+    /// stream's constant lag, so the stream's traveled path length reaching the sim's means it has caught
+    /// up in TIME — the violent part of the knockback always renders from the immediate local sim, and the
+    /// puppet takes over where the remaining correction is small. (A spatial sim-vs-stream distance check
+    /// is NOT sufficient: near the arc apex the two poses pass within centimeters while the stream is
+    /// still half a second behind.) The cap bounds settle divergence from different local contacts; the
+    /// offset-decay blend absorbs whatever residual gap remains at either trigger. Returns true once the
+    /// puppet owns the bones.
     /// </summary>
     bool TryBeginObserverHandover(int count)
     {
-        int hipsIndex = ragdoll.HipsBodyIndex;
-        Transform hips = ragdoll.HipsTransform;
-        float gap = float.MaxValue;
-        if (hips != null && hipsIndex >= 0 && hipsIndex < count)
-            gap = (hips.position - _observerLerpPosBuffer[hipsIndex]).magnitude;
-
+        bool caughtUp = _simHipsPathInit && _streamHipsPathInit
+                        && _streamHipsPathLen >= _simHipsPathLen - ObserverHandoverPathCatchupMeters;
         bool capReached = Time.time - _observerLocalSimStartTime >= ObserverHandoverMaxCoverSeconds;
-        if (gap > ObserverHandoverHipsGapMeters && !capReached)
+        if (!caughtUp && !capReached)
             return false;
 
-        if (_handoverFromPos == null || _handoverFromPos.Length != count)
+        if (_handoverPosOffset == null || _handoverPosOffset.Length != count)
         {
-            _handoverFromPos = new Vector3[count];
-            _handoverFromRot = new Quaternion[count];
+            _handoverPosOffset = new Vector3[count];
+            _handoverRotOffset = new Quaternion[count];
         }
 
+        float maxOffset = 0f;
         if (count == ragdoll.RagdollBodyCount)
         {
-            ragdoll.SampleOwnerRagdollPose(_handoverFromPos, _handoverFromRot); // sim's final pose
+            // Offset = sim pose − stream pose at this instant, per bone (sampled into the offset arrays,
+            // then converted in place).
+            ragdoll.SampleOwnerRagdollPose(_handoverPosOffset, _handoverRotOffset);
+            for (int i = 0; i < count; i++)
+            {
+                _handoverPosOffset[i] -= _observerLerpPosBuffer[i];
+                _handoverRotOffset[i] = _handoverRotOffset[i] * Quaternion.Inverse(_observerLerpRotBuffer[i]);
+                float m = _handoverPosOffset[i].magnitude;
+                if (m > maxOffset)
+                    maxOffset = m;
+            }
         }
         else
         {
             // Bone-count mismatch (shouldn't happen — all peers run the same rig): degrade to a plain cut.
             for (int i = 0; i < count; i++)
             {
-                _handoverFromPos[i] = _observerLerpPosBuffer[i];
-                _handoverFromRot[i] = _observerLerpRotBuffer[i];
+                _handoverPosOffset[i] = Vector3.zero;
+                _handoverRotOffset[i] = Quaternion.identity;
             }
         }
 
@@ -640,6 +716,10 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
         _handoverCrossfadeActive = true;
         _handoverCrossfadeStart = Time.time;
+        _handoverCrossfadeDuration = Mathf.Clamp(
+            maxOffset / ObserverHandoverBlendMetersPerSecond,
+            ObserverHandoverBlendMinSeconds,
+            ObserverHandoverBlendMaxSeconds);
         return true;
     }
 
