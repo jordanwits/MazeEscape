@@ -254,12 +254,38 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
         UpdateRemoteFlashlightProxy();
 
+        EnforceUnitScaleWhenUnparented();
+
         bool shouldBeDormant = ShouldBeDormant();
 
         if (_isDormant == shouldBeDormant)
             return;
 
         SetDormant(shouldBeDormant);
+    }
+
+    /// <summary>
+    /// Players are authored and simulated at root scale 1; the only legitimate exception is while parented
+    /// under the scaled Jailor root during a carry, where localScale compensates so lossy scale stays 1.
+    /// On client machines the carry release could strand a shrunken root scale (the ParentSync message,
+    /// NetworkTransform scale interpolation and the carried-NetworkVariable authority flip race each other)
+    /// and nothing ever restored it — the first-person camera then rides the shrunken head bone, which reads
+    /// as "the POV sank to my chest". Scale sync is disabled on the player NetworkTransform now; this
+    /// per-frame invariant repairs any residue, including corruption from before the fix.
+    /// </summary>
+    void EnforceUnitScaleWhenUnparented()
+    {
+        if (transform.parent != null || IsCarriedByJailor)
+            return;
+
+        Vector3 scale = transform.localScale;
+        if (Mathf.Abs(scale.x - 1f) < 0.001f && Mathf.Abs(scale.y - 1f) < 0.001f && Mathf.Abs(scale.z - 1f) < 0.001f)
+            return;
+
+        transform.localScale = Vector3.one;
+        Debug.LogWarning(
+            $"[{nameof(NetworkPlayerAvatar)}] Repaired non-unit player root scale {scale} -> (1,1,1) on '{name}'.",
+            this);
     }
 
     public override void OnNetworkSpawn()

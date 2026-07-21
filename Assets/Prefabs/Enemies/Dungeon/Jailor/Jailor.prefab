@@ -1089,8 +1089,8 @@ Transform:
   m_GameObject: {fileID: 7644638518217413858}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1.3624, y: 1.3624, z: 1.3624}
+  m_LocalPosition: {x: -0.00070423, y: -0.28231, z: -0.040885}
+  m_LocalScale: {x: 1.7237086, y: 1.7237086, z: 1.7237086}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 161913872395889943}
@@ -1184,7 +1184,7 @@ MonoBehaviour:
   navMeshAgent: {fileID: 7001733651103369478}
   characterController: {fileID: 4689613813191485252}
   carryAttach: {fileID: 5011123456789012001}
-  carriedPlayerLocalPositionOffset: {x: 0, y: 0, z: 0}
+  carriedPlayerLocalPositionOffset: {x: -0.15, y: -0.3, z: 0.3}
   carriedPlayerLocalEulerOffset: {x: 0, y: 0, z: 0}
   playerRootToCarryAlignPointLocal: {x: 0, y: 1.27, z: -0.12}
   carryDestination: {fileID: 0}

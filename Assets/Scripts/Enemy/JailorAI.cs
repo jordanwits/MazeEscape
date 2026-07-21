@@ -733,6 +733,10 @@ public class JailorAI : MonoBehaviour
         navMeshAgent.acceleration = Mathf.Max(navMeshAgent.acceleration, runSpeed * 4f);
         navMeshAgent.updatePosition = false;
         navMeshAgent.updateRotation = false;
+        // Pit links must only be crossed by the scripted off-mesh jump. With auto-traverse on, any
+        // window where the jump can't fire (state gate, post-rescue cooldown) leaves the agent
+        // steering across the gap and the CharacterController walks off the rim into the pit.
+        navMeshAgent.autoTraverseOffMeshLink = false;
         navMeshAgent.baseOffset = 0f;
         // Lower value = higher priority in NavMesh local avoidance — prevents deadlocks vs zombies also at default 50.
         navMeshAgent.avoidancePriority = 12;
@@ -1105,21 +1109,33 @@ public class JailorAI : MonoBehaviour
         if (navMeshAgent == null || !navMeshAgent.enabled || !navMeshAgent.isOnNavMesh)
             return false;
 
-        bool canUseOffMeshJump = _state == JailorState.Chase
-            || _state == JailorState.Carrying
-            || _state == JailorState.Patrol
-            || (_state == JailorState.JailDelivery && _jailDeliveryPhase == JailDeliveryPhase.ExitingCell);
-        if (!canUseOffMeshJump)
-            return false;
-
+        // Continue an in-flight jump regardless of state — abandoning it mid-air strands
+        // _isTraversingOffMeshJump=true, which suppresses both pit recovery watchdogs.
         if (_isTraversingOffMeshJump)
         {
             desiredHorizontal = UpdateOffMeshJumpTraversal();
             return true;
         }
 
-        if (Time.time < _nextOffMeshJumpAllowedTime || !navMeshAgent.isOnOffMeshLink)
+        bool canUseOffMeshJump = _state == JailorState.Chase
+            || _state == JailorState.Carrying
+            || _state == JailorState.Patrol
+            || _state == JailorState.Investigating
+            || (_state == JailorState.JailDelivery && _jailDeliveryPhase == JailDeliveryPhase.ExitingCell);
+        if (!canUseOffMeshJump)
             return false;
+
+        if (!navMeshAgent.isOnOffMeshLink)
+            return false;
+
+        if (Time.time < _nextOffMeshJumpAllowedTime)
+        {
+            // Parked on a pit link while the jump is cooling down (e.g. the post-rescue block from
+            // NotifyRescuedFromPitWarp). Hold at the rim instead of walking on agent steering —
+            // that walk-off is the fall→rescue→fall loop.
+            desiredHorizontal = Vector3.zero;
+            return false;
+        }
 
         OffMeshLinkData linkData = navMeshAgent.currentOffMeshLinkData;
         Vector3 start = transform.position;

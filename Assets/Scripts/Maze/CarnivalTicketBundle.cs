@@ -19,7 +19,7 @@ public sealed class CarnivalTicketBundle : NetworkBehaviour
     [Header("Print SFX")]
     [Tooltip("One-shot played on every peer when the bundle spawns (the ticket-dispenser print sound).")]
     [SerializeField] AudioClip printClip;
-    [SerializeField, Range(0f, 1f)] float printVolume = 0.75f;
+    [SerializeField, Range(0f, 1f)] float printVolume = 0.25f;
     [SerializeField, Min(0.5f)] float printSpatialMinDistance = 1.5f;
     [SerializeField, Min(1f)] float printSpatialMaxDistance = 22f;
 

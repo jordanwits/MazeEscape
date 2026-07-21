@@ -3159,11 +3159,26 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ba2083dca60de914ba78a71037ef89c8, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerController
+  sprintFovBonus: 6
+  energyDrinkFovBonus: 12
+  fovLerpSharpness: 8
   ticketBundlePromptFormat: Press E to collect {0} tickets
   ticketCounterIcon: {fileID: 21300000, guid: 4f61435e86a4360438a1783f76596a8f, type: 3}
   reachApexSeconds: 0.32
   reachSettleSeconds: 0.22
   reachRetryLockoutSeconds: 0.1
+  jailorProximityShakeEnabled: 1
+  jailorShakeStartDistance: 25
+  jailorShakeFullDistance: 4
+  jailorShakeMaxAngleDegrees: 1.2
+  jailorShakeFrequency: 11
+  jailorShakeFalloffExponent: 2
+  jailorShakeIntensitySmoothTime: 0.25
+  screamShakeMaxAngleDegrees: 5
+  screamShakeFrequency: 26
+  screamShakeDecayPerSecond: 4
+  screamShakeTraumaExponent: 2
+  teleportHoldSeconds: 0.9
   characterController: {fileID: 8025695549591612232}
   animator: {fileID: 4205222711325704942}
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
@@ -3191,6 +3206,8 @@ MonoBehaviour:
   chestPromptMessage: Press E to open
   doorUnlockPromptMessage: Press E to unlock
   doorOpenPromptMessage: Press E to open
+  teleportOrbPromptMessage: Hold E to teleport
+  skeletonRpsPromptMessage: Press E to challenge the skeleton
   interactMask:
     serializedVersion: 2
     m_Bits: 0
@@ -3495,9 +3512,9 @@ MonoBehaviour:
   SyncRotAngleX: 1
   SyncRotAngleY: 1
   SyncRotAngleZ: 1
-  SyncScaleX: 1
-  SyncScaleY: 1
-  SyncScaleZ: 1
+  SyncScaleX: 0
+  SyncScaleY: 0
+  SyncScaleZ: 0
   PositionThreshold: 0.001
   RotAngleThreshold: 0.01
   ScaleThreshold: 0.01

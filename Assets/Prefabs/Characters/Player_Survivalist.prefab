@@ -3174,6 +3174,10 @@ MonoBehaviour:
   jailorShakeFrequency: 11
   jailorShakeFalloffExponent: 2
   jailorShakeIntensitySmoothTime: 0.25
+  screamShakeMaxAngleDegrees: 5
+  screamShakeFrequency: 26
+  screamShakeDecayPerSecond: 4
+  screamShakeTraumaExponent: 2
   teleportHoldSeconds: 0.9
   characterController: {fileID: 8025695549591612232}
   animator: {fileID: 4205222711325704942}
@@ -3508,9 +3512,9 @@ MonoBehaviour:
   SyncRotAngleX: 1
   SyncRotAngleY: 1
   SyncRotAngleZ: 1
-  SyncScaleX: 1
-  SyncScaleY: 1
-  SyncScaleZ: 1
+  SyncScaleX: 0
+  SyncScaleY: 0
+  SyncScaleZ: 0
   PositionThreshold: 0.001
   RotAngleThreshold: 0.01
   ScaleThreshold: 0.01
