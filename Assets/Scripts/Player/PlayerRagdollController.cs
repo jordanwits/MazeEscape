@@ -738,7 +738,11 @@ public class PlayerRagdollController : MonoBehaviour
     /// Applies the owner's authoritative ragdoll pose to this (kinematic) body. Per-body world POSITIONS and
     /// world rotations are both set explicitly — relying on the transform hierarchy to place limbs from
     /// frozen bind-pose offsets produced visible stretching, because the owner's joint-flex spreads bones
-    /// further apart than the bind-pose chain implies. Bodies are kinematic so direct world sets are safe.
+    /// further apart than the bind-pose chain implies.
+    /// The pose is written to the TRANSFORMS (what actually renders), mirrored into the kinematic
+    /// rigidbodies. Rigidbody-only writes stopped reaching the rendered transforms for ~0.5 s right after
+    /// the dynamic→kinematic handover switch (kinematic pose-writeback quirk), which showed as the victim
+    /// freezing on impact and only "unfreezing" into the ragdoll half a second later.
     /// </summary>
     public void ApplyObserverRagdollPose(Vector3[] boneWorldPositions, Quaternion[] boneWorldRotations)
     {
@@ -749,21 +753,20 @@ public class PlayerRagdollController : MonoBehaviour
         if (boneWorldPositions.Length != _ragdollBodies.Count || boneWorldRotations.Length != _ragdollBodies.Count)
             return;
 
-        // Two passes so children of any given ragdoll bone are not dragged off-target by a later parent set.
-        // Pass 1: place world positions. Pass 2: lock world rotations. Intermediate non-ragdoll bones (Spine,
-        // Spine1, Shoulder, etc.) follow their nearest ragdoll-bone ancestor via bind-pose local offsets — fine,
-        // because their parents are now at the owner's authoritative position.
+        // Single parent-first pass (GetComponentsInChildren caches depth-first, parents before children), so
+        // every bone is finalized after its parent has already been placed — a parent's pos+rot write drags
+        // its children, and each child is then corrected by its own later write. Intermediate non-ragdoll
+        // bones (Spine, Shoulder, etc.) follow their nearest ragdoll-bone ancestor via bind-pose local
+        // offsets — fine, because their parents are now at the owner's authoritative pose.
         for (int i = 0; i < _ragdollBodies.Count; i++)
         {
             Rigidbody rb = _ragdollBodies[i];
-            if (rb != null)
-                rb.position = boneWorldPositions[i];
-        }
-        for (int i = 0; i < _ragdollBodies.Count; i++)
-        {
-            Rigidbody rb = _ragdollBodies[i];
-            if (rb != null)
-                rb.rotation = boneWorldRotations[i];
+            if (rb == null)
+                continue;
+
+            rb.transform.SetPositionAndRotation(boneWorldPositions[i], boneWorldRotations[i]);
+            rb.position = boneWorldPositions[i];
+            rb.rotation = boneWorldRotations[i];
         }
     }
 
@@ -803,6 +806,8 @@ public class PlayerRagdollController : MonoBehaviour
     {
         if (!IsRagdolled || hipsRigidbody == null)
             return;
+        // Transform + rigidbody, same as ApplyObserverRagdollPose — rb-only writes can miss the render.
+        hipsRigidbody.transform.position = worldPos;
         hipsRigidbody.position = worldPos;
     }
 
