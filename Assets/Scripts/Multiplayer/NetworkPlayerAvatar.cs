@@ -476,8 +476,29 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
         SyncBlockingProxyCapsuleToCharacterController();
 
-        bool useProxy = _isAlive && inNetSession && !isLocalOwner && !jailorCarried;
+        bool useProxy = _isAlive && inNetSession && !isLocalOwner && !jailorCarried
+                        && !_blockingProxySuppressedForRagdoll;
         SetBlockingProxyActive(useProxy);
+    }
+
+    bool _blockingProxySuppressedForRagdoll;
+
+    /// <summary>
+    /// While a non-owner copy of this player runs its short local ragdoll launch (dynamic bones covering
+    /// the pose-stream warm-up — see <see cref="NetworkPlayerRagdoll"/>), the blocking proxy capsule must
+    /// be off: the bones start inside it and PhysX would eject them violently. Releasing suppression
+    /// re-evaluates the normal proxy rules. No-op when the state doesn't change.
+    /// </summary>
+    public void SetBlockingProxySuppressedForRagdoll(bool suppressed)
+    {
+        if (_blockingProxySuppressedForRagdoll == suppressed)
+            return;
+
+        _blockingProxySuppressedForRagdoll = suppressed;
+
+        NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
+        bool inNetSession = nm != null && nm.IsListening;
+        UpdateRemoteBlockingProxyEnabled(inNetSession, IsOwner, IsCarriedByJailor);
     }
 
     void EnsureRemoteFlashlightProxy()

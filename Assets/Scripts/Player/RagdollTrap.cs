@@ -101,7 +101,11 @@ public class RagdollTrap : MonoBehaviour
         if (trapHitMetallicClip == null || _hitAudio == null || other == null)
             return false;
 
-        EntityId id = other.GetEntityId();
+        // Key the cooldown on the hit object's ROOT, not the individual collider: a ragdolling victim has
+        // ~11 bone colliders that can sweep the trigger within a few frames (they enable the moment ragdoll
+        // starts), and a per-collider key let every one of them bypass the cooldown — machine-gun clanks.
+        // One victim = one clank per window.
+        EntityId id = other.transform.root.GetEntityId();
         float now = Time.time;
         if (now < _nextMetallicSoundTime && id == _lastMetallicColliderEntity)
             return false;

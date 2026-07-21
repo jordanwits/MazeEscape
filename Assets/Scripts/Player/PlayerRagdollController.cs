@@ -81,6 +81,13 @@ public class PlayerRagdollController : MonoBehaviour
     public bool IsGettingUp { get; private set; }
 
     /// <summary>
+    /// True while this non-owner body runs the short LOCAL dynamic launch that covers the pose-stream
+    /// warm-up window (see <see cref="BeginObserverRagdollWithLocalLaunch"/>). Cleared automatically the
+    /// moment the bones return to kinematic puppet mode (any <c>SetRagdollPhysicsActive(false)</c> path).
+    /// </summary>
+    public bool IsObserverLocalSimActive { get; private set; }
+
+    /// <summary>
     /// Number of cached ragdoll Rigidbodies. The networking layer reads this so it can size the per-bone
     /// world-rotation array it streams from owner to observers (see <see cref="SampleOwnerRagdollPose"/>).
     /// </summary>
@@ -616,6 +623,9 @@ public class PlayerRagdollController : MonoBehaviour
         // Transitioning from the rigid Clown carry into a slam observer-side: stop the per-FixedUpdate pin to
         // the enemy bone, leave bodies kinematic.
         ClearHeldState();
+        // A re-hit can land while this observer copy is still mid-get-up; the stale get-up routine would
+        // later run FinishStandUp and re-enable the animator/CharacterController under the new ragdoll.
+        StopRecoveryCoroutines();
 
         IsRagdolled = true;
 
@@ -632,6 +642,82 @@ public class PlayerRagdollController : MonoBehaviour
 
         // Keep every body kinematic — observer is a puppet for the owner's authoritative pose.
         SetRagdollPhysicsActive(false);
+    }
+
+    /// <summary>
+    /// Observer-side activation that covers the pose-stream warm-up. The plain kinematic puppet
+    /// (<see cref="BeginObserverRagdoll"/>) leaves the body frozen in its last animated pose until the
+    /// owner's first streamed sample arrives — roughly the owner's full round-trip (start RPC out to the
+    /// owner, first sample back through the server), which reads as "freezes, then snaps into ragdoll" on
+    /// observers. Instead, run a LOCAL dynamic sim right now with the same server-authored impulse the
+    /// owner applies, purely as presentation; the networking layer switches the bones back to the puppet
+    /// and blends onto the authoritative stream at the first sample (see
+    /// NetworkPlayerRagdoll.ApplyRagdollPoseClientRpc), so local divergence never outlives the
+    /// data-in-flight window. No recovery routines run here — recovery on observers is always driven by
+    /// the server's stop RPC.
+    /// </summary>
+    /// <returns>True if the local sim started (mirrors the guards of <see cref="BeginObserverRagdoll"/>).</returns>
+    public bool BeginObserverRagdollWithLocalLaunch(Vector3 worldForce, Vector3 worldForcePosition, ForceMode forceMode)
+    {
+        if (IsRagdolled)
+            return false;
+
+        if (_ragdollBodies.Count == 0)
+            return false;
+
+        ResolveHips();
+        if (hipsRigidbody == null)
+        {
+            Debug.LogWarning($"{nameof(PlayerRagdollController)}: No hips Rigidbody; cannot begin observer ragdoll.", this);
+            return false;
+        }
+
+        ClearHeldState();
+        StopRecoveryCoroutines();
+
+        IsRagdolled = true;
+
+        if (characterController != null)
+            characterController.enabled = false;
+
+        Physics.SyncTransforms();
+
+        if (animator != null)
+            animator.enabled = false;
+
+        if (_movementViewBob != null)
+            _movementViewBob.enabled = false;
+
+        SetRagdollPhysicsActive(true);
+        IsObserverLocalSimActive = true;
+
+        // Same clamp + all-bodies launch as the owner's ActivateRagdoll, so the local cover flight matches
+        // the authoritative one as closely as an independent sim can.
+        Vector3 appliedForce = ClampForce(worldForce, forceMode);
+        if (appliedForce.sqrMagnitude > 1e-6f)
+        {
+            for (int i = 0; i < _ragdollBodies.Count; i++)
+            {
+                Rigidbody rb = _ragdollBodies[i];
+                if (rb != null)
+                    rb.AddForce(appliedForce, forceMode);
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Ends the local presentation sim: bones return to kinematic puppet mode (colliders off) so the
+    /// streamed authoritative pose can drive them. Positions are left where the sim put them — the caller
+    /// blends from here onto the stream. Safe to call when the sim isn't running.
+    /// </summary>
+    public void EndObserverLocalSimToPuppet()
+    {
+        if (!IsObserverLocalSimActive)
+            return;
+
+        SetRagdollPhysicsActive(false); // also clears IsObserverLocalSimActive
     }
 
     /// <summary>
@@ -1017,5 +1103,10 @@ public class PlayerRagdollController : MonoBehaviour
                     col.enabled = ragdollOn;
             }
         }
+
+        // Every path that puts the bones back to kinematic (recovery, forced exit, held pin, puppet
+        // handover) ends the observer local sim with it.
+        if (!ragdollOn)
+            IsObserverLocalSimActive = false;
     }
 }
