@@ -13,6 +13,17 @@ public class FlashlightItem : GrabbableInventoryItem
     public bool IsLightOn => _isLightOn;
     bool _isLightOn;
 
+    [Header("Low battery flicker")]
+    [Tooltip("Below this battery fraction the beam starts stuttering and dimming (a dying-light warning) instead of holding steady until the hard cut at empty. 0 disables.")]
+    [SerializeField, Range(0f, 0.5f)] float lowBatteryFlickerFraction = 0.15f;
+    [Tooltip("How dim the beam can sink at the deepest flicker, as a fraction of full intensity.")]
+    [SerializeField, Range(0f, 1f)] float flickerMinIntensityScale = 0.08f;
+
+    float[] _baseLightIntensities;
+    bool _baseIntensitiesCaptured;
+    bool _flickerActive;
+    float _flickerSeed;
+
     /// <summary>The flashlight mesh aims along the view (camera pitch) so it tilts up/down like the beam.</summary>
     public override bool HeldAimsAlongView => true;
 
@@ -92,6 +103,7 @@ public class FlashlightItem : GrabbableInventoryItem
 
         CacheLights();
         ResolveLensGlowRenderers();
+        _flickerSeed = Random.value * 97f; // decorrelate each flashlight's flicker
         base.Awake();
 
         _batterySeconds = maxBatterySeconds > 0f ? maxBatterySeconds : 0f;
@@ -158,10 +170,17 @@ public class FlashlightItem : GrabbableInventoryItem
                 continue;
 
             if (enabled)
+            {
                 ApplyPeerVisibleLightSettings(light);
+                // Clear any leftover flicker dimming so a re-selected/re-picked flashlight turns on at full brightness.
+                if (_baseIntensitiesCaptured && _baseLightIntensities != null && i < _baseLightIntensities.Length)
+                    light.intensity = _baseLightIntensities[i];
+            }
 
             light.enabled = enabled;
         }
+
+        _flickerActive = false;
 
         _isLightOn = enabled;
         SetLensGlowEnabled(enabled);
@@ -236,6 +255,66 @@ public class FlashlightItem : GrabbableInventoryItem
         }
     }
 
+    /// <summary>
+    /// Cosmetic dying-light flicker, driven each frame by the holder (see PlayerController) with the peer-correct
+    /// battery fraction — the item's own _batterySeconds only drains on the authority, so the holder feeds the
+    /// synced value. Modulates the spot INTENSITY (never light.enabled) so it never fights the on/off state.
+    /// </summary>
+    public void TickLowBatteryFlicker(float batteryFraction)
+    {
+        if (_lights == null || !_baseIntensitiesCaptured || _baseLightIntensities == null)
+            return;
+
+        bool shouldFlicker = _isLightOn
+            && lowBatteryFlickerFraction > 0f
+            && batteryFraction < lowBatteryFlickerFraction;
+
+        if (!shouldFlicker)
+        {
+            RestoreBaseIntensities();
+            return;
+        }
+
+        float severity = Mathf.Clamp01(1f - batteryFraction / lowBatteryFlickerFraction); // 0 at threshold, 1 near dead
+        float speed = Mathf.Lerp(7f, 22f, severity);
+        float noise = Mathf.PerlinNoise(_flickerSeed, Time.time * speed); // smooth 0..1 = electrical flicker, not strobe
+        float dipDepth = Mathf.Lerp(0.30f, 0.92f, severity);
+        float flick = Mathf.Lerp(1f - dipDepth, 1f, noise);
+
+        // Occasional hard brownout as it's nearly gone.
+        if (severity > 0.55f)
+        {
+            float blip = Mathf.PerlinNoise(_flickerSeed + 17.3f, Time.time * speed * 1.6f);
+            if (blip < Mathf.Lerp(0.05f, 0.16f, severity))
+                flick *= 0.1f;
+        }
+
+        float dim = Mathf.Lerp(1f, 0.6f, severity);
+        float scale = Mathf.Max(flickerMinIntensityScale, dim * flick);
+
+        for (int i = 0; i < _lights.Length && i < _baseLightIntensities.Length; i++)
+        {
+            Light light = _lights[i];
+            if (light != null)
+                light.intensity = _baseLightIntensities[i] * scale;
+        }
+        _flickerActive = true;
+    }
+
+    void RestoreBaseIntensities()
+    {
+        if (!_flickerActive || _lights == null || _baseLightIntensities == null)
+            return;
+
+        for (int i = 0; i < _lights.Length && i < _baseLightIntensities.Length; i++)
+        {
+            Light light = _lights[i];
+            if (light != null)
+                light.intensity = _baseLightIntensities[i];
+        }
+        _flickerActive = false;
+    }
+
     void CacheLights()
     {
         Light[] found = GetComponentsInChildren<Light>(true);
@@ -243,6 +322,15 @@ public class FlashlightItem : GrabbableInventoryItem
             return;
 
         _lights = found;
+
+        // Capture authored intensities once (before any flicker modulation) so the flicker can scale against them.
+        if (!_baseIntensitiesCaptured)
+        {
+            _baseLightIntensities = new float[found.Length];
+            for (int i = 0; i < found.Length; i++)
+                _baseLightIntensities[i] = found[i] != null ? found[i].intensity : 0f;
+            _baseIntensitiesCaptured = true;
+        }
         flashlightLight = null;
         for (int i = 0; i < found.Length; i++)
         {

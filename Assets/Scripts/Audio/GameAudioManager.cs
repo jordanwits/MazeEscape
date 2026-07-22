@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.Audio;
+using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Loads the main audio mixer (from Resources unless overridden), applies saved bus levels, and exposes groups for routing.
@@ -15,6 +16,13 @@ public sealed class GameAudioManager : MonoBehaviour
     public const string ExposedSfxVolume = "SfxVolume";
     public const string ExposedVoiceVolume = "VoiceVolume";
     public const string ExposedUiVolume = "UiVolume";
+
+    /// <summary>
+    /// Conventional name of the per-level ambient bed object (cave drips / carnival ambience). It's a plain
+    /// scene AudioSource authored with no mixer group, so it output straight to the AudioListener and ignored
+    /// every volume slider (not even Master touched it). We route it on scene load — see <see cref="RouteSceneAmbientBed"/>.
+    /// </summary>
+    const string AmbientBedObjectName = "AmbientAudio";
 
     const string PrefsMaster = "GameAudio.MasterLinear";
     const string PrefsMusic = "GameAudio.MusicLinear";
@@ -75,6 +83,9 @@ public sealed class GameAudioManager : MonoBehaviour
         LoadPrefs();
         ApplyAllToMixer();
         ApplyBus(ExposedUiVolume, uiSoundVolume);
+
+        SceneManager.sceneLoaded += HandleSceneLoaded;
+        RouteSceneAmbientBed(); // in case a level scene is already active when the manager comes up
     }
 
     void OnValidate()
@@ -85,8 +96,34 @@ public sealed class GameAudioManager : MonoBehaviour
 
     void OnDestroy()
     {
+        SceneManager.sceneLoaded -= HandleSceneLoaded;
+
         if (Instance == this)
             Instance = null;
+    }
+
+    void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        RouteSceneAmbientBed();
+    }
+
+    /// <summary>
+    /// Sends each level's ambient bed through the Sfx bus so the SFX slider governs it. Without this the bed
+    /// bypassed the mixer entirely (authored with no output group). Keyed by the conventional object name
+    /// (<see cref="AmbientBedObjectName"/>); a scene without that object is simply left alone. Idempotent — a
+    /// bed already carrying a mixer group is skipped, so an authored per-scene group override still wins.
+    /// </summary>
+    void RouteSceneAmbientBed()
+    {
+        GameObject go = GameObject.Find(AmbientBedObjectName);
+        if (go == null)
+            return;
+
+        AudioSource source = go.GetComponent<AudioSource>();
+        if (source == null || source.outputAudioMixerGroup != null)
+            return;
+
+        RouteSfxSource(source); // occlusion registration is inert for the 2D bed (forced transparent by spatialBlend)
     }
 
     void CacheGroups()

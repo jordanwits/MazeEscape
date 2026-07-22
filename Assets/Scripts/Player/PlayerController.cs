@@ -63,6 +63,7 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] string pickupPromptMessage = "Press E to pick up";
     [SerializeField] string chestPromptMessage = "Press E to open";
     [SerializeField] string doorUnlockPromptMessage = "Press E to unlock";
+    [SerializeField] string doorLockedPromptMessage = "Locked";
     [SerializeField] string doorOpenPromptMessage = "Press E to open";
     [SerializeField] string teleportOrbPromptMessage = "Hold E to teleport";
     [SerializeField] string skeletonRpsPromptMessage = "Press E to challenge the skeleton";
@@ -150,6 +151,7 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField, Range(0f, 1f)] float meleeHitPunchVolume = 0.7f;
     [Tooltip("Played instead of the punch impact when the melee connects with a Skeleton.")]
     [SerializeField] AudioClip skeletonHitClip;
+    [Tooltip("Universal 'you got hit' thud played to THIS player on any damage (zombie, skeleton, clown, traps). Name kept for prefab serialization; used by the hurt-feedback partial.")]
     [SerializeField] AudioClip zombieHitClip;
     [SerializeField, Range(0f, 1f)] float zombieHitVolume = 0.75f;
 
@@ -1471,11 +1473,12 @@ public partial class PlayerController : MonoBehaviour
     {
         if (_hasLocalControl)
         {
+            bool heldFlashlight = TryGetHeldFlashlightChargeForHud(out float charge, out FlashlightItem heldFlashlightItem);
             if (_vitalsHud != null)
-            {
-                bool heldFlashlight = TryGetHeldFlashlightChargeForHud(out float charge);
                 _vitalsHud.SetFlashlightCharge(heldFlashlight, charge);
-            }
+            // Dying-light flicker on the held flashlight, driven with the peer-correct (synced) battery fraction.
+            if (heldFlashlight && heldFlashlightItem != null)
+                heldFlashlightItem.TickLowBatteryFlicker(charge);
         }
 
         // Layer the Jailor-proximity tremble on top of the look pose written this frame. Runs before the
@@ -1485,6 +1488,14 @@ public partial class PlayerController : MonoBehaviour
         // One-shot scream jolt (RatBot grab, etc.). Also before the early-returns so it plays while the victim
         // is held — that's exactly whose view we want to rattle.
         UpdateScreamImpulseShake();
+
+        // Taking-damage feedback (hurt jolt + thud + low-health heartbeat). Watches replicated health, so it
+        // must tick before the kick pump below applies this frame's offsets.
+        TickHurtFeedback();
+
+        // Directional melee recoil kick (fired from the hit-SFX methods on connect). Before the early-returns so
+        // it always springs back to center even if control is momentarily lost mid-recovery.
+        UpdateMeleeCameraKick();
 
         // Sprint / energy-drink FOV kick. Before the early-returns so the FOV still eases back to base
         // while control is lost (ragdoll/death); self-gates to the local player's enabled view camera.
@@ -1925,9 +1936,11 @@ public partial class PlayerController : MonoBehaviour
         // single result rather than repeating the spherecast + sort three times per frame.
         if (cam != null && TryFindInteractableHingeDoor(cam, out HingeInteractDoor aimedDoor) && aimedDoor != null)
         {
-            if (aimedDoor.UseKeyToUnlock && aimedDoor.IsLocked && PlayerHasKeyInInventory())
+            if (aimedDoor.UseKeyToUnlock && aimedDoor.IsLocked)
             {
-                SetPickupPromptVisible(true, doorUnlockPromptMessage);
+                // With the key: actionable unlock. Without: the door still answers ("Locked") instead of
+                // reading as inert scenery.
+                SetPickupPromptVisible(true, PlayerHasKeyInInventory() ? doorUnlockPromptMessage : doorLockedPromptMessage);
                 return;
             }
 
@@ -2709,6 +2722,10 @@ public partial class PlayerController : MonoBehaviour
 
     public void PlayMeleeHitSfx()
     {
+        // Recoil kick on the puncher's own view (self-gates to local control; observers hearing this as 3D audio
+        // for another player's hit won't kick).
+        TriggerMeleeCameraKick(1f);
+
         if (footstepAudioSource == null)
             return;
 
@@ -2722,6 +2739,8 @@ public partial class PlayerController : MonoBehaviour
     /// <summary>Impact sound when the melee connects with a Skeleton (replaces the punch impact for that hit).</summary>
     public void PlaySkeletonHitSfx()
     {
+        TriggerMeleeCameraKick(meleeKickSkeletonScale); // heavier kick against the tankier skeleton
+
         if (footstepAudioSource == null || skeletonHitClip == null)
             return;
 
@@ -2731,6 +2750,8 @@ public partial class PlayerController : MonoBehaviour
     /// <summary>Which punch clip slot (0–2) to play; same value must be used on all clients for a given hit.</summary>
     public void PlayMeleeHitSfxWithIndex(byte clipSlot0To2)
     {
+        TriggerMeleeCameraKick(1f);
+
         if (footstepAudioSource == null)
             return;
 
@@ -2768,14 +2789,6 @@ public partial class PlayerController : MonoBehaviour
         }
 
         return 2;
-    }
-
-    public void PlayZombieHitSfx()
-    {
-        if (zombieHitClip == null || footstepAudioSource == null)
-            return;
-
-        footstepAudioSource.PlayOneShot(zombieHitClip, Mathf.Max(0f, zombieHitVolume));
     }
 
     AudioClip PickRandomMeleeHitClip()

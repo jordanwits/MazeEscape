@@ -38,8 +38,13 @@ public class HingeInteractDoor : NetworkBehaviour
         "If set, this clip plays when the door closes. If empty, closing uses a reversed copy of Door Open Clip (Door B / start room can stay on that behavior). "
         + "Use on the jail door when you want a custom open clip without reversing it for close.")]
     [SerializeField] AudioClip doorCloseClip;
+    [Tooltip("Handle-rattle played when a player tries this door locked without the key (auto-assigned to Assets/Audio/SFX/General/Locked.wav).")]
+    [SerializeField] AudioClip doorLockedRattleClip;
     [SerializeField, Range(0f, 1f)] float doorUnlockVolume = 0.75f;
     [SerializeField, Range(0f, 1f)] float doorOpenVolume = 0.75f;
+    [SerializeField, Range(0f, 1f)] float doorLockedRattleVolume = 0.283f;
+    [Tooltip("Seconds the hinge holds still before the double-jiggle, matching the quiet intro of the Locked clip (~0.34s) so the jiggles land on the clanks, not before them. Retune if the clip changes.")]
+    [SerializeField, Min(0f)] float lockedRattleLeadIn = 0.30f;
     [Header("Double door (optional)")]
     [Tooltip(
         "The other door leaf. Assign both ways (A → B, B → A). One interact opens or closes both. "
@@ -1089,6 +1094,89 @@ public class HingeInteractDoor : NetworkBehaviour
         return mate == null || DoorId < mate.DoorId;
     }
 
+    // ---- locked-without-key feedback (local cosmetic; never touches replicated door state) ----
+
+    Coroutine _lockedRattleRoutine;
+    float _nextLockedRattleTime;
+
+    /// <summary>
+    /// Local feedback for trying a locked door without the key: the Locked handle-rattle clip plus a quick
+    /// double hinge-jiggle that springs back to the closed pose. Safe on any peer — no state change, no
+    /// replication; the door finally answers instead of reading as inert scenery.
+    /// </summary>
+    public void PlayLockedNoKeyFeedback()
+    {
+        if (!IsLocked || IsBusy)
+            return;
+        if (Time.unscaledTime < _nextLockedRattleTime)
+            return;
+        _nextLockedRattleTime = Time.unscaledTime + 0.45f;
+
+        if (doorLockedRattleClip != null)
+        {
+            EnsureSfxSource();
+            if (_sfx != null)
+            {
+                if (GameAudioManager.Instance != null)
+                    GameAudioManager.RouteSfxSource(_sfx);
+                _sfx.PlayOneShot(doorLockedRattleClip, Mathf.Max(0f, doorLockedRattleVolume));
+            }
+        }
+
+        if (hinge != null && _lockedRattleRoutine == null && isActiveAndEnabled)
+            _lockedRattleRoutine = StartCoroutine(LockedRattleRoutine());
+    }
+
+    // Push fraction (0 = closed, 1 = full nudge toward open) over time RELATIVE to the lead-in. Two quick
+    // jerks peak at +0.04s and +0.12s — the Locked clip's two clanks (~0.34s and ~0.42s absolute) — with a
+    // partial release between them, then a settle back over the rattle tail. Hold at rest until the lead-in.
+    static readonly float[] s_lockedRattleRelTimes = { 0f, 0.04f, 0.09f, 0.12f, 0.36f };
+    static readonly float[] s_lockedRattleFracs = { 0f, 1f, 0.30f, 1f, 0f };
+
+    IEnumerator LockedRattleRoutine()
+    {
+        // The door catches on its lock: two quick jerks toward the open pose landing on the clip's two clanks,
+        // then settles. Held still through the clip's quiet intro so the motion stays in sync with the sound.
+        // Bails the moment a real open/close starts so it never fights MoveRoutine.
+        Quaternion rest = hinge.localRotation;
+        Quaternion pushed = Quaternion.Slerp(rest, TargetLocalRotationForState(true), 0.032f);
+
+        float lead = Mathf.Max(0f, lockedRattleLeadIn);
+        float total = lead + s_lockedRattleRelTimes[s_lockedRattleRelTimes.Length - 1];
+
+        float t = 0f;
+        while (t < total && !IsBusy)
+        {
+            float frac = EvaluateLockedRattle(t - lead);
+            hinge.localRotation = Quaternion.Slerp(rest, pushed, frac);
+            yield return null;
+            t += Time.unscaledDeltaTime;
+        }
+
+        if (!IsBusy)
+            hinge.localRotation = rest;
+        _lockedRattleRoutine = null;
+    }
+
+    /// <summary>Piecewise-linear push fraction over the relative-time table; 0 for any time at/before the lead-in.</summary>
+    static float EvaluateLockedRattle(float relTime)
+    {
+        float[] times = s_lockedRattleRelTimes;
+        float[] fracs = s_lockedRattleFracs;
+        if (relTime <= times[0])
+            return fracs[0];
+        for (int i = 1; i < times.Length; i++)
+        {
+            if (relTime <= times[i])
+            {
+                float span = times[i] - times[i - 1];
+                float u = span > 1e-5f ? (relTime - times[i - 1]) / span : 1f;
+                return Mathf.Lerp(fracs[i - 1], fracs[i], u);
+            }
+        }
+        return fracs[fracs.Length - 1];
+    }
+
     void PlayDoorUnlockSfx()
     {
         if (doorUnlockClip == null)
@@ -1288,6 +1376,8 @@ public class HingeInteractDoor : NetworkBehaviour
             doorOpenClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/DoorOpen.wav");
         if (doorUnlockClip == null)
             doorUnlockClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Unlock.wav");
+        if (doorLockedRattleClip == null)
+            doorLockedRattleClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/General/Locked.wav");
         if (pairedLeaf == this)
         {
             Debug.LogWarning($"{nameof(HingeInteractDoor)} on '{name}': {nameof(pairedLeaf)} cannot reference itself.", this);

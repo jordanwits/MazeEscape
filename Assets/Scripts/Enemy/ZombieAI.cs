@@ -62,6 +62,10 @@ public class ZombieAI : MonoBehaviour
     [SerializeField] float loseTargetRadiusMultiplier = 1.5f;
     [SerializeField] float attackRadius = 2f;
     [SerializeField] float targetNavMeshSampleRadius = 3f;
+    [Tooltip("Half-angle of the vision cone, from facing. Players outside it are only found by sound/damage — sneaking behind works. 180 restores the old omniscient detection.")]
+    [SerializeField, Range(10f, 180f)] float detectionFovHalfAngleDegrees = 100f;
+    [Tooltip("Radius at which the zombie HEARS an audibly-sprinting player and shuffles toward them — no vision cone or line-of-sight needed (you're heard from behind and through walls). Walking is silent; only sprinting is heard. 0 disables hearing.")]
+    [SerializeField, Min(0f)] float hearingRadius = 14f;
     [Tooltip("If enabled, zombies only become alerted when they can see the player.")]
     [SerializeField] bool requireDetectionLineOfSight = true;
     [Tooltip("Layers considered solid when checking whether detection is blocked.")]
@@ -97,8 +101,6 @@ public class ZombieAI : MonoBehaviour
     [SerializeField] float attackRate = 1.5f;
     [Tooltip("Extra distance before Attack starts so the zombie begins the swing before NavMesh settling causes foot jitter.")]
     [SerializeField] float attackStartDistancePadding = 0.35f;
-    [Tooltip("If the zombie is punched again before this window expires, it immediately counters with Attack2 instead of taking another hit.")]
-    [SerializeField] float counterAttackQuickSuccessionWindow = 1f;
     [Tooltip("Seconds between the attack start and the frame where the swipe should actually deal damage.")]
     [SerializeField] float attackHitDelay = 0.45f;
     [Tooltip("Attack2-only hit timing. Lets the retaliatory swing land later without affecting Attack 1.")]
@@ -114,6 +116,37 @@ public class ZombieAI : MonoBehaviour
     [Tooltip("Height used for the swipe obstruction check so the ray aims roughly at chest level.")]
     [SerializeField] float attackLineOfSightHeight = 1.1f;
 
+    [Header("Poise (anti stun-lock)")]
+    [Tooltip("Stagger meter. Punches subtract Punch Poise Damage; the full-body stagger only plays when this reaches 0. Hits that don't break poise cause a brief upper-body flinch that never interrupts movement or attacks.")]
+    [SerializeField, Min(1f)] float maxPoise = 100f;
+    [Tooltip("Poise removed per hit taken. 50 = two quick punches break poise.")]
+    [SerializeField, Min(0f)] float punchPoiseDamage = 50f;
+    [Tooltip("Seconds after the last hit before poise starts regenerating.")]
+    [SerializeField, Min(0f)] float poiseRegenDelay = 1.5f;
+    [SerializeField, Min(0f)] float poiseRegenPerSecond = 30f;
+    [Tooltip("Length of the full-body stagger played when poise breaks.")]
+    [SerializeField, Min(0.1f)] float poiseBreakStaggerSeconds = 1.1f;
+    [Tooltip("After a poise break the zombie cannot be staggered again for this long (hits still damage and flinch, and counters are more likely).")]
+    [SerializeField, Min(0f)] float staggerImmunitySeconds = 4f;
+
+    [Header("Counter attack")]
+    [Tooltip("Chance that a landed punch triggers an immediate retaliatory Attack2 swipe. Rolled per hit — there is no safe punch rhythm to memorize.")]
+    [SerializeField, Range(0f, 1f)] float counterChance = 0.35f;
+    [Tooltip("Counter chance while stagger-immune after a poise break — punching a zombie that is powering through is extra dangerous.")]
+    [SerializeField, Range(0f, 1f)] float counterChanceWhileImmune = 0.65f;
+    [Tooltip("Minimum seconds between counter attempts.")]
+    [SerializeField, Min(0f)] float counterCooldownSeconds = 2.5f;
+    [Tooltip("The attacker must be within this range for a counter to trigger.")]
+    [SerializeField, Min(0f)] float counterTriggerRange = 3f;
+
+    [Header("Rage")]
+    [Tooltip("At or below this health fraction the zombie permanently enrages: it runs, attacks faster and senses further.")]
+    [SerializeField, Range(0f, 1f)] float enrageAtHealthFraction = 0.5f;
+    [SerializeField, Min(1f)] float enragedSpeedMultiplier = 1.65f;
+    [Tooltip("Multiplies the attack cooldown while enraged (lower = faster attacks).")]
+    [SerializeField, Range(0.1f, 1f)] float enragedAttackRateMultiplier = 0.65f;
+    [SerializeField, Min(1f)] float enragedDetectionRadiusMultiplier = 1.4f;
+
     [Header("Animator")]
     [SerializeField] string speedParameter = "Speed";
     [SerializeField] string groundedParameter = "Grounded";
@@ -124,8 +157,10 @@ public class ZombieAI : MonoBehaviour
     [Tooltip("Extra blend time when easing the retaliatory Attack2 back out to the empty upper-body pose.")]
     [SerializeField] float counterAttackExitCrossfadeDuration = 0.22f;
     [SerializeField] string hitReactionTrigger = "HitReaction";
-    [Tooltip("How long the zombie is stunned during a hit reaction.")]
-    [SerializeField] float hitReactionDuration = 2.0f;
+    [Tooltip("Upper-body flinch state played for hits that don't break poise (auto-exits via its transition).")]
+    [SerializeField] string flinchStateName = "HitFlinch";
+    [Tooltip("Animator bool that switches locomotion to the Run state while enraged.")]
+    [SerializeField] string enragedAnimatorBool = "Enraged";
     [Tooltip("Blend time when exiting hit reaction back into locomotion.")]
     [SerializeField] float hitReactionExitCrossfadeDuration = 0.18f;
     [Tooltip("Layer index for upper body attacks. Set to 1 if using Avatar Mask layering.")]
@@ -158,8 +193,11 @@ public class ZombieAI : MonoBehaviour
     float _intendedMoveSpeed;
     bool _pitDropActive;
     float _pitDropUnlockTime;
-    float _rapidPunchCounterWindowEndTime;
-    bool _isCounterAttackInvincible;
+    float _poise;
+    float _poiseRegenBlockedUntil;
+    float _staggerImmuneUntil;
+    float _nextCounterRollTime;
+    bool _isEnraged;
     float _footstepTimer;
     readonly List<AudioClip> _footstepPool = new List<AudioClip>(4);
     int[] _footstepShuffle;
@@ -176,7 +214,9 @@ public class ZombieAI : MonoBehaviour
     float _clientFootstepBelowSpeedTimer;
     float _clientGroanAggroOffTimer;
 
-    public bool IsInvincible => _isCounterAttackInvincible;
+    float EffectiveMoveSpeed => _isEnraged ? walkSpeed * enragedSpeedMultiplier : walkSpeed;
+    float EffectiveAttackRate => _isEnraged ? attackRate * enragedAttackRateMultiplier : attackRate;
+    float EffectiveDetectionRadius => _isEnraged ? detectionRadius * enragedDetectionRadiusMultiplier : detectionRadius;
 
     /// <summary>
     /// True while this zombie is actively producing audible SFX (groan/footsteps).
@@ -209,6 +249,7 @@ public class ZombieAI : MonoBehaviour
     void Awake()
     {
         _networkObject = GetComponent<NetworkObject>();
+        _poise = maxPoise;
         CacheReferences();
         ConfigureVoiceAudioSource();
         ConfigureFootstepAudioSource();
@@ -265,6 +306,9 @@ public class ZombieAI : MonoBehaviour
         if (_state == ZombieState.Dead)
             return;
 
+        if (_poise < maxPoise && Time.time >= _poiseRegenBlockedUntil)
+            _poise = Mathf.Min(maxPoise, _poise + poiseRegenPerSecond * Time.deltaTime);
+
         UpdatePeriodicGroan();
         // Throttle the acquisition scan. RefreshTarget() already no-ops once a target is held, so this only
         // paces the expensive search-phase OverlapSphere/rays; chasing and attacking stay per-frame.
@@ -294,7 +338,7 @@ public class ZombieAI : MonoBehaviour
         else
         {
             float distanceToTarget = Vector3.Distance(transform.position, _target.position);
-            float loseTargetRadius = Mathf.Max(detectionRadius, detectionRadius * loseTargetRadiusMultiplier);
+            float loseTargetRadius = Mathf.Max(EffectiveDetectionRadius, EffectiveDetectionRadius * loseTargetRadiusMultiplier);
             if (distanceToTarget > loseTargetRadius && !inHitReaction)
             {
                 ClearTarget();
@@ -400,8 +444,8 @@ public class ZombieAI : MonoBehaviour
         _verticalVelocity = Vector3.zero;
         _intendedMoveSpeed = 0f;
         _pitDropActive = false;
-        _rapidPunchCounterWindowEndTime = 0f;
-        _isCounterAttackInvincible = false;
+        _staggerImmuneUntil = 0f;
+        _nextCounterRollTime = 0f;
         _footstepTimer = 0f;
         _nextGroanTime = -1f;
         _clientFootstepTimer = 0f;
@@ -466,7 +510,8 @@ public class ZombieAI : MonoBehaviour
 
         _clientFootstepBelowSpeedTimer = 0f;
 
-        float interval = Mathf.Max(0.05f, walkFootstepInterval * 2f);
+        float cadenceScale = Mathf.Clamp(walkSpeed / Mathf.Max(horizontalSpeed, 0.01f), 0.55f, 1f);
+        float interval = Mathf.Max(0.05f, walkFootstepInterval * 2f * cadenceScale);
         _clientFootstepTimer -= Time.deltaTime;
         if (_clientFootstepTimer > 0f)
             return;
@@ -508,42 +553,63 @@ public class ZombieAI : MonoBehaviour
         _clientNextGroanTime = Time.time + groanRepeatIntervalSeconds;
     }
 
-    public bool TryHandleIncomingMeleeHit(Transform attacker, PlayerHealth attackerHealth)
-    {
-        if (_state == ZombieState.Dead)
-            return false;
-
-        if (_isCounterAttackInvincible)
-            return false;
-
-        AssignAttackerAsTarget(attacker, attackerHealth);
-
-        bool wasHitTooQuickly = counterAttackQuickSuccessionWindow > 0f
-            && Time.time <= _rapidPunchCounterWindowEndTime;
-        if (wasHitTooQuickly)
-        {
-            StartCounterAttack();
-            return false;
-        }
-
-        _rapidPunchCounterWindowEndTime = Time.time + counterAttackQuickSuccessionWindow;
-        return true;
-    }
-
-    public void TakeHit()
+    /// <summary>
+    /// Server-side reaction to surviving a hit (called by <see cref="ZombieHealth"/> after damage applies).
+    /// Damage is never blocked any more; this only decides how the zombie reacts:
+    ///   • mid-swing — hyper-armor: the committed attack keeps coming (poise chips but cannot break),
+    ///   • poise break — the one full-body stagger, followed by a stagger-immunity window,
+    ///   • otherwise — a cosmetic upper-body flinch, with a per-hit chance to counter with Attack2.
+    /// </summary>
+    public void OnDamageTaken(bool fromPlayerMelee, Transform attacker, PlayerHealth attackerHealth)
     {
         if (_state == ZombieState.Dead)
             return;
 
+        AssignAttackerAsTarget(attacker, attackerHealth);
+        RefreshRageState();
+
+        _poiseRegenBlockedUntil = Time.time + poiseRegenDelay;
+
+        // Hyper-armor: once a swipe is committed, hits can't interrupt it. Poise still wears down but is
+        // floored so the break can never trigger mid-swing (it would cancel the attack and re-open the
+        // punch-to-cancel exploit this system removes).
+        if (_attackRoutine != null)
+        {
+            _poise = Mathf.Max(1f, _poise - punchPoiseDamage);
+            return;
+        }
+
+        bool staggerImmune = Time.time < _staggerImmuneUntil;
+        if (!staggerImmune)
+        {
+            _poise -= punchPoiseDamage;
+            if (_poise <= 0f)
+            {
+                BeginPoiseBreakStagger();
+                return;
+            }
+        }
+
+        if (fromPlayerMelee && TryStartCounterAttack(staggerImmune))
+            return;
+
+        PlayHitFlinch();
+    }
+
+    /// <summary>The earned full-body stagger: only reachable by depleting poise, and never repeatable back-to-back.</summary>
+    void BeginPoiseBreakStagger()
+    {
         if (_attackRoutine != null)
         {
             StopCoroutine(_attackRoutine);
             _attackRoutine = null;
         }
 
+        _poise = maxPoise;
         _state = ZombieState.HitReaction;
-        _hitReactionEndTime = Time.time + hitReactionDuration;
-        _nextAttackTime = _hitReactionEndTime + attackRate;
+        _hitReactionEndTime = Time.time + poiseBreakStaggerSeconds;
+        _staggerImmuneUntil = _hitReactionEndTime + staggerImmunitySeconds;
+        _nextAttackTime = _hitReactionEndTime + EffectiveAttackRate * 0.5f;
 
         if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
         {
@@ -565,6 +631,60 @@ public class ZombieAI : MonoBehaviour
             }
             animator.CrossFadeInFixedTime("HitReaction", 0.1f, 0, 0f);
         }
+    }
+
+    /// <summary>Quick masked recoil on the upper-body layer; the legs (and any chase) keep going.</summary>
+    void PlayHitFlinch()
+    {
+        if (animator == null || upperBodyLayerIndex <= 0 || string.IsNullOrEmpty(flinchStateName))
+            return;
+        if (_state == ZombieState.HitReaction)
+            return;
+
+        animator.SetLayerWeight(upperBodyLayerIndex, 1f);
+        animator.CrossFadeInFixedTime(flinchStateName, 0.05f, upperBodyLayerIndex, 0f);
+    }
+
+    /// <summary>Per-hit counter roll. Replaces the old fixed 'punched twice within X seconds' window.</summary>
+    bool TryStartCounterAttack(bool staggerImmune)
+    {
+        if (_state == ZombieState.HitReaction && Time.time < _hitReactionEndTime)
+            return false;
+        if (Time.time < _nextCounterRollTime)
+            return false;
+        if (_targetHealth == null || _targetHealth.IsDead || _target == null)
+            return false;
+
+        Vector3 toTarget = _target.position - transform.position;
+        toTarget.y = 0f;
+        if (toTarget.magnitude > counterTriggerRange)
+            return false;
+
+        float chance = staggerImmune ? counterChanceWhileImmune : counterChance;
+        if (Random.value > chance)
+            return false;
+
+        _nextCounterRollTime = Time.time + counterCooldownSeconds;
+        StartCounterAttack();
+        return true;
+    }
+
+    /// <summary>Permanent low-health rage: run locomotion, faster attacks, wider senses.</summary>
+    void RefreshRageState()
+    {
+        if (_isEnraged || zombieHealth == null || zombieHealth.IsDead)
+            return;
+        if (zombieHealth.MaxHealth <= 0f
+            || zombieHealth.CurrentHealth / zombieHealth.MaxHealth > enrageAtHealthFraction)
+            return;
+
+        _isEnraged = true;
+        if (animator != null && !string.IsNullOrEmpty(enragedAnimatorBool))
+            animator.SetBool(enragedAnimatorBool, true);
+
+        // Rage roar so the speed-up reads as a deliberate turn, not a glitch.
+        _nextGroanTime = -1f;
+        PlayGroanAndScheduleNext();
     }
 
     void UpdateHitReaction()
@@ -616,7 +736,6 @@ public class ZombieAI : MonoBehaviour
             _attackRoutine = null;
         }
 
-        _rapidPunchCounterWindowEndTime = 0f;
         _attackRoutine = StartCoroutine(AttackRoutine(useCounterAttack: true));
     }
 
@@ -795,7 +914,7 @@ public class ZombieAI : MonoBehaviour
         int mask = detectionMask.value == 0 ? Physics.DefaultRaycastLayers : detectionMask.value;
         int hitCount = Physics.OverlapSphereNonAlloc(
             transform.position,
-            detectionRadius,
+            EffectiveDetectionRadius,
             _detectionHits,
             mask,
             QueryTriggerInteraction.Ignore);
@@ -812,6 +931,9 @@ public class ZombieAI : MonoBehaviour
 
             PlayerHealth candidate = hit.GetComponentInParent<PlayerHealth>();
             if (candidate == null || candidate.IsDead || IsPlayerCarriedByJailor(candidate))
+                continue;
+
+            if (!IsWithinDetectionCone(candidate.transform.position))
                 continue;
 
             if (!HasDetectionLineOfSight(candidate))
@@ -835,10 +957,35 @@ public class ZombieAI : MonoBehaviour
                     continue;
 
                 float distance = Vector3.Distance(transform.position, candidate.transform.position);
-                if (distance > detectionRadius || distance >= closestDistance)
+                if (distance > EffectiveDetectionRadius || distance >= closestDistance)
+                    continue;
+
+                if (!IsWithinDetectionCone(candidate.transform.position))
                     continue;
 
                 if (!HasDetectionLineOfSight(candidate))
+                    continue;
+
+                closestTarget = candidate;
+                closestDistance = distance;
+            }
+        }
+
+        // Heard-sprint acquisition: no vision cone / line-of-sight gate — a sprinting player is heard from any
+        // direction and around corners. Only the audible-sprint flag triggers it, so walking stays silent.
+        if (closestTarget == null && hearingRadius > 0f)
+        {
+            IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
+            for (int i = 0; i < players.Count; i++)
+            {
+                PlayerHealth candidate = players[i];
+                if (candidate == null || candidate.IsDead || IsPlayerCarriedByJailor(candidate))
+                    continue;
+                if (!IsPlayerAudiblySprinting(candidate))
+                    continue;
+
+                float distance = Vector3.Distance(transform.position, candidate.transform.position);
+                if (distance > hearingRadius || distance >= closestDistance)
                     continue;
 
                 closestTarget = candidate;
@@ -851,6 +998,19 @@ public class ZombieAI : MonoBehaviour
 
         _targetHealth = closestTarget;
         _target = closestTarget.transform;
+    }
+
+    static bool IsPlayerAudiblySprinting(PlayerHealth playerHealth)
+    {
+        if (playerHealth == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = playerHealth.GetComponent<NetworkPlayerAvatar>();
+        if (avatar != null && avatar.IsSpawned)
+            return avatar.AudiblySprintingForAi;
+
+        PlayerController pc = playerHealth.GetComponent<PlayerController>();
+        return pc != null && pc.IsAudiblySprintingForAi;
     }
 
     static bool IsPlayerCarriedByJailor(PlayerHealth playerHealth)
@@ -868,6 +1028,28 @@ public class ZombieAI : MonoBehaviour
             return true;
 
         return HasLineOfSightToTarget(targetHealth, detectionLineOfSightMask, detectionLineOfSightHeight, Vector3.zero);
+    }
+
+    /// <summary>
+    /// Vision-cone gate for target ACQUISITION only — hearing and being hit still aggro from any direction,
+    /// so players can sneak behind. Points within arm's reach always register (you bumped into it).
+    /// </summary>
+    bool IsWithinDetectionCone(Vector3 worldPoint)
+    {
+        if (detectionFovHalfAngleDegrees >= 179.5f)
+            return true;
+
+        Vector3 toPoint = worldPoint - transform.position;
+        toPoint.y = 0f;
+        if (toPoint.sqrMagnitude <= 0.6f * 0.6f)
+            return true;
+
+        Vector3 forward = transform.forward;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < 1e-4f)
+            return true;
+
+        return Vector3.Angle(forward, toPoint) <= detectionFovHalfAngleDegrees;
     }
 
     void TryStartChase()
@@ -946,8 +1128,8 @@ public class ZombieAI : MonoBehaviour
             }
         }
 
-        float moveSpeed = walkSpeed;
-        float targetMultiplier = SampleStepCurve();
+        float moveSpeed = EffectiveMoveSpeed;
+        float targetMultiplier = _isEnraged ? 1f : SampleStepCurve(); // the run cycle has no shuffle-stop rhythm
         _currentStepMultiplier = Mathf.MoveTowards(
             _currentStepMultiplier,
             targetMultiplier,
@@ -1027,7 +1209,6 @@ public class ZombieAI : MonoBehaviour
         _horizontalVelocity = Vector3.zero;
         _intendedMoveSpeed = 0f;
         _pitDropActive = false;
-        _rapidPunchCounterWindowEndTime = 0f;
         _footstepTimer = 0f;
         _nextGroanTime = -1f;
         StopZombieVocalAudio();
@@ -1037,7 +1218,6 @@ public class ZombieAI : MonoBehaviour
     {
         _target = null;
         _targetHealth = null;
-        _rapidPunchCounterWindowEndTime = 0f;
         _footstepTimer = 0f;
         _nextGroanTime = -1f;
         StopZombieVocalAudio();
@@ -1056,7 +1236,9 @@ public class ZombieAI : MonoBehaviour
             return;
         }
 
-        float interval = Mathf.Max(0.05f, walkFootstepInterval * 2f);
+        // Faster stride while enraged: shrink the interval with actual speed above the walk baseline.
+        float cadenceScale = Mathf.Clamp(walkSpeed / Mathf.Max(horizontalSpeed, 0.01f), 0.55f, 1f);
+        float interval = Mathf.Max(0.05f, walkFootstepInterval * 2f * cadenceScale);
         _footstepTimer -= Time.deltaTime;
         if (_footstepTimer > 0f)
             return;
@@ -1183,12 +1365,6 @@ public class ZombieAI : MonoBehaviour
             _pitDropActive = false;
         }
 
-        if (useCounterAttack)
-        {
-            _isCounterAttackInvincible = true;
-            _hitReactionEndTime = 0f;
-        }
-
         FaceTarget();
 
         if (animator != null)
@@ -1213,14 +1389,11 @@ public class ZombieAI : MonoBehaviour
             yield return new WaitForSeconds(hitDelay);
 
         if (CanLandCommittedAttack(_targetHealth, committedAttackDirection))
-        {
-            _targetHealth.TakeDamage(damage);
-            NotifyZombiePlayerHitSfx(_targetHealth);
-        }
+            _targetHealth.TakeDamage(damage); // victim feedback comes from the universal hurt-feedback watcher
 
-        _nextAttackTime = Time.time + attackRate;
+        _nextAttackTime = Time.time + EffectiveAttackRate;
 
-        float recoveryTime = Mathf.Max(0f, attackRate - hitDelay);
+        float recoveryTime = Mathf.Max(0f, EffectiveAttackRate - hitDelay);
         if (recoveryTime > 0f)
             yield return new WaitForSeconds(recoveryTime);
 
@@ -1230,7 +1403,6 @@ public class ZombieAI : MonoBehaviour
             animator.CrossFadeInFixedTime("Empty", exitCrossfadeDuration, upperBodyLayerIndex, 0f);
         }
 
-        _isCounterAttackInvincible = false;
         _attackRoutine = null;
 
         if (_state == ZombieState.Dead)
@@ -1251,21 +1423,6 @@ public class ZombieAI : MonoBehaviour
             return transform.forward;
 
         return toTarget.normalized;
-    }
-
-    static void NotifyZombiePlayerHitSfx(PlayerHealth targetHealth)
-    {
-        if (targetHealth == null)
-            return;
-
-        NetworkPlayerCombat combat = targetHealth.GetComponent<NetworkPlayerCombat>();
-        if (combat != null && combat.IsSpawned && combat.IsServer)
-        {
-            combat.NotifyOwnerZombieHitSfx();
-            return;
-        }
-
-        targetHealth.GetComponent<PlayerController>()?.PlayZombieHitSfx();
     }
 
     bool CanLandCommittedAttack(PlayerHealth targetHealth, Vector3 committedAttackDirection)
@@ -1405,7 +1562,8 @@ public class ZombieAI : MonoBehaviour
             return;
         }
 
-        float normalizedSpeed = walkSpeed > 0.001f ? Mathf.Clamp01(_intendedMoveSpeed / walkSpeed) : 0f;
+        float referenceSpeed = EffectiveMoveSpeed;
+        float normalizedSpeed = referenceSpeed > 0.001f ? Mathf.Clamp01(_intendedMoveSpeed / referenceSpeed) : 0f;
         animator.SetFloat(speedParameter, normalizedSpeed);
         animator.SetBool(groundedParameter, characterController != null && characterController.isGrounded);
         animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);

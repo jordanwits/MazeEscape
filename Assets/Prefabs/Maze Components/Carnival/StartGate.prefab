@@ -343,8 +343,11 @@ MonoBehaviour:
   doorUnlockClip: {fileID: 8300000, guid: 044ba666a1102254d98a1174b7223dcf, type: 3}
   doorOpenClip: {fileID: 8300000, guid: d2001904030da154d896ad3c35a0b36f, type: 3}
   doorCloseClip: {fileID: 8300000, guid: 93ab024c3d4814c45a77a59f14feabac, type: 3}
+  doorLockedRattleClip: {fileID: 8300000, guid: 5385312606cdc0044bf28f2b30b61bb3, type: 3}
   doorUnlockVolume: 0.075
   doorOpenVolume: 0.075
+  doorLockedRattleVolume: 0.28333333
+  lockedRattleLeadIn: 0.3
   pairedLeaf: {fileID: 801222002}
   optionalCloseValidator: {fileID: 0}
 --- !u!1 &5279128039995193309
@@ -525,8 +528,11 @@ MonoBehaviour:
   doorUnlockClip: {fileID: 8300000, guid: 044ba666a1102254d98a1174b7223dcf, type: 3}
   doorOpenClip: {fileID: 8300000, guid: d2001904030da154d896ad3c35a0b36f, type: 3}
   doorCloseClip: {fileID: 8300000, guid: 93ab024c3d4814c45a77a59f14feabac, type: 3}
+  doorLockedRattleClip: {fileID: 8300000, guid: 5385312606cdc0044bf28f2b30b61bb3, type: 3}
   doorUnlockVolume: 0.075
   doorOpenVolume: 0.075
+  doorLockedRattleVolume: 0.28333333
+  lockedRattleLeadIn: 0.3
   pairedLeaf: {fileID: 801111002}
   optionalCloseValidator: {fileID: 0}
 --- !u!1 &9221295238013409811

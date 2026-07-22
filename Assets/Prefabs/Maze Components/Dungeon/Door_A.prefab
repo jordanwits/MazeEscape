@@ -155,6 +155,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   hinge: {fileID: 3651418251656758574}
   openLocalEuler: {x: 0, y: 90, z: 0}
+  hingeRestPoseIsOpen: 0
   moveDuration: 1
   interactMaxDistance: 5
   useKeyToUnlock: 0
@@ -163,5 +164,10 @@ MonoBehaviour:
   doorUnlockClip: {fileID: 8300000, guid: 044ba666a1102254d98a1174b7223dcf, type: 3}
   doorOpenClip: {fileID: 8300000, guid: 77d87fc9c97416f40906541d18efd180, type: 3}
   doorCloseClip: {fileID: 0}
+  doorLockedRattleClip: {fileID: 8300000, guid: 5385312606cdc0044bf28f2b30b61bb3, type: 3}
   doorUnlockVolume: 0.025
   doorOpenVolume: 0.051
+  doorLockedRattleVolume: 0.28333333
+  lockedRattleLeadIn: 0.3
+  pairedLeaf: {fileID: 0}
+  optionalCloseValidator: {fileID: 0}

@@ -44,15 +44,8 @@ public class ZombieHealth : MonoBehaviour
         if (IsDead || amount <= 0f)
             return false;
 
-        if (zombieAI != null)
-        {
-            if (zombieAI.IsInvincible)
-                return false;
-
-            if (fromPlayerMelee && !zombieAI.TryHandleIncomingMeleeHit(attacker, attackerHealth))
-                return false;
-        }
-
+        // Damage always lands now — the AI's poise system decides the reaction (flinch, stagger or counter),
+        // never whether the hit counts.
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         if (CurrentHealth <= 0f)
         {
@@ -61,7 +54,7 @@ public class ZombieHealth : MonoBehaviour
         }
 
         if (zombieAI != null)
-            zombieAI.TakeHit();
+            zombieAI.OnDamageTaken(fromPlayerMelee, attacker, attackerHealth);
 
         return true;
     }

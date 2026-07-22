@@ -127,21 +127,4 @@ public class NetworkPlayerCombat : NetworkBehaviour
         playerController?.PlaySkeletonHitSfx();
     }
 
-    /// <summary>Server-only: tells the owning client to play feedback when a zombie hit lands.</summary>
-    public void NotifyOwnerZombieHitSfx()
-    {
-        if (!IsServer)
-            return;
-
-        PlayZombieHitSfxClientRpc(new ClientRpcParams
-        {
-            Send = new ClientRpcSendParams { TargetClientIds = new[] { OwnerClientId } }
-        });
-    }
-
-    [ClientRpc]
-    void PlayZombieHitSfxClientRpc(ClientRpcParams clientRpcParams = default)
-    {
-        playerController?.PlayZombieHitSfx();
-    }
 }

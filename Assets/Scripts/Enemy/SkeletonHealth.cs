@@ -52,9 +52,6 @@ public class SkeletonHealth : MonoBehaviour
         if (IsDead || amount <= 0f)
             return false;
 
-        if (skeletonAI != null && fromPlayerMelee)
-            skeletonAI.NotifyAttackedBy(attacker, attackerHealth);
-
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         if (CurrentHealth <= 0f)
         {
@@ -62,8 +59,9 @@ public class SkeletonHealth : MonoBehaviour
             return true;
         }
 
+        // The AI's poise system decides the reaction (flinch, stagger, retaliation) — damage always lands.
         if (skeletonAI != null)
-            skeletonAI.TakeHit();
+            skeletonAI.OnDamageTaken(fromPlayerMelee, attacker, attackerHealth);
 
         return true;
     }

@@ -188,7 +188,10 @@ public class RagdollTrap : MonoBehaviour
         if (networked && !nm.IsServer)
         {
             ZombieHealth zClient = other.GetComponentInParent<ZombieHealth>();
-            if ((playerHealth != null && !playerHealth.IsDead) || (zClient != null && !zClient.IsDead))
+            SkeletonHealth sClient = other.GetComponentInParent<SkeletonHealth>();
+            if ((playerHealth != null && !playerHealth.IsDead)
+                || (zClient != null && !zClient.IsDead)
+                || (sClient != null && !sClient.IsDead))
                 TryPlayTrapHitMetallic(other);
             return;
         }
@@ -199,6 +202,16 @@ public class RagdollTrap : MonoBehaviour
         {
             TryPlayTrapHitMetallic(other);
             zombieHealth.Die();
+            return;
+        }
+
+        // Skeletons die to swing-pad traps too (crumble to a bone pile) — kiting enemies into traps is a
+        // legitimate tactic. Pits stay zombie-only: SkeletonAI refuses to walk over drops by design.
+        SkeletonHealth skeletonHealth = other.GetComponentInParent<SkeletonHealth>();
+        if (skeletonHealth != null && !skeletonHealth.IsDead)
+        {
+            TryPlayTrapHitMetallic(other);
+            skeletonHealth.Die();
             return;
         }
 

@@ -71,6 +71,8 @@ public class JailorAI : MonoBehaviour
     [SerializeField] float voiceHearRadius = 22f;
     [SerializeField] float zombieNoiseHearRadius = 22f;
     [SerializeField] float targetNavMeshSampleRadius = 3f;
+    [Tooltip("Half-angle of the vision cone, from facing. Players outside it are only found by hearing (sprint/voice/zombie noise) — sneaking behind works. 180 restores the old omniscient detection.")]
+    [SerializeField, Range(10f, 180f)] float detectionFovHalfAngleDegrees = 100f;
     [Tooltip("If enabled, sight checks require a clear ray to the player.")]
     [SerializeField] bool requireDetectionLineOfSight = true;
     [SerializeField] LayerMask detectionLineOfSightMask = Physics.DefaultRaycastLayers;
@@ -818,7 +820,21 @@ public class JailorAI : MonoBehaviour
 
             float d = Vector3.Distance(transform.position, _target.position);
             if (d > loseRadius)
-                ClearTarget();
+            {
+                if (_state == JailorState.Chase)
+                {
+                    // Outran, not just out-of-sight: walk to where they last were and search, exactly like
+                    // the line-of-sight loss path above — never teleport-forget mid-chase.
+                    Vector3 lastKnownPosition = _target.position;
+                    SetInvestigationPoint(lastKnownPosition);
+                    ClearTarget();
+                    EnterInvestigating();
+                }
+                else
+                {
+                    ClearTarget();
+                }
+            }
         }
 
         Vector3 desiredHorizontal = Vector3.zero;
@@ -2329,6 +2345,7 @@ public class JailorAI : MonoBehaviour
             {
                 float distance = Vector3.Distance(transform.position, candidate.transform.position);
                 bool seen = distance <= detectionRadius
+                    && IsWithinDetectionCone(candidate.transform.position)
                     && (!requireDetectionLineOfSight || HasDetectionLineOfSight(candidate));
                 if (seen && distance < bestSeenScore)
                 {
@@ -2372,6 +2389,7 @@ public class JailorAI : MonoBehaviour
                     continue;
 
                 bool seen = distance <= detectionRadius
+                    && IsWithinDetectionCone(candidate.transform.position)
                     && (!requireDetectionLineOfSight || HasDetectionLineOfSight(candidate));
                 if (seen && distance < bestSeenScore)
                 {
@@ -2459,6 +2477,28 @@ public class JailorAI : MonoBehaviour
         ClearTarget();
         EnterInvestigating();
         return true;
+    }
+
+    /// <summary>
+    /// Vision-cone gate for SIGHT acquisition only — hearing (sprint/voice/zombie noise) still works from any
+    /// direction, so players can sneak behind. Points within arm's reach always register (you bumped into him).
+    /// </summary>
+    bool IsWithinDetectionCone(Vector3 worldPoint)
+    {
+        if (detectionFovHalfAngleDegrees >= 179.5f)
+            return true;
+
+        Vector3 toPoint = worldPoint - transform.position;
+        toPoint.y = 0f;
+        if (toPoint.sqrMagnitude <= 0.6f * 0.6f)
+            return true;
+
+        Vector3 forward = transform.forward;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < 1e-4f)
+            return true;
+
+        return Vector3.Angle(forward, toPoint) <= detectionFovHalfAngleDegrees;
     }
 
     static bool IsPlayerAudiblySprinting(PlayerHealth playerHealth)

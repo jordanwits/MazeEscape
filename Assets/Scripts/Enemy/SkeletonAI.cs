@@ -48,6 +48,10 @@ public class SkeletonAI : MonoBehaviour
     [SerializeField] LayerMask detectionMask;
     [SerializeField] float detectionRadius = 16f;
     [SerializeField] float loseTargetRadiusMultiplier = 1.4f;
+    [Tooltip("Half-angle of the vision cone, from facing. Players outside it are only found by damage — sneaking behind works. 180 restores the old omniscient detection.")]
+    [SerializeField, Range(10f, 180f)] float detectionFovHalfAngleDegrees = 100f;
+    [Tooltip("Radius at which the skeleton HEARS an audibly-sprinting player and moves toward them — no vision cone or line-of-sight needed (heard from behind and through walls). Walking is silent; only sprinting is heard. 0 disables hearing.")]
+    [SerializeField, Min(0f)] float hearingRadius = 18f;
     [SerializeField] bool requireDetectionLineOfSight = true;
     [SerializeField] LayerMask detectionLineOfSightMask = Physics.DefaultRaycastLayers;
     [SerializeField] float detectionLineOfSightHeight = 1.1f;
@@ -138,9 +142,32 @@ public class SkeletonAI : MonoBehaviour
     [SerializeField, Min(0f)] float bashPushControlLockSeconds = 0.25f;
     [SerializeField] AudioClip bashSfx;
 
+    [Header("Poise (anti stun-lock)")]
+    [Tooltip("Stagger meter. Punches subtract Punch Poise Damage; the full-body hit reaction only plays when this reaches 0 — otherwise a punch causes a brief flinch and the skeleton keeps fighting.")]
+    [SerializeField, Min(1f)] float maxPoise = 100f;
+    [Tooltip("Poise removed per landed punch. 45 = the third quick punch breaks poise.")]
+    [SerializeField, Min(0f)] float punchPoiseDamage = 45f;
+    [Tooltip("Seconds after the last hit before poise starts regenerating.")]
+    [SerializeField, Min(0f)] float poiseRegenDelay = 1.75f;
+    [SerializeField, Min(0f)] float poiseRegenPerSecond = 35f;
+    [Tooltip("Length of the full-body stagger when poise breaks. Breaking poise is the only thing that interrupts a committed throw/bash.")]
+    [SerializeField, Min(0.1f)] float poiseBreakStaggerSeconds = 0.9f;
+    [Tooltip("After a poise break the skeleton cannot be staggered or flinched again for this long (hits still damage it).")]
+    [SerializeField, Min(0f)] float staggerImmunitySeconds = 5f;
+    [Tooltip("Length of the cosmetic flinch for hits that don't break poise (just the first snap of the react clip).")]
+    [SerializeField, Min(0.05f)] float flinchSeconds = 0.35f;
+
+    [Header("Retaliation")]
+    [Tooltip("Chance that a landed punch triggers an instant retaliatory bash. Rolled per hit — point-blank punching is never safe.")]
+    [SerializeField, Range(0f, 1f)] float retaliationChance = 0.5f;
+    [Tooltip("Retaliation chance while stagger-immune after a poise break.")]
+    [SerializeField, Range(0f, 1f)] float retaliationChanceWhileImmune = 0.75f;
+    [Tooltip("Minimum seconds between retaliation attempts.")]
+    [SerializeField, Min(0f)] float retaliationCooldownSeconds = 2f;
+    [Tooltip("The attacker must be within this range for the retaliatory bash to trigger.")]
+    [SerializeField, Min(0f)] float retaliationRange = 3f;
+
     [Header("Hit reaction")]
-    [Tooltip("How long the skeleton is stunned when the player melees it.")]
-    [SerializeField] float hitReactionDuration = 1.3f;
     [SerializeField] float hitReactionCrossfade = 0.1f;
     [SerializeField] float hitReactionExitCrossfade = 0.18f;
     [Tooltip("Clamp the hit-reaction stagger so the body can't lean through walls/props — the React clip shoves " +
@@ -193,6 +220,10 @@ public class SkeletonAI : MonoBehaviour
     float _nextThrowTime;
     float _nextBashTime;
     float _hitReactionEndTime;
+    float _poise;
+    float _poiseRegenBlockedUntil;
+    float _staggerImmuneUntil;
+    float _nextRetaliationRollTime;
     Coroutine _actionRoutine;
     Vector3 _horizontalVelocity;
     Vector3 _verticalVelocity;
@@ -238,6 +269,7 @@ public class SkeletonAI : MonoBehaviour
     void Awake()
     {
         _networkObject = GetComponent<NetworkObject>();
+        _poise = maxPoise;
         CacheReferences();
         ResolveBones();
         ApplyAgentSettings();
@@ -330,6 +362,9 @@ public class SkeletonAI : MonoBehaviour
 
         if (_state == SkeletonState.Dead)
             return;
+
+        if (_poise < maxPoise && Time.time >= _poiseRegenBlockedUntil)
+            _poise = Mathf.Min(maxPoise, _poise + poiseRegenPerSecond * Time.deltaTime);
 
         if (_nextSenseTime < 0f)
             _nextSenseTime = Time.time + Random.Range(0f, Mathf.Max(0f, sensingInterval));
@@ -899,11 +934,48 @@ public class SkeletonAI : MonoBehaviour
         _target = attackerHealth.transform;
     }
 
-    public void TakeHit()
+    /// <summary>
+    /// Server-side reaction to surviving a hit (called by <see cref="SkeletonHealth"/> after damage applies).
+    /// The skeleton is the stagger-resistant elite of the dungeon:
+    ///   • poise break (3rd quick punch) — the only full stagger, and the only thing that interrupts a
+    ///     committed throw/bash; followed by a long stagger-immunity window,
+    ///   • mid throw/bash — hyper-armor: the action finishes regardless of incoming punches,
+    ///   • otherwise — per-hit chance of an INSTANT retaliatory bash, else a brief cosmetic flinch.
+    /// </summary>
+    public void OnDamageTaken(bool fromPlayerMelee, Transform attacker, PlayerHealth attackerHealth)
     {
         if (_state == SkeletonState.Dead)
             return;
 
+        NotifyAttackedBy(attacker, attackerHealth);
+        _poiseRegenBlockedUntil = Time.time + poiseRegenDelay;
+
+        bool staggerImmune = Time.time < _staggerImmuneUntil;
+        if (!staggerImmune)
+        {
+            _poise -= punchPoiseDamage;
+            if (_poise <= 0f)
+            {
+                BeginPoiseBreakStagger();
+                return;
+            }
+        }
+
+        // Hyper-armor: a committed throw/bash keeps coming unless poise broke above.
+        if (_actionRoutine != null)
+            return;
+
+        if (fromPlayerMelee && TryStartRetaliationBash(staggerImmune))
+            return;
+
+        // While stagger-immune it powers through hits without even flinching.
+        if (!staggerImmune)
+            PlayFlinch();
+    }
+
+    /// <summary>The earned full-body stagger — resets poise and starts the stagger-immunity window.</summary>
+    void BeginPoiseBreakStagger()
+    {
         if (_actionRoutine != null)
         {
             StopCoroutine(_actionRoutine);
@@ -912,8 +984,10 @@ public class SkeletonAI : MonoBehaviour
 
         SetHeldSkullHidden(false); // restore the skull if a throw was interrupted
 
+        _poise = maxPoise;
         _state = SkeletonState.HitReaction;
-        _hitReactionEndTime = Time.time + hitReactionDuration;
+        _hitReactionEndTime = Time.time + poiseBreakStaggerSeconds;
+        _staggerImmuneUntil = _hitReactionEndTime + staggerImmunitySeconds;
         _nextBashTime = _hitReactionEndTime + bashCooldown * 0.5f;
         _nextThrowTime = Mathf.Max(_nextThrowTime, _hitReactionEndTime);
 
@@ -921,6 +995,45 @@ public class SkeletonAI : MonoBehaviour
         _horizontalVelocity = Vector3.zero;
 
         CrossFade(hitReactionStateName, hitReactionCrossfade);
+    }
+
+    /// <summary>Brief snap of the react clip — feedback only. Attack cooldowns are deliberately untouched.</summary>
+    void PlayFlinch()
+    {
+        if (_state == SkeletonState.HitReaction && Time.time < _hitReactionEndTime)
+            return; // already reeling from a poise break
+
+        _state = SkeletonState.HitReaction;
+        _hitReactionEndTime = Time.time + flinchSeconds;
+
+        StopNavigation();
+        _horizontalVelocity = Vector3.zero;
+
+        CrossFade(hitReactionStateName, 0.06f);
+    }
+
+    /// <summary>Per-hit retaliation roll — an immediate bash that ignores the normal bash cooldown.</summary>
+    bool TryStartRetaliationBash(bool staggerImmune)
+    {
+        if (Time.time < _nextRetaliationRollTime)
+            return false;
+        if (_state == SkeletonState.HitReaction && Time.time < _hitReactionEndTime)
+            return false; // mid-stagger: the break window stays safe — that's the player's earned reward
+        if (_targetHealth == null || _targetHealth.IsDead || _target == null)
+            return false;
+
+        Vector3 toTarget = _target.position - transform.position;
+        toTarget.y = 0f;
+        if (toTarget.magnitude > retaliationRange)
+            return false;
+
+        float chance = staggerImmune ? retaliationChanceWhileImmune : retaliationChance;
+        if (Random.value > chance)
+            return false;
+
+        _nextRetaliationRollTime = Time.time + retaliationCooldownSeconds;
+        _actionRoutine = StartCoroutine(BashRoutine());
+        return true;
     }
 
     void UpdateHitReaction()
@@ -952,6 +1065,8 @@ public class SkeletonAI : MonoBehaviour
 
         _horizontalVelocity = Vector3.zero;
         _verticalVelocity = Vector3.zero;
+        _staggerImmuneUntil = 0f;
+        _nextRetaliationRollTime = 0f;
         ClearTarget();
     }
 
@@ -980,6 +1095,8 @@ public class SkeletonAI : MonoBehaviour
                 continue;
             if (IsUnreachableSuppressed(candidate))
                 continue;
+            if (!IsWithinDetectionCone(candidate.transform.position))
+                continue;
             if (!HasDetectionLineOfSight(candidate))
                 continue;
 
@@ -1005,7 +1122,33 @@ public class SkeletonAI : MonoBehaviour
                 float distance = Vector3.Distance(transform.position, candidate.transform.position);
                 if (distance > detectionRadius || distance >= closestDistance)
                     continue;
+                if (!IsWithinDetectionCone(candidate.transform.position))
+                    continue;
                 if (!HasDetectionLineOfSight(candidate))
+                    continue;
+
+                closest = candidate;
+                closestDistance = distance;
+            }
+        }
+
+        // Heard-sprint acquisition: no vision cone / line-of-sight gate — a sprinting player is heard from any
+        // direction and around corners. Only the audible-sprint flag triggers it, so walking stays silent.
+        if (closest == null && hearingRadius > 0f)
+        {
+            IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
+            for (int i = 0; i < players.Count; i++)
+            {
+                PlayerHealth candidate = players[i];
+                if (candidate == null || candidate.IsDead)
+                    continue;
+                if (IsUnreachableSuppressed(candidate))
+                    continue;
+                if (!IsPlayerAudiblySprinting(candidate))
+                    continue;
+
+                float distance = Vector3.Distance(transform.position, candidate.transform.position);
+                if (distance > hearingRadius || distance >= closestDistance)
                     continue;
 
                 closest = candidate;
@@ -1020,6 +1163,19 @@ public class SkeletonAI : MonoBehaviour
         _target = closest.transform;
     }
 
+    static bool IsPlayerAudiblySprinting(PlayerHealth playerHealth)
+    {
+        if (playerHealth == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = playerHealth.GetComponent<NetworkPlayerAvatar>();
+        if (avatar != null && avatar.IsSpawned)
+            return avatar.AudiblySprintingForAi;
+
+        PlayerController pc = playerHealth.GetComponent<PlayerController>();
+        return pc != null && pc.IsAudiblySprintingForAi;
+    }
+
     /// <summary>True while a target we just gave up on (because it was unreachable) is still being ignored.</summary>
     bool IsUnreachableSuppressed(PlayerHealth candidate)
     {
@@ -1031,6 +1187,28 @@ public class SkeletonAI : MonoBehaviour
         if (!requireDetectionLineOfSight)
             return true;
         return HasLineOfSight(targetHealth, detectionLineOfSightMask, detectionLineOfSightHeight, Vector3.zero);
+    }
+
+    /// <summary>
+    /// Vision-cone gate for target ACQUISITION only — being hit still aggros from any direction, so players
+    /// can sneak behind. Points within arm's reach always register (you bumped into it).
+    /// </summary>
+    bool IsWithinDetectionCone(Vector3 worldPoint)
+    {
+        if (detectionFovHalfAngleDegrees >= 179.5f)
+            return true;
+
+        Vector3 toPoint = worldPoint - transform.position;
+        toPoint.y = 0f;
+        if (toPoint.sqrMagnitude <= 0.6f * 0.6f)
+            return true;
+
+        Vector3 forward = transform.forward;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < 1e-4f)
+            return true;
+
+        return Vector3.Angle(forward, toPoint) <= detectionFovHalfAngleDegrees;
     }
 
     bool HasLineOfSight(PlayerHealth targetHealth, LayerMask lineOfSightMask, float lineOfSightHeight, Vector3 originOffset)

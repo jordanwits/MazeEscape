@@ -49,6 +49,35 @@ public partial class PlayerController
     float _screamShakeNoiseTime;
     static readonly Vector3 s_ScreamShakeNoiseLanes = new Vector3(19.7f, 61.4f, 97.2f);
 
+    [Header("Melee impact camera kick")]
+    [Tooltip("Directional recoil jolt on the local player's view the instant a punch connects. Sells the impact now that most hits only flinch the enemy rather than stunning it. Owner-only, purely cosmetic.")]
+    [SerializeField] bool meleeCameraKickEnabled = true;
+    [Tooltip("How far the view snaps UP on impact (degrees). This is the main punch recoil.")]
+    [SerializeField] float meleeKickUpDegrees = 2.1f;
+    [Tooltip("Peak sideways (yaw) jolt on impact (degrees). Randomized left/right each hit so punches don't feel identical.")]
+    [SerializeField] float meleeKickYawDegrees = 0.7f;
+    [Tooltip("Peak tilt (roll) jolt on impact (degrees). Randomized each hit.")]
+    [SerializeField] float meleeKickRollDegrees = 1.1f;
+    [Tooltip("Seconds for the kick to spring back to center. Small = snappy recoil.")]
+    [SerializeField] float meleeKickRecoverTime = 0.11f;
+    [Tooltip("Kick strength multiplier when the punch lands on a Skeleton — the tankier, heavier enemy hits back harder against the camera.")]
+    [SerializeField] float meleeKickSkeletonScale = 1.35f;
+
+    [Header("Hurt camera kick")]
+    [Tooltip("Directional recoil when THIS player takes damage — bigger and rougher than the punch-landed kick. Fired by the hurt-feedback tick; shares the melee kick spring so the two compose.")]
+    [SerializeField] bool hurtCameraKickEnabled = true;
+    [SerializeField] float hurtKickPitchDegrees = 3.4f;
+    [SerializeField] float hurtKickYawDegrees = 1.6f;
+    [SerializeField] float hurtKickRollDegrees = 2.2f;
+
+    [Header("Chase panic chromatic aberration")]
+    [Tooltip("Feeds the hunter-proximity ramp (nearest Jailor OR Clown) into MazePostFx's chromatic aberration so the view smears as the hunter closes in. This is the aberration intensity at point-blank; 0 disables.")]
+    [SerializeField, Range(0f, 1f)] float chasePanicChromaticAberrationMax = 0.55f;
+
+    // Current applied kick offset (pitch/yaw/roll degrees) and its spring velocity. Decays to zero every frame.
+    Vector3 _meleeKickOffsetDeg;
+    Vector3 _meleeKickVelocityDeg;
+
     /// <summary>
     /// Called from <see cref="LateUpdate"/> (before its early-returns) so the shake layers on top of the
     /// pose the look system already wrote this frame, in every camera mode.
@@ -59,6 +88,7 @@ public partial class PlayerController
         {
             _jailorShakeIntensity = 0f;
             _jailorShakeIntensityVelocity = 0f;
+            PushChasePanicAberration(0f);
             return;
         }
 
@@ -71,10 +101,27 @@ public partial class PlayerController
             _jailorShakeIntensity, target, ref _jailorShakeIntensityVelocity,
             Mathf.Max(0.0001f, jailorShakeIntensitySmoothTime));
 
+        // Same eased 0-1 ramp drives the screen-smear panic effect — one number, two senses.
+        PushChasePanicAberration(_jailorShakeIntensity);
+
         if (_jailorShakeIntensity <= 0.0005f)
             return;
 
         ApplyJailorShakeToCamera(cam, _jailorShakeIntensity);
+    }
+
+    /// <summary>
+    /// Writes the hunter-proximity ramp into the level's chromatic aberration. Gated to the locally-controlled
+    /// player so the remote-player PlayerController instances on this machine can never stomp the value.
+    /// </summary>
+    void PushChasePanicAberration(float ramp01)
+    {
+        if (!_hasLocalControl || chasePanicChromaticAberrationMax <= 0f)
+            return;
+
+        MazePostFx fx = MazePostFx.Active;
+        if (fx != null)
+            fx.SetChromaticAberration(ramp01 * chasePanicChromaticAberrationMax);
     }
 
     /// <summary>
@@ -93,13 +140,13 @@ public partial class PlayerController
 
     float ComputeJailorShakeTarget(Vector3 listenerPosition)
     {
-        IReadOnlyList<JailorAI> jailors = JailorAIRegistry.All;
-        int count = jailors.Count;
-        if (count == 0)
-            return 0f;
-
+        // "Jailor" proximity historically, but the Clown is the same class of hunter on Level02 (which has
+        // no Jailor at all) — the nearest of either drives the ramp. Field names keep the jailor* prefix so
+        // existing prefab tuning survives.
         float nearestSqr = float.MaxValue;
-        for (int i = 0; i < count; i++)
+
+        IReadOnlyList<JailorAI> jailors = JailorAIRegistry.All;
+        for (int i = 0; i < jailors.Count; i++)
         {
             JailorAI jailor = jailors[i];
             if (jailor == null)
@@ -108,6 +155,18 @@ public partial class PlayerController
             if (sqr < nearestSqr)
                 nearestSqr = sqr;
         }
+
+        IReadOnlyList<ClownAI> clowns = ClownAIRegistry.All;
+        for (int i = 0; i < clowns.Count; i++)
+        {
+            ClownAI clown = clowns[i];
+            if (clown == null)
+                continue;
+            float sqr = (clown.transform.position - listenerPosition).sqrMagnitude;
+            if (sqr < nearestSqr)
+                nearestSqr = sqr;
+        }
+
         if (nearestSqr == float.MaxValue)
             return 0f;
 
@@ -207,6 +266,85 @@ public partial class PlayerController
         // Right-multiply: view-space tremble layered on the pose already written this frame (same idiom as the
         // Jailor shake). If both fire at once they compose.
         cam.localRotation = cam.localRotation * shake;
+    }
+
+    /// <summary>
+    /// Fire a one-shot directional recoil on THIS peer's local view. Safe to call on any peer / from the shared
+    /// hit-SFX methods — it self-gates to the local player (a punch by a remote player, heard as 3D audio on this
+    /// machine, must not kick this player's camera). Impulses stack if punches land in quick succession, clamped so
+    /// the view can't swing wildly. Applied and sprung back to center in <see cref="UpdateMeleeCameraKick"/>.
+    /// </summary>
+    void TriggerMeleeCameraKick(float strengthScale)
+    {
+        if (!meleeCameraKickEnabled || !_hasLocalControl)
+            return;
+
+        // Up-kick (negative pitch euler = view rotates up), with a randomized sideways/tilt jolt per hit.
+        float sign = UnityEngine.Random.value < 0.5f ? -1f : 1f;
+        Vector3 impulse = new Vector3(
+            -meleeKickUpDegrees * strengthScale,
+            sign * meleeKickYawDegrees * strengthScale,
+            -sign * meleeKickRollDegrees * strengthScale);
+
+        _meleeKickOffsetDeg += impulse;
+        ClampSharedKickOffset();
+    }
+
+    /// <summary>
+    /// Rough jolt when THIS player takes a hit — any source (zombie swipe, skeleton bash, clown hammer,
+    /// traps). Same spring as the melee kick so simultaneous events compose instead of fighting.
+    /// </summary>
+    public void TriggerHurtCameraKick()
+    {
+        if (!hurtCameraKickEnabled || !_hasLocalControl)
+            return;
+
+        float sign = UnityEngine.Random.value < 0.5f ? -1f : 1f;
+        _meleeKickOffsetDeg += new Vector3(
+            -hurtKickPitchDegrees,
+            sign * hurtKickYawDegrees,
+            -sign * hurtKickRollDegrees);
+        ClampSharedKickOffset();
+    }
+
+    /// <summary>Clamp the shared kick offset to twice the largest single impulse so rapid hits can't stack into a spin.</summary>
+    void ClampSharedKickOffset()
+    {
+        float maxPitch = Mathf.Max(meleeKickUpDegrees * meleeKickSkeletonScale, hurtKickPitchDegrees) * 2f;
+        float maxYaw = Mathf.Max(meleeKickYawDegrees * meleeKickSkeletonScale, hurtKickYawDegrees) * 2f;
+        float maxRoll = Mathf.Max(meleeKickRollDegrees * meleeKickSkeletonScale, hurtKickRollDegrees) * 2f;
+        _meleeKickOffsetDeg.x = Mathf.Clamp(_meleeKickOffsetDeg.x, -maxPitch, maxPitch);
+        _meleeKickOffsetDeg.y = Mathf.Clamp(_meleeKickOffsetDeg.y, -maxYaw, maxYaw);
+        _meleeKickOffsetDeg.z = Mathf.Clamp(_meleeKickOffsetDeg.z, -maxRoll, maxRoll);
+    }
+
+    /// <summary>
+    /// Springs the melee kick offset back to center and applies it to the view. Called from <see cref="LateUpdate"/>
+    /// alongside the other shakes; the offset always decays (even on frames it can't draw) so it never lingers when
+    /// control returns. Composes with the Jailor/scream shakes via the same right-multiply idiom.
+    /// </summary>
+    void UpdateMeleeCameraKick()
+    {
+        if (_meleeKickOffsetDeg.sqrMagnitude <= 0.0000001f)
+        {
+            _meleeKickOffsetDeg = Vector3.zero;
+            _meleeKickVelocityDeg = Vector3.zero;
+            return;
+        }
+
+        Vector3 offset = _meleeKickOffsetDeg;
+        _meleeKickOffsetDeg = Vector3.SmoothDamp(
+            _meleeKickOffsetDeg, Vector3.zero, ref _meleeKickVelocityDeg,
+            Mathf.Max(0.0001f, meleeKickRecoverTime));
+
+        if (!_hasLocalControl || (_playerHealth != null && _playerHealth.IsDead))
+            return;
+
+        Transform cam = CameraTransformForFacing;
+        if (cam == null)
+            return;
+
+        cam.localRotation = cam.localRotation * Quaternion.Euler(offset);
     }
 
     void ApplyJailorShakeToCamera(Transform cam, float intensity)

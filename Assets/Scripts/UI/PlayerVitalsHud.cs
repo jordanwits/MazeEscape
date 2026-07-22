@@ -89,6 +89,11 @@ public sealed class PlayerVitalsHud : MonoBehaviour
     bool _chargeShown;
     float _damageFlash;
 
+    // Full-screen edge vignette: pulses blood-red on damage, breathes steadily at critical health.
+    static Sprite _vignetteSprite;
+    GameObject _screenOverlayRoot;
+    Image _screenOverlay;
+
     Color _outlineBaseColor;
     Color _ghostBaseColor;
     Color _staminaBaseColor;
@@ -111,6 +116,8 @@ public sealed class PlayerVitalsHud : MonoBehaviour
     {
         if (_root != null)
             Destroy(_root);
+        if (_screenOverlayRoot != null)
+            Destroy(_screenOverlayRoot);
     }
 
     public void SetHealth(float normalized)
@@ -162,6 +169,8 @@ public sealed class PlayerVitalsHud : MonoBehaviour
     {
         if (_root != null && _root.activeSelf != visible)
             _root.SetActive(visible);
+        if (_screenOverlayRoot != null && _screenOverlayRoot.activeSelf != visible)
+            _screenOverlayRoot.SetActive(visible);
     }
 
     public void SetStaminaVisible(bool visible)
@@ -184,6 +193,17 @@ public sealed class PlayerVitalsHud : MonoBehaviour
         float redden = Mathf.Max(_damageFlash, heartbeat * 0.6f);
         _bodyOutline.color = Color.Lerp(_outlineBaseColor, MenuTheme.WithAlpha(MenuTheme.BloodBright, 0.95f), redden);
         _bodyGhost.color = Color.Lerp(_ghostBaseColor, MenuTheme.WithAlpha(MenuTheme.BloodBright, 0.18f), _damageFlash);
+
+        // Full-screen vignette: a sharp blood pulse on damage, plus a steady heartbeat-synced breathe at
+        // critical health. Whichever reads stronger wins; color shifts brighter for the fresh-hit flash.
+        if (_screenOverlay != null)
+        {
+            float flashAlpha = _damageFlash * 0.28f;
+            float criticalAlpha = critical > 0f ? critical * (0.16f + 0.10f * heartbeat) : 0f;
+            float alpha = Mathf.Max(flashAlpha, criticalAlpha);
+            Color vignetteColor = Color.Lerp(MenuTheme.Blood, MenuTheme.BloodBright, _damageFlash);
+            _screenOverlay.color = MenuTheme.WithAlpha(vignetteColor, alpha);
+        }
 
         // Stamina bar: electric pulse while boosted, blood pulse when winded.
         Color stam;
@@ -226,6 +246,22 @@ public sealed class PlayerVitalsHud : MonoBehaviour
             return;
 
         Canvas canvas = HudKit.EnsureHudCanvas();
+
+        // Full-screen damage/critical vignette. Created first and forced to sibling 0 so every other HUD
+        // element renders above it; visibility rides on the same SetHealthVisible gate as the cluster.
+        _screenOverlayRoot = new GameObject("DamageVignette", typeof(RectTransform));
+        _screenOverlayRoot.layer = 5;
+        var overlayRect = (RectTransform)_screenOverlayRoot.transform;
+        overlayRect.SetParent(canvas.transform, false);
+        overlayRect.SetSiblingIndex(0);
+        overlayRect.anchorMin = Vector2.zero;
+        overlayRect.anchorMax = Vector2.one;
+        overlayRect.offsetMin = Vector2.zero;
+        overlayRect.offsetMax = Vector2.zero;
+        _screenOverlay = _screenOverlayRoot.AddComponent<Image>();
+        _screenOverlay.sprite = VignetteSprite();
+        _screenOverlay.raycastTarget = false;
+        _screenOverlay.color = Color.clear;
 
         _root = new GameObject("PlayerVitalsHud", typeof(RectTransform));
         _root.layer = 5;
@@ -392,6 +428,24 @@ public sealed class PlayerVitalsHud : MonoBehaviour
     static Sprite MeterFillSprite() => _meterFillSprite != null ? _meterFillSprite : (_meterFillSprite = BuildMeterSprite(false, MeterBandX0, MeterBandX1));
     static Sprite ChargeIconSprite() => _chargeIconSprite != null ? _chargeIconSprite : (_chargeIconSprite = Resources.Load<Sprite>("UI/ChargeIcon"));
     static Sprite StaminaIconSprite() => _staminaIconSprite != null ? _staminaIconSprite : (_staminaIconSprite = Resources.Load<Sprite>("UI/StaminaIcon"));
+
+    /// <summary>Radial edge gradient: clear center, opaque rim — stretched over the whole screen.</summary>
+    static Sprite VignetteSprite()
+    {
+        if (_vignetteSprite != null)
+            return _vignetteSprite;
+
+        const int size = 192;
+        const float half = size * 0.5f;
+        _vignetteSprite = MakeSprite(size, size, (x, y) =>
+        {
+            float nx = (x - half) / half;
+            float ny = (y - half) / half;
+            float r = Mathf.Sqrt(nx * nx + ny * ny);
+            return Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.55f, 1.25f, r));
+        });
+        return _vignetteSprite;
+    }
 
     static Sprite MakeSprite(int w, int h, System.Func<float, float, float> alphaAt)
     {

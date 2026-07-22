@@ -355,8 +355,11 @@ MonoBehaviour:
   doorUnlockClip: {fileID: 8300000, guid: 044ba666a1102254d98a1174b7223dcf, type: 3}
   doorOpenClip: {fileID: 8300000, guid: 77d87fc9c97416f40906541d18efd180, type: 3}
   doorCloseClip: {fileID: 0}
+  doorLockedRattleClip: {fileID: 8300000, guid: 5385312606cdc0044bf28f2b30b61bb3, type: 3}
   doorUnlockVolume: 0.1
   doorOpenVolume: 0.1
+  doorLockedRattleVolume: 0.28333333
+  lockedRattleLeadIn: 0.3
   pairedLeaf: {fileID: 0}
   optionalCloseValidator: {fileID: 0}
 --- !u!1 &7494923041786467350

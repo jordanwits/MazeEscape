@@ -601,6 +601,11 @@ public partial class PlayerController
                         TryUnlockHingeDoorWithKeyLocal(hingeDoor);
                     }
                 }
+                else
+                {
+                    // No key: the door answers with a handle rattle + tiny hinge jitter (local cosmetic).
+                    hingeDoor.PlayLockedNoKeyFeedback();
+                }
                 return;
             }
 
@@ -1009,9 +1014,10 @@ public partial class PlayerController
     /// a flashlight and the hotbar is not force-stashed by a heavy throwable carry. Mirrors the
     /// in-hand rules used by the inventory view refresh.
     /// </summary>
-    bool TryGetHeldFlashlightChargeForHud(out float normalized)
+    bool TryGetHeldFlashlightChargeForHud(out float normalized, out FlashlightItem flashlight)
     {
         normalized = 0f;
+        flashlight = null;
         if (IsUsingNetworkedInventory)
         {
             NetworkObject self = SelfNetworkObject;
@@ -1024,8 +1030,9 @@ public partial class PlayerController
             ulong id = _networkPlayerInventory.GetSlotItemId(selected);
             if (id == 0UL
                 || !GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g)
-                || g is not FlashlightItem)
+                || g is not FlashlightItem netFlashlight)
                 return false;
+            flashlight = netFlashlight;
             normalized = Mathf.Clamp01(_networkPlayerInventory.GetSlotFlashlightBatteryNormalizedForHud(selected));
             return true;
         }
@@ -1035,6 +1042,7 @@ public partial class PlayerController
         if (_localSelectedSlot < 0 || _localSelectedSlot >= 3
             || _localInventorySlots[_localSelectedSlot] is not FlashlightItem f)
             return false;
+        flashlight = f;
         normalized = f.BatteryFractionNormalized;
         return true;
     }
