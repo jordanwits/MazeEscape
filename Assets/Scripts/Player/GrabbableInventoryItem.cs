@@ -212,6 +212,76 @@ public class GrabbableInventoryItem : MonoBehaviour
     public Transform StashOverrideParent { get; set; }
 
     /// <summary>
+    /// True for items that are spawned NetworkObjects (heavy throwables) rather than the local, seed-built
+    /// copies every peer instantiates. Level NetworkObjects are despawned on a section switch, so they can
+    /// never be carried across one.
+    /// </summary>
+    public bool IsNetworkSpawnedItem => _networkObject != null && _networkObject.IsSpawned;
+
+    /// <summary>NetworkObjectId of a spawned network item; 0 for the local, seed-built items.</summary>
+    public ulong SpawnedNetworkObjectId => IsNetworkSpawnedItem ? _networkObject.NetworkObjectId : 0UL;
+
+    /// <summary>
+    /// Source prefab hash of a spawned network item, for re-creating an identical one after a section switch
+    /// destroys this instance (see <see cref="LevelCarryOverStore"/>). False for the local, seed-built items.
+    /// </summary>
+    public bool TryGetSpawnedNetworkPrefabHash(out uint prefabHash)
+    {
+        prefabHash = 0;
+        if (_networkObject == null || !_networkObject.IsSpawned)
+            return false;
+
+        prefabHash = _networkObject.PrefabIdHash;
+        return prefabHash != 0;
+    }
+
+    /// <summary>
+    /// Re-derives this item's id from its (now spawned) NetworkObject immediately, instead of waiting for the
+    /// next <see cref="LateUpdate"/>. Every peer derives the same id from the same NetworkObjectId, so calling
+    /// this right after a spawn lets the server put the id straight into an inventory slot and lets receivers
+    /// resolve that slot on the very same frame.
+    /// </summary>
+    public void RefreshSpawnedNetworkItemId()
+    {
+        TryUseSpawnedNetworkObjectId();
+    }
+
+    /// <summary>
+    /// Detaches this held item from the avatar that is about to be destroyed by a section switch and parks it
+    /// in the carry-over pen (see <see cref="LevelCarryOverStore"/>), keeping it alive — and registered under
+    /// the same item id — across the scene load. Stays in the inert held/stashed state (no colliders, no
+    /// physics, renderers off) until the restored inventory re-seats it on the new avatar through the normal
+    /// <see cref="ApplyNetworkHeldState"/> path.
+    /// </summary>
+    public void PrepareForLevelCarryOver(Transform penRoot)
+    {
+        if (penRoot == null)
+            return;
+
+        StashOverrideParent = null;
+        _heldAnchor = null;
+        _heldRotationSource = null;
+        // The old holder is about to despawn; clearing it stops LateUpdate from chasing a dead holder id.
+        _holderNetworkObjectId = 0;
+        IsHeld = true;
+        IsStashed = true;
+
+        SetCollidersEnabled(false);
+        RefreshInventoryVisibility();
+
+        if (itemRigidbody != null)
+        {
+            itemRigidbody.isKinematic = true;
+            itemRigidbody.useGravity = false;
+        }
+
+        transform.SetParent(penRoot, false);
+        transform.localPosition = Vector3.zero;
+        transform.localRotation = Quaternion.identity;
+        transform.localScale = _authoredLocalScale;
+    }
+
+    /// <summary>
     /// For interaction LOS and the in-view grabbable fallback: closest point among all child colliders.
     /// Compound colliders (rings) must not use only <see cref="Component.GetComponentInChildren{T}"/>.
     /// </summary>

@@ -118,6 +118,20 @@ public class PlayerHealth : MonoBehaviour
         Restored?.Invoke();
     }
 
+    /// <summary>
+    /// Server-only, pre-spawn: seats the health this player carried in from the previous maze section (see
+    /// <see cref="LevelCarryOverStore"/>). Called on the freshly instantiated avatar BEFORE it is spawned, so
+    /// <see cref="NetworkPlayerRespawn"/> picks the value up in its spawn snapshot and replicates it. Fires no
+    /// events for that reason — there is no NetworkObject to write replicated state through yet.
+    /// </summary>
+    public void ApplyCarriedHealth(float carriedHealth)
+    {
+        IsDead = false;
+        CurrentHealth = Mathf.Clamp(carriedHealth, 1f, Mathf.Max(1f, maxHealth));
+        _displayHealth = CurrentHealth;
+        UpdateHealthBar();
+    }
+
     public void ApplyReplicatedState(float currentHealth, bool isDead)
     {
         bool wasDead = IsDead;

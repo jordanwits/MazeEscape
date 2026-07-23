@@ -1830,9 +1830,10 @@ public class JailorAI : MonoBehaviour
         navMeshAgent.stoppingDistance = carryStoppingDistance;
 
         bool shouldRefresh =
-            Time.time >= _nextDestinationRefreshTime
-            || (destination - _lastCarryPathDestination).sqrMagnitude
-                >= destinationRefreshMinDistance * destinationRefreshMinDistance;
+            !navMeshAgent.pathPending
+            && (Time.time >= _nextDestinationRefreshTime
+                || (destination - _lastCarryPathDestination).sqrMagnitude
+                    >= destinationRefreshMinDistance * destinationRefreshMinDistance);
 
         if (shouldRefresh)
         {
@@ -2096,7 +2097,7 @@ public class JailorAI : MonoBehaviour
         navMeshAgent.speed = patrolSpeed;
         navMeshAgent.stoppingDistance = Mathf.Max(0.2f, jailExitArrivalDistance);
 
-        if (Time.time >= _nextDestinationRefreshTime)
+        if (!navMeshAgent.pathPending && Time.time >= _nextDestinationRefreshTime)
         {
             navMeshAgent.SetDestination(_jailExitDestination);
             _nextDestinationRefreshTime = Time.time + Mathf.Max(0.05f, destinationRefreshInterval);
@@ -2581,10 +2582,15 @@ public class JailorAI : MonoBehaviour
         if (!TryGetTargetDestination(out Vector3 destination))
             return Vector3.zero;
 
+        // Never re-issue while a path is still computing — SetDestination cancels the async
+        // computation, and with the chased player moving more than destinationRefreshMinDistance
+        // most frames this refresh otherwise fires every frame, so any route long enough to need
+        // more than one frame would never finish and the chase would stall.
         bool shouldRefreshDestination =
-            Time.time >= _nextDestinationRefreshTime
-            || (destination - _lastPathDestination).sqrMagnitude
-                >= destinationRefreshMinDistance * destinationRefreshMinDistance;
+            !navMeshAgent.pathPending
+            && (Time.time >= _nextDestinationRefreshTime
+                || (destination - _lastPathDestination).sqrMagnitude
+                    >= destinationRefreshMinDistance * destinationRefreshMinDistance);
 
         if (shouldRefreshDestination)
         {
@@ -2807,9 +2813,10 @@ public class JailorAI : MonoBehaviour
         }
 
         bool shouldRefreshDestination =
-            Time.time >= _nextDestinationRefreshTime
-            || (targetPoint - _lastPathDestination).sqrMagnitude
-                >= destinationRefreshMinDistance * destinationRefreshMinDistance;
+            !navMeshAgent.pathPending
+            && (Time.time >= _nextDestinationRefreshTime
+                || (targetPoint - _lastPathDestination).sqrMagnitude
+                    >= destinationRefreshMinDistance * destinationRefreshMinDistance);
 
         if (shouldRefreshDestination)
         {

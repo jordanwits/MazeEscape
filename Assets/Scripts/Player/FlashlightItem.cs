@@ -186,6 +186,24 @@ public class FlashlightItem : GrabbableInventoryItem
         SetLensGlowEnabled(enabled);
     }
 
+    /// <summary>
+    /// Server-only: seats the battery a player carried in from the previous maze section onto the replacement
+    /// flashlight spawned for them there (see <see cref="LevelCarryOverStore"/>). A section switch despawns the
+    /// original — without this, walking through the elevator would silently refill the battery.
+    /// </summary>
+    public void ApplyCarriedBattery(float batteryNormalized)
+    {
+        if (maxBatterySeconds <= 0f)
+            return;
+
+        _batterySeconds = Mathf.Clamp01(batteryNormalized) * maxBatterySeconds;
+        if (!HasUsableBattery)
+        {
+            _isLightOn = false;
+            SetLightEnabled(false);
+        }
+    }
+
     /// <summary>Called each frame on the authority (host/server or offline) while the item exists.</summary>
     public void TickBattery(float deltaTime)
     {

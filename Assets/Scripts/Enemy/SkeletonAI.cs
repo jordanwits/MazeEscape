@@ -218,6 +218,8 @@ public class SkeletonAI : MonoBehaviour
     Transform _target;
     PlayerHealth _targetHealth;
     float _nextThrowTime;
+    float _nextChaseRepathTime;
+    Vector3 _issuedChaseDestination;
     float _nextBashTime;
     float _hitReactionEndTime;
     float _poise;
@@ -445,6 +447,8 @@ public class SkeletonAI : MonoBehaviour
 
     Vector3 UpdateChase()
     {
+        if (_state != SkeletonState.Chase)
+            _nextChaseRepathTime = 0f; // repath immediately on the fresh chase
         _state = SkeletonState.Chase;
 
         if (!TrySnapToNavMesh())
@@ -454,8 +458,22 @@ public class SkeletonAI : MonoBehaviour
         navMeshAgent.speed = walkSpeed;
         navMeshAgent.stoppingDistance = Mathf.Max(0.1f, bashRange * 0.9f);
 
-        if (!TryGetTargetDestination(out Vector3 destination) || !navMeshAgent.SetDestination(destination))
+        if (!TryGetTargetDestination(out Vector3 destination))
             return Vector3.zero;
+
+        // Re-path on an interval and never while a path is still computing — issuing SetDestination
+        // every frame cancels the async computation each time, which stalls the agent on any route
+        // long enough to need more than one frame.
+        if (!navMeshAgent.pathPending
+            && (Time.time >= _nextChaseRepathTime
+                || (destination - _issuedChaseDestination).sqrMagnitude > 4f))
+        {
+            if (!navMeshAgent.SetDestination(destination))
+                return Vector3.zero;
+
+            _issuedChaseDestination = destination;
+            _nextChaseRepathTime = Time.time + 0.15f;
+        }
 
         Vector3 desiredVelocity = navMeshAgent.desiredVelocity;
         desiredVelocity.y = 0f;

@@ -271,6 +271,7 @@ public partial class PlayerController : MonoBehaviour
     readonly Collider[] _meleeHits = new Collider[16];
     readonly HashSet<ZombieHealth> _meleeHitZombies = new();
     readonly HashSet<SkeletonHealth> _meleeHitSkeletons = new();
+    readonly HashSet<SecurityGuardAI> _meleeHitGuards = new();
     bool _meleeHitSkeletonThisSwing;
     const string EnemyLayerName = "Enemy";
     NetworkPlayerCombat _networkPlayerCombat;
@@ -2653,6 +2654,7 @@ public partial class PlayerController : MonoBehaviour
         bool damagedAny = false;
         _meleeHitZombies.Clear();
         _meleeHitSkeletons.Clear();
+        _meleeHitGuards.Clear();
         _meleeHitSkeletonThisSwing = false;
         for (int i = 0; i < hitCount; i++)
         {
@@ -2712,6 +2714,19 @@ public partial class PlayerController : MonoBehaviour
                     damagedAny = true;
                     _meleeHitSkeletonThisSwing = true;
                 }
+                continue;
+            }
+
+            // Security guard (Level03 hunter): unkillable — the hit chips his poise meter and can trigger
+            // his stagger or an instant counter-kick. Registers as a regular punch impact for feedback.
+            SecurityGuardAI guardAI = col.GetComponentInParent<SecurityGuardAI>();
+            if (guardAI != null)
+            {
+                if (!_meleeHitGuards.Add(guardAI))
+                    continue;
+
+                if (guardAI.TakeMeleeHit(transform, _playerHealth))
+                    damagedAny = true;
                 continue;
             }
 

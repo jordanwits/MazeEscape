@@ -185,6 +185,8 @@ public class ZombieAI : MonoBehaviour
     Transform _target;
     PlayerHealth _targetHealth;
     float _nextAttackTime;
+    float _nextChaseRepathTime;
+    Vector3 _issuedChaseDestination;
     float _hitReactionEndTime;
     Coroutine _attackRoutine;
     Vector3 _horizontalVelocity;
@@ -1058,6 +1060,7 @@ public class ZombieAI : MonoBehaviour
             return;
 
         _state = ZombieState.Chase;
+        _nextChaseRepathTime = 0f; // repath immediately on the fresh chase
         PlayGroanAndScheduleNext();
     }
 
@@ -1164,13 +1167,24 @@ public class ZombieAI : MonoBehaviour
             return Vector3.zero;
         }
 
-        if (!navMeshAgent.SetDestination(destination))
+        // Re-path on an interval and never while a path is still computing — issuing SetDestination
+        // every frame cancels the async computation each time, which stalls the agent on any route
+        // long enough to need more than one frame.
+        if (!navMeshAgent.pathPending
+            && (Time.time >= _nextChaseRepathTime
+                || (destination - _issuedChaseDestination).sqrMagnitude > 4f))
         {
-            if (targetBelowForDrop)
-                return GetDirectChaseVelocity(moveSpeed) * _currentStepMultiplier;
+            if (!navMeshAgent.SetDestination(destination))
+            {
+                if (targetBelowForDrop)
+                    return GetDirectChaseVelocity(moveSpeed) * _currentStepMultiplier;
 
-            EnterIdle();
-            return Vector3.zero;
+                EnterIdle();
+                return Vector3.zero;
+            }
+
+            _issuedChaseDestination = destination;
+            _nextChaseRepathTime = Time.time + 0.15f;
         }
 
         if (!navMeshAgent.pathPending && navMeshAgent.pathStatus != NavMeshPathStatus.PathComplete && targetBelowForDrop)

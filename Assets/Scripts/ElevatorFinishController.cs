@@ -222,6 +222,14 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
             NetworkManager nm = NetworkManager.Singleton;
             if (nm != null && nm.SceneManager != null)
             {
+                // Health and the hotbar survive the section switch. Snapshot the server-side state and get every
+                // peer to lift its local copies of the carried items out of the avatars that the load is about to
+                // destroy. This has to happen while this elevator is still spawned (the despawn sweep below
+                // un-spawns it) and before LoadScene queues the player despawns, so the RPC is delivered first.
+                LevelCarryOverStore.ServerCaptureAllPlayers();
+                LevelCarryOverStore.HoldCarriedItemsForLevelSwitch();
+                HoldCarriedItemsForLevelSwitchClientRpc();
+
                 // Despawn all runtime-spawned level content BEFORE the synchronized scene switch. A
                 // LoadSceneMode.Single load migrates dynamically-spawned NetworkObjects (destroyWithScene=false)
                 // into the next scene rather than destroying them, so without this the previous section's Jailor,
@@ -253,6 +261,19 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         }
 
         ServerReturnEveryoneToMainMenuAfterElevator();
+    }
+
+    /// <summary>
+    /// Every peer keeps its own local copies of hotbar items (they are seed-built, not network-spawned), so each
+    /// one has to park its copies itself before the scene tears down. The server already ran this directly.
+    /// </summary>
+    [ClientRpc]
+    void HoldCarriedItemsForLevelSwitchClientRpc()
+    {
+        if (IsServer)
+            return;
+
+        LevelCarryOverStore.HoldCarriedItemsForLevelSwitch();
     }
 
     void ServerReturnEveryoneToMainMenuAfterElevator()

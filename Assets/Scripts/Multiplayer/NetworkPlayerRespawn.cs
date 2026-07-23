@@ -82,7 +82,11 @@ public class NetworkPlayerRespawn : NetworkBehaviour
 
         ApplyRespawnTransform(spawnPosition, spawnRotation);
 
-        RespawnOwnerClientRpc(spawnPosition, spawnRotation, new ClientRpcParams
+        // Placement only — never heal. A player arriving from the previous maze section keeps the health the
+        // server seated on this avatar (see LevelCarryOverStore); healing locally on the owner would leave that
+        // client showing full health against a server that still has them wounded, and _currentHealth never
+        // changes again to correct it.
+        RespawnOwnerClientRpc(spawnPosition, spawnRotation, false, new ClientRpcParams
         {
             Send = new ClientRpcSendParams
             {
@@ -191,7 +195,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         GetComponent<NetworkPlayerRagdoll>()?.ForceExitRagdollFromServer();
         ApplyRespawnTransform(respawnPosition, respawnRotation);
 
-        RespawnOwnerClientRpc(respawnPosition, respawnRotation, new ClientRpcParams
+        RespawnOwnerClientRpc(respawnPosition, respawnRotation, true, new ClientRpcParams
         {
             Send = new ClientRpcSendParams
             {
@@ -203,12 +207,14 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     }
 
     [ClientRpc]
-    void RespawnOwnerClientRpc(Vector3 respawnPosition, Quaternion respawnRotation, ClientRpcParams clientRpcParams = default)
+    void RespawnOwnerClientRpc(Vector3 respawnPosition, Quaternion respawnRotation, bool restoreFullHealth, ClientRpcParams clientRpcParams = default)
     {
         if (IsServer)
             return;
 
-        playerHealth?.RestoreFullHealth();
+        if (restoreFullHealth)
+            playerHealth?.RestoreFullHealth();
+
         ApplyRespawnTransform(respawnPosition, respawnRotation);
     }
 

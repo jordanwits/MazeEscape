@@ -1070,7 +1070,27 @@ public class MultiplayerSessionController : MonoBehaviour
                 return false;
             }
 
+            // A player arriving from the previous maze section keeps the health and hotbar they came in with.
+            // Health goes on before the spawn so NetworkPlayerRespawn replicates it in the spawn snapshot; the
+            // hotbar has to wait until the NetworkVariables exist.
+            bool hasCarriedState = LevelCarryOverStore.TryGetState(clientId, out LevelCarryOverStore.PlayerState carried);
+            if (hasCarriedState)
+            {
+                PlayerHealth carriedHealth = playerInstance.GetComponent<PlayerHealth>();
+                if (carriedHealth != null)
+                    carriedHealth.ApplyCarriedHealth(carried.Health);
+            }
+
             playerObject.SpawnAsPlayerObject(clientId, true);
+
+            if (hasCarriedState)
+            {
+                NetworkPlayerInventory carriedInventory = playerObject.GetComponent<NetworkPlayerInventory>();
+                if (carriedInventory != null)
+                    carriedInventory.ServerRestoreCarriedInventory(carried);
+
+                LevelCarryOverStore.ConsumeState(clientId);
+            }
         }
         else
         {

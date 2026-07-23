@@ -833,6 +833,162 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         s_serverLevelSceneSwitchInProgress = false;
     }
 
+    /// <summary>
+    /// Server-only: re-seats the hotbar this player carried in from the previous maze section onto their newly
+    /// spawned avatar. Call immediately after <c>SpawnAsPlayerObject</c> — writing the slot NetworkVariables is
+    /// what makes every peer's <see cref="PlayerController.RefreshInventoryViewFromNetwork"/> resolve the
+    /// parked item objects (kept alive by <see cref="LevelCarryOverPen"/>) and attach them to the new avatar.
+    /// A slot whose item did not survive on this machine is restored empty rather than left pointing at an id
+    /// nothing can resolve.
+    /// </summary>
+    public void ServerRestoreCarriedInventory(LevelCarryOverStore.PlayerState carried)
+    {
+        if (!IsServer || !IsSpawned || !carried.HasValue)
+            return;
+
+        for (int i = 0; i < LevelCarryOverStore.SlotCount; i++)
+        {
+            LevelCarryOverStore.SlotState slot = carried.GetSlot(i);
+
+            GrabbableInventoryItem item = null;
+            bool resolved = slot.ItemId != 0UL
+                && GrabbableInventoryItem.TryGetRegistered(slot.ItemId, out item)
+                && item != null;
+
+            // A network-spawned item (flashlight, jailor key) was despawned with the previous section, so the
+            // slot is refilled with a freshly spawned one from the same prefab rather than a surviving object.
+            bool spawnedReplacement = false;
+            if (!resolved && slot.NetworkPrefabHash != 0)
+            {
+                // Only the selected slot's flashlight can be lit — stashing forces the beam off.
+                bool slotLightOn = carried.FlashlightLightOn
+                    && i == Mathf.Clamp(carried.SelectedSlot, 0, LevelCarryOverStore.SlotCount - 1);
+                resolved = ServerTrySpawnCarriedNetworkItem(slot, slotLightOn, out item);
+                spawnedReplacement = resolved;
+            }
+
+            if (!resolved)
+            {
+                SetSlotItemId(i, 0UL);
+                SetSlotItemTypeId(i, GrabbableInventoryItem.TypeIdNone);
+                SetSlotStackCount(i, 0);
+                continue;
+            }
+
+            // The replacement's id comes from its new NetworkObjectId, which every peer derives identically.
+            ulong itemId = spawnedReplacement ? item.ItemId : slot.ItemId;
+
+            SetSlotItemId(i, itemId);
+            SetSlotItemTypeId(i, slot.TypeId);
+            SetSlotStackCount(i, slot.StackCount);
+
+            if (item is GlowstickItem glowstick)
+                glowstick.SetStackCount(Mathf.Max(1, slot.StackCount));
+
+            if (spawnedReplacement)
+            {
+                // Resolve by NetworkObjectId on the receiving side: the replacement has only just spawned, so
+                // peers may not have derived its item id yet and a by-position match could pick the wrong one
+                // when several players walk in carrying the same kind of item.
+                AttachSpawnedCarriedItemClientRpc(item.SpawnedNetworkObjectId, NetworkObjectId);
+                continue;
+            }
+
+            // Same broadcast the pickup path uses, so observers attach the item to this avatar even before
+            // their own slot-change refresh runs.
+            ApplyItemStateWithTypeClientRpc(
+                itemId,
+                slot.TypeId,
+                true,
+                NetworkObjectId,
+                item.transform.position,
+                item.transform.rotation,
+                default);
+        }
+
+        _selectedSlot.Value = (byte)Mathf.Clamp(carried.SelectedSlot, 0, LevelCarryOverStore.SlotCount - 1);
+        _selectedFlashlightLightOn.Value = carried.FlashlightLightOn;
+        UpdateFlashlightSyncFromSelected();
+        RaiseChangedAndRefresh();
+    }
+
+    /// <summary>
+    /// Server-only: builds the replacement for a carried network-spawned item. Spawned at the avatar so it is
+    /// never left stranded in the world if the hand-off below fails, then handed its carried state (battery)
+    /// before anything reads it.
+    /// </summary>
+    bool ServerTrySpawnCarriedNetworkItem(LevelCarryOverStore.SlotState slot, bool lightOn, out GrabbableInventoryItem item)
+    {
+        item = null;
+
+        GameObject prefab = LevelCarryOverStore.FindRegisteredNetworkPrefabByHash(slot.NetworkPrefabHash);
+        if (prefab == null)
+        {
+            Debug.LogWarning(
+                $"[LevelCarryOver] Carried item prefab (hash {slot.NetworkPrefabHash}) is not in the NetworkManager prefab list; "
+                + "the slot arrives empty. Register it in Resources/DefaultNetworkPrefabs.",
+                this);
+            return false;
+        }
+
+        GameObject instance = Instantiate(prefab, transform.position, transform.rotation);
+        if (!instance.TryGetComponent(out NetworkObject networkObject)
+            || !instance.TryGetComponent(out GrabbableInventoryItem spawned))
+        {
+            Destroy(instance);
+            return false;
+        }
+
+        networkObject.Spawn();
+        spawned.RefreshSpawnedNetworkItemId();
+
+        if (spawned is FlashlightItem flashlight)
+        {
+            // Battery first: SetLightEnabled refuses to light a dead one, which is the correct outcome for a
+            // player who walked into the elevator on their last few seconds of charge.
+            flashlight.ApplyCarriedBattery(slot.FlashlightBatteryNormalized);
+            flashlight.SetLightEnabled(lightOn);
+        }
+
+        item = spawned;
+        return true;
+    }
+
+    /// <summary>
+    /// Attaches a just-spawned replacement item to its carrier on every peer, addressing it by NetworkObjectId
+    /// (the one identifier that is already valid the moment the spawn message lands).
+    /// </summary>
+    [ClientRpc]
+    void AttachSpawnedCarriedItemClientRpc(ulong itemNetworkObjectId, ulong holderNetworkObjectId)
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || nm.SpawnManager == null)
+            return;
+
+        if (!nm.SpawnManager.SpawnedObjects.TryGetValue(itemNetworkObjectId, out NetworkObject itemObject)
+            || itemObject == null
+            || !itemObject.TryGetComponent(out GrabbableInventoryItem item))
+        {
+            return;
+        }
+
+        // Derive the item id from the NetworkObjectId now rather than waiting a frame, so the slot value the
+        // server wrote resolves on this peer immediately.
+        item.RefreshSpawnedNetworkItemId();
+
+        if (item is FlashlightItem flashlight)
+        {
+            _avatar?.NotifyFlashlightVisualAttach(flashlight);
+            flashlight.ApplyNetworkHeldState(holderNetworkObjectId, flashlight.IsLightOn);
+        }
+        else
+        {
+            item.ApplyNetworkHeldState(holderNetworkObjectId);
+        }
+
+        playerController?.RefreshInventoryViewFromNetwork();
+    }
+
     void SendItemSnapshotToOwner()
     {
         ClientRpcParams targetOwner = new ClientRpcParams
