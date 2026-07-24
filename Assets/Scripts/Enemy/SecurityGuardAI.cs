@@ -562,6 +562,13 @@ public class SecurityGuardAI : MonoBehaviour
 
     void SetTarget(PlayerHealth targetHealth)
     {
+        // A whiff streak describes ONE fight — how well this player has been slipping his reach. Switching
+        // prey (getting punched from behind mid-chase, say) starts that read from scratch, or the new
+        // target would be met with a hurricane lunge earned entirely by someone else. Guarded on an actual
+        // change because TakeMeleeHit re-targets on every single punch.
+        if (targetHealth != _targetHealth)
+            _consecutiveWhiffs = 0;
+
         _targetHealth = targetHealth;
         _target = targetHealth != null ? targetHealth.transform : null;
         if (_target != null)
@@ -575,6 +582,7 @@ public class SecurityGuardAI : MonoBehaviour
     {
         _target = null;
         _targetHealth = null;
+        _consecutiveWhiffs = 0; // fight over — see SetTarget
     }
 
     /// <summary>Can he still see (or hear) the current target right now? Refreshes last-known data when true.</summary>
@@ -666,7 +674,7 @@ public class SecurityGuardAI : MonoBehaviour
         if (distanceToTarget <= 0.001f)
             return true;
 
-        int mask = lineOfSightMask.value == 0 ? Physics.DefaultRaycastLayers : lineOfSightMask.value;
+        int mask = MaskExcludingOtherEnemies(lineOfSightMask);
         int hitCount = Physics.RaycastNonAlloc(
             origin, toTarget / distanceToTarget, _lineOfSightHits, distanceToTarget, mask, QueryTriggerInteraction.Ignore);
         if (hitCount == 0)
@@ -1007,22 +1015,18 @@ public class SecurityGuardAI : MonoBehaviour
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Context-aware pick instead of a blind roll: whiff streaks get answered with the hurricane
-    /// lunge, crowding gets booted away, a landed jab chains into the flurry, and only the
-    /// remainder falls back to weighted variety.
+    /// Context-aware pick instead of a blind roll: crowding gets booted away, a landed jab chains into
+    /// the flurry, and only the remainder falls back to weighted variety.
+    ///
+    /// Deliberately NO hurricane option here. This runs only inside melee range (the caller gates on
+    /// <see cref="attackStartDistancePadding"/> + <see cref="meleeRange"/>), and the launch is banded to
+    /// start at <see cref="hurricaneMinRange"/> — well outside that — precisely so it can never fire as a
+    /// point-blank spin. The whiff-streak punish therefore lives in <see cref="UpdateChase"/>'s gap-closer,
+    /// which is the only place a target is far enough away to be lunged at.
     /// </summary>
     GuardAttack ChooseEngagedAttack(float distanceToTarget)
     {
         bool mmaReady = Time.time >= _nextMmaKickTime;
-        bool hurricaneReady = Time.time >= _nextHurricaneTime;
-
-        // You keep slipping out of reach — stop trading jabs and lunge. Needs the same real gap the
-        // chase-side gap-closer does, so a target still standing in his face gets kicked, not launched.
-        if (_consecutiveWhiffs >= whiffsBeforeHurricanePunish
-            && hurricaneReady
-            && distanceToTarget >= hurricaneMinRange
-            && IsHurricanePathClear())
-            return GuardAttack.HurricaneKick;
 
         // Point-blank crowding gets kicked off.
         if (distanceToTarget <= crowdedKickDistance && mmaReady)
@@ -1369,7 +1373,7 @@ public class SecurityGuardAI : MonoBehaviour
             + (Vector3.up * hurricaneKnockbackUpwardSpeed);
 
         // Keep his capsule from depenetrating against the freshly-enabled ragdoll bone colliders.
-        IgnoreCollisionsWithVictim(_targetHealth);
+        IgnoreVictimRagdollCollisions(_targetHealth);
 
         bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
         NetworkPlayerRagdoll netRagdoll = _targetHealth.GetComponent<NetworkPlayerRagdoll>();
@@ -1396,15 +1400,32 @@ public class SecurityGuardAI : MonoBehaviour
         return true;
     }
 
-    void IgnoreCollisionsWithVictim(PlayerHealth victim)
+    /// <summary>
+    /// Lets his capsule pass through the victim's ragdoll BONE colliders — the limbs that go live the
+    /// instant the launch topples them, right at his feet. Without this the capsule depenetrates against
+    /// them on the non-convex maze floor and can be shoved through it (same failure the Clown's hammer
+    /// hit). Only the limp bones are ignored: the player's own CharacterController keeps colliding, so
+    /// once they are back on their feet he body-blocks them exactly as before. Ignoring <i>every</i>
+    /// collider on the victim — their capsule included — left him permanently able to walk through
+    /// anyone he had ever launched, since the ignore is never restored. It persists across the bones'
+    /// enable/disable, so setting it before they go live is both correct and idempotent.
+    /// </summary>
+    void IgnoreVictimRagdollCollisions(PlayerHealth victim)
     {
         if (victim == null || characterController == null)
             return;
 
-        Collider[] victimColliders = victim.GetComponentsInChildren<Collider>(true);
-        for (int i = 0; i < victimColliders.Length; i++)
+        PlayerRagdollController ragdoll = victim.GetComponent<PlayerRagdollController>();
+        if (ragdoll == null)
+            return;
+
+        IReadOnlyList<Collider> bones = ragdoll.RagdollColliders;
+        if (bones == null)
+            return;
+
+        for (int i = 0; i < bones.Count; i++)
         {
-            Collider c = victimColliders[i];
+            Collider c = bones[i];
             if (c != null && c != characterController)
                 Physics.IgnoreCollision(characterController, c, true);
         }
@@ -1859,6 +1880,24 @@ public class SecurityGuardAI : MonoBehaviour
         int playerLayer = LayerMask.NameToLayer("Player");
         int enemyLayer = LayerMask.NameToLayer("Enemy");
         if (playerLayer >= 0) mask &= ~(1 << playerLayer);
+        if (enemyLayer >= 0) mask &= ~(1 << enemyLayer);
+        return mask;
+    }
+
+    /// <summary>
+    /// Sight-line variant: drops only the Enemy layer, so other AI bodies can't break his line. Level03
+    /// runs eight zombies plus the second guard on that layer, and the shipped mask included it — a zombie
+    /// drifting across the corridor blanked his detection (against the "never drops a target he can still
+    /// perceive" rule) and, worse, silently whiffed melee at point-blank, where phantom whiffs feed the
+    /// hurricane escalation. The Jailor and Clown avoid this by owning private layers; the guards share
+    /// Enemy with the horde. His own colliders are filtered by transform, not by layer, so they are
+    /// unaffected — and the Player layer is deliberately left in, since a mask that includes it still
+    /// wants the "the first thing I hit IS the target" branch below to mean something.
+    /// </summary>
+    int MaskExcludingOtherEnemies(LayerMask source)
+    {
+        int mask = source.value == 0 ? Physics.DefaultRaycastLayers : source.value;
+        int enemyLayer = LayerMask.NameToLayer("Enemy");
         if (enemyLayer >= 0) mask &= ~(1 << enemyLayer);
         return mask;
     }
