@@ -174,8 +174,9 @@ public class PlayerFootIK : MonoBehaviour
         if (state != IdleHash && state != WalkingHash && state != RunningHash && state != CrouchHash)
             return true;
 
-        // Off-screen remote avatars skip the raycasts (the local owner's renderers are always considered
-        // visible because updateWhenOffscreen is forced on them at spawn).
+        // Off-screen avatars skip the raycasts. Bounds are accurate here because NetworkPlayerAvatar forces
+        // updateWhenOffscreen on every player's skinned renderers in Awake; the local owner reads as visible
+        // regardless, since in first person the camera sits inside its own body.
         if (_visibilityProbe != null && !_visibilityProbe.isVisible)
             return true;
 

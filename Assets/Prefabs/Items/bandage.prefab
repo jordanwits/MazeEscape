@@ -90,6 +90,37 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!1 &5892403938751505502
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6127809149586034798}
+  m_Layer: 0
+  m_Name: GripPoint_R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6127809149586034798
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5892403938751505502}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0.07, y: 0.0999, z: -0.0472}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3241116553787008419}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &6200471747207828773
 GameObject:
   m_ObjectHideFlags: 0
@@ -119,10 +150,11 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 32.507, y: 0.0074283, z: -15.383}
-  m_LocalScale: {x: 0.51386, y: 0.51386, z: 0.51386}
+  m_LocalScale: {x: 0.30508205, y: 0.30508205, z: 0.30508205}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 5273847390509048016}
+  - {fileID: 6127809149586034798}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &8421701652656749240
@@ -147,10 +179,12 @@ MonoBehaviour:
   heldLocalPosition: {x: 0, y: -0.06, z: -0.4}
   heldLocalEulerAngles: {x: 0, y: 0, z: 0}
   alignRotationWithFollow: 1
-  gripPointRight: {fileID: 0}
+  gripPointRight: {fileID: 6127809149586034798}
   gripPointLeft: {fileID: 0}
-  heldRotationOffsetEuler: {x: 0, y: 0, z: 0}
+  heldRotationOffsetEuler: {x: 270, y: 180, z: 0}
   heldAttachToHandSocket: 1
+  heldWristEulerOffset: {x: -74.7, y: 0, z: 0}
+  gripStyle: 2
 --- !u!54 &1208223962772278169
 Rigidbody:
   m_ObjectHideFlags: 0

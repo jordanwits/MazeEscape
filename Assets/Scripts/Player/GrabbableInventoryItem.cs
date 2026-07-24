@@ -42,9 +42,40 @@ public class GrabbableInventoryItem : MonoBehaviour
     [SerializeField] Vector3 heldRotationOffsetEuler;
     [Tooltip("Held items ride the avatar's animated hand socket (perfect grip, natural wrist). Disable for chest-carried heavy items (StarBall/rings) that use two-hand IK instead.")]
     [SerializeField] bool heldAttachToHandSocket = true;
+    [Tooltip("Extra wrist rotation in player space (degrees) while this item is held. The fist's finger tunnel points forward by default, so tilt the wrist up (negative X) to grip an upright item like a can or a raised glowstick.")]
+    [SerializeField] Vector3 heldWristEulerOffset;
+    [Tooltip("How the hand shapes itself around this item: a closed fist for thin items, a thumb/index pinch for flat ones, or an open C for cans and rolls.")]
+    [SerializeField] HeldGripStyle gripStyle = HeldGripStyle.Fist;
 
     /// <summary>True when the in-hand visual follows the hand socket instead of the HoldPoint float.</summary>
     public bool HeldAttachToHandSocket => heldAttachToHandSocket;
+
+    /// <summary>
+    /// Player-space wrist rotation applied to the right hand while this item is held, so the fist's finger
+    /// tunnel can be turned to match the item (e.g. tilted up to cup a can). Zero leaves the clip pose alone.
+    /// </summary>
+    public Vector3 HeldWristEulerOffset => heldWristEulerOffset;
+
+    /// <summary>How the hand shapes itself around this item while held.</summary>
+    public HeldGripStyle GripStyle => gripStyle;
+
+    /// <summary>
+    /// The "HoldPose" animator value for this item's grip: 1 fist, 3 pinch, 4 cup, 5 ball. Kept here so the
+    /// style-to-clip mapping lives in one place. (2 is the two-hand chest carry, which is not a grip style.)
+    /// </summary>
+    public int HeldPoseIndex
+    {
+        get
+        {
+            if (gripStyle == HeldGripStyle.Pinch)
+                return 3;
+            if (gripStyle == HeldGripStyle.Cup)
+                return 4;
+            if (gripStyle == HeldGripStyle.Ball)
+                return 5;
+            return 1;
+        }
+    }
 
     /// <summary>
     /// When held on the hand socket, aim the item's forward along the player's view (camera pitch) instead

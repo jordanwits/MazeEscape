@@ -114,7 +114,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 1841106916
+  GlobalObjectIdHash: 21938161
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 0
@@ -353,6 +353,12 @@ MonoBehaviour:
   heldLocalPosition: {x: 0, y: 0, z: 0}
   heldLocalEulerAngles: {x: 0, y: 0, z: 0}
   alignRotationWithFollow: 1
+  gripPointRight: {fileID: 0}
+  gripPointLeft: {fileID: 0}
+  heldRotationOffsetEuler: {x: 0, y: 0, z: 0}
+  heldAttachToHandSocket: 1
+  heldWristEulerOffset: {x: 0, y: 0, z: 0}
+  gripStyle: 3
 --- !u!114 &6712098834412200202
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -380,6 +386,10 @@ MonoBehaviour:
   ringDropSpinAngularSpeed: 8
   serverReclaimSpeedThreshold: 0.35
   serverSettleSecondsBeforeReturn: 1.25
+  observerLocalArcEnabled: 1
+  observerArcBlendSeconds: 0.22
+  observerArcFreshDataDistance: 0.2
+  observerArcMaxSeconds: 1.5
 --- !u!114 &9100000000000000005
 MonoBehaviour:
   m_ObjectHideFlags: 0

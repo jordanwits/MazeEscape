@@ -33,10 +33,11 @@ Transform:
   m_GameObject: {fileID: 2340569635365703052}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 1, z: 0, w: 0}
-  m_LocalPosition: {x: -2.689196, y: 1.169, z: 0.0714205}
-  m_LocalScale: {x: 16.533554, y: 16.533556, z: 14.844488}
+  m_LocalPosition: {x: -2.6894, y: 1.174, z: 0.071635}
+  m_LocalScale: {x: 11.418734, y: 4.659072, z: 10.252197}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 8070741325685862383}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 180, z: 0}
 --- !u!33 &2062460163565459603
@@ -116,6 +117,12 @@ MonoBehaviour:
   heldLocalPosition: {x: 0, y: 0, z: 0}
   heldLocalEulerAngles: {x: 180, y: 0, z: 0}
   alignRotationWithFollow: 1
+  gripPointRight: {fileID: 8070741325685862383}
+  gripPointLeft: {fileID: 0}
+  heldRotationOffsetEuler: {x: 270, y: 90, z: 0}
+  heldAttachToHandSocket: 1
+  heldWristEulerOffset: {x: 0, y: 0, z: 0}
+  gripStyle: 1
 --- !u!114 &5511223344880011010
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -214,4 +221,34 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ae3f9012c4d54b4b8e6f71d2bc8aa101, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MazePieceNetworkRigidbodySpawn
-  ShowTopMostFoldoutHeaderGroup: 1
+--- !u!1 &4886210821181871086
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8070741325685862383}
+  m_Layer: 0
+  m_Name: GripPoint_R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8070741325685862383
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4886210821181871086}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: -0.7071068, w: 0.7071068}
+  m_LocalPosition: {x: 0.007483, y: 0.00193, z: -0.0009983695}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3112144581848307510}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: -90}

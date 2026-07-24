@@ -31,9 +31,10 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0.09857348, y: -0.70020235, z: -0.70020235, w: 0.09857348}
   m_LocalPosition: {x: 4.235266, y: 2.3829, z: -0.41431528}
-  m_LocalScale: {x: 9.876095, y: 9.876095, z: 9.876095}
+  m_LocalScale: {x: 7.781079, y: 7.781079, z: 7.781079}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 4492413565131892549}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: -90, y: 0, z: 556.027}
 --- !u!33 &2517355441836016161
@@ -122,7 +123,7 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2164958555813648190}
   serializedVersion: 5
-  m_Mass: 0.1
+  m_Mass: 1
   m_LinearDamping: 0
   m_AngularDamping: 0.05
   m_CenterOfMass: {x: 0, y: 0, z: 0}
@@ -151,7 +152,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: e17a2b9c4d3f4e5a8b6c7d0e1f2a3b4c, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::EnergyDrinkItem
   _itemTypeId: 9
   _slotIcon: {fileID: 21300000, guid: d4e5f6a7b8c90112233445566778899a, type: 3}
@@ -163,9 +164,42 @@ MonoBehaviour:
   heldLocalPosition: {x: 0, y: -0.05, z: -0.35}
   heldLocalEulerAngles: {x: 0, y: 0, z: 0}
   alignRotationWithFollow: 1
-  gripPointRight: {fileID: 0}
+  gripPointRight: {fileID: 4492413565131892549}
   gripPointLeft: {fileID: 0}
-  heldRotationOffsetEuler: {x: 0, y: 0, z: 0}
+  heldRotationOffsetEuler: {x: 270, y: 180, z: 0}
   heldAttachToHandSocket: 1
+  heldWristEulerOffset: {x: -74.7, y: 0, z: 0}
+  gripStyle: 2
   boostDurationSeconds: 5
   speedMultiplier: 1.25
+--- !u!1 &4954159100586687946
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4492413565131892549}
+  m_Layer: 0
+  m_Name: GripPoint_R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &4492413565131892549
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4954159100586687946}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0.0032, y: 0.00485, z: -0.00252}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1531411866474466692}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}

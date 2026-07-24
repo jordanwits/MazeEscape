@@ -2053,6 +2053,37 @@ CharacterJoint:
   m_EnablePreprocessing: 0
   m_MassScale: 1
   m_ConnectedMassScale: 1
+--- !u!1 &3192269140046251474
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7831836966247703556}
+  m_Layer: 8
+  m_Name: BallSocket_R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7831836966247703556
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3192269140046251474}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0.11303592, y: -0.1005591, z: -0.024555266}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3702088477937374094}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &3226013355103083432
 GameObject:
   m_ObjectHideFlags: 0
@@ -2988,6 +3019,9 @@ Transform:
   - {fileID: 6469316671699116617}
   - {fileID: 7719735207688400255}
   - {fileID: 8203422837388476461}
+  - {fileID: 8198667374964343563}
+  - {fileID: 6274023194472882953}
+  - {fileID: 7831836966247703556}
   m_Father: {fileID: 7742840804248816546}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &4313803590319324929
@@ -3133,6 +3167,12 @@ MonoBehaviour:
   fovLerpSharpness: 8
   ticketBundlePromptFormat: Press E to collect {0} tickets
   ticketCounterIcon: {fileID: 21300000, guid: 4f61435e86a4360438a1783f76596a8f, type: 3}
+  hurtFeedbackEnabled: 1
+  heartbeatEnabled: 1
+  heartbeatStartHealthFraction: 0.25
+  heartbeatVolume: 0.5
+  heartbeatMinBpm: 58
+  heartbeatMaxBpm: 110
   reachApexSeconds: 0.32
   reachSettleSeconds: 0.22
   reachRetryLockoutSeconds: 0.1
@@ -3147,6 +3187,17 @@ MonoBehaviour:
   screamShakeFrequency: 26
   screamShakeDecayPerSecond: 4
   screamShakeTraumaExponent: 2
+  meleeCameraKickEnabled: 1
+  meleeKickUpDegrees: 2.1
+  meleeKickYawDegrees: 0.7
+  meleeKickRollDegrees: 1.1
+  meleeKickRecoverTime: 0.11
+  meleeKickSkeletonScale: 1.35
+  hurtCameraKickEnabled: 1
+  hurtKickPitchDegrees: 3.4
+  hurtKickYawDegrees: 1.6
+  hurtKickRollDegrees: 2.2
+  chasePanicChromaticAberrationMax: 0.55
   teleportHoldSeconds: 0.9
   characterController: {fileID: 8025695549591612232}
   animator: {fileID: 4205222711325704942}
@@ -3174,6 +3225,7 @@ MonoBehaviour:
   pickupPromptMessage: Press E to pick up
   chestPromptMessage: Press E to open
   doorUnlockPromptMessage: Press E to unlock
+  doorLockedPromptMessage: Locked
   doorOpenPromptMessage: Press E to open
   teleportOrbPromptMessage: Hold E to teleport
   skeletonRpsPromptMessage: Press E to challenge the skeleton
@@ -4787,6 +4839,37 @@ Transform:
   - {fileID: 958277357779762293}
   m_Father: {fileID: 8365065793366169439}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &6719543280214535655
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8198667374964343563}
+  m_Layer: 8
+  m_Name: PinchSocket_R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8198667374964343563
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6719543280214535655}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0.12167632, y: -0.09625117, z: 0.03715712}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3702088477937374094}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &6928712435008373917
 GameObject:
   m_ObjectHideFlags: 0
@@ -6364,3 +6447,34 @@ SkinnedMeshRenderer:
     m_Center: {x: -0.002769485, y: 0.028202556, z: 0.5631768}
     m_Extent: {x: 0.2828374, y: 0.18594435, z: 0.51537687}
   m_DirtyAABB: 0
+--- !u!1 &9034994870927531030
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6274023194472882953}
+  m_Layer: 8
+  m_Name: CupSocket_R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6274023194472882953
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9034994870927531030}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0.12351, y: -0.07485, z: -0.00787}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3702088477937374094}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}

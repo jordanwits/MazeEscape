@@ -111,7 +111,8 @@ public partial class PlayerController
         : (_selfNetworkObjectCache = GetComponent<NetworkObject>());
 
     /// <summary>
-    /// Drives the "Item Hold" animator layer: 0 empty hands, 1 one-hand hotbar item, 2 two-hand heavy carry.
+    /// Drives the "Item Hold" animator layer: 0 empty hands, 1 one-hand hotbar item, 2 two-hand heavy carry,
+    /// 3 thumb-and-index pinch for flat items (see <see cref="GrabbableInventoryItem.HeldUsesPinchPose"/>).
     /// Owner-only in network sessions — OwnerNetworkAnimator replicates the int, so a non-owner writing it
     /// locally would fight the replicated value. Forced to 0 while blackjack-seated so hold arms never
     /// override the Sit pose.
@@ -135,8 +136,10 @@ public partial class PlayerController
                     ? NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(holderId) : null;
                 if (heavy != null)
                 {
-                    // Socket-held heavy items (rings) are one-handed; chest-carried ones (StarBall) are two-handed.
-                    pose = heavy.HeldItem != null && heavy.HeldItem.HeldAttachToHandSocket ? 1 : 2;
+                    // Socket-held heavy items (rings, Ball) take their own grip pose; chest-carried ones
+                    // (StarBall) are the two-hand carry.
+                    pose = heavy.HeldItem != null && heavy.HeldItem.HeldAttachToHandSocket
+                        ? heavy.HeldItem.HeldPoseIndex : 2;
                 }
                 else
                 {
@@ -145,7 +148,10 @@ public partial class PlayerController
                         && (_networkPlayerInventory.GetSlotItemId(selected) != 0UL
                             || _networkPlayerInventory.GetSlotItemTypeId(selected) != GrabbableInventoryItem.TypeIdNone))
                     {
-                        pose = 1;
+                        ulong selectedItemId = _networkPlayerInventory.GetSlotItemId(selected);
+                        pose = selectedItemId != 0UL
+                            && GrabbableInventoryItem.TryGetRegistered(selectedItemId, out GrabbableInventoryItem selectedItem)
+                            && selectedItem != null ? selectedItem.HeldPoseIndex : 1;
                     }
                 }
             }
@@ -153,9 +159,10 @@ public partial class PlayerController
             {
                 NetworkHeavyThrowableHold heavy = NetworkHeavyThrowableHold.FindOfflineHeldBy(this);
                 if (heavy != null)
-                    pose = heavy.HeldItem != null && heavy.HeldItem.HeldAttachToHandSocket ? 1 : 2;
+                    pose = heavy.HeldItem != null && heavy.HeldItem.HeldAttachToHandSocket
+                        ? heavy.HeldItem.HeldPoseIndex : 2;
                 else if (_localSelectedSlot >= 0 && _localSelectedSlot < 3 && _localInventorySlots[_localSelectedSlot] != null)
-                    pose = 1;
+                    pose = _localInventorySlots[_localSelectedSlot].HeldPoseIndex;
             }
         }
 

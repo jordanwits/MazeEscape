@@ -182,6 +182,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         ResolveFlashlightAimPivot();
         EnsureAnimationSync();
         EnsureRemoteBlockingProxyObject();
+        // Before any presentation/ownership callback, so an offline standalone player is covered too.
+        ForceSkinnedBoundsAlwaysUpdate();
 
         if (playerHealth != null)
         {
@@ -686,20 +688,27 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             && localViewShadowOnlyRenderers != null
             && localViewShadowOnlyRenderers.Length > 0;
 
-        ApplyFirstPersonOffscreenCulling(isLocalOwner);
+        ForceSkinnedBoundsAlwaysUpdate();
     }
 
     /// <summary>
     /// In first person the camera is embedded at the head, so a SkinnedMeshRenderer's precomputed bind-pose
-    /// bounds frequently sit partly behind/beside the camera. When an animation throws a limb outside those
-    /// stale bounds (e.g. the punch reaching the fist toward the camera), Unity frustum-culls the whole
-    /// renderer and the arm vanishes. Forcing <c>updateWhenOffscreen</c> on the local owner recomputes bounds
-    /// from the live pose each frame, so on-screen limbs are never culled. Remote avatars keep normal culling.
+    /// bounds frequently sit partly behind/beside the camera. When a pose throws a limb outside those stale
+    /// bounds (a punch reaching the fist toward the camera, or a hold pose raising the arm), Unity
+    /// frustum-culls the whole renderer and the body vanishes at particular view angles. Forcing
+    /// <c>updateWhenOffscreen</c> recomputes bounds from the live pose each frame, so on-screen limbs are
+    /// never culled.
+    ///
+    /// Applied unconditionally from <see cref="Awake"/>, NOT gated on ownership: gating it meant the flag
+    /// only landed once <c>OnNetworkSpawn</c> ran, so a player running standalone in an offline scene
+    /// (Dev_IKTest / Staging, no NetworkManager session) never got it and the bug came straight back. The
+    /// flag is a pure rendering-correctness setting with no ownership semantics, and recomputing bounds for
+    /// at most four avatars is negligible next to skinning them.
     /// </summary>
-    void ApplyFirstPersonOffscreenCulling(bool isLocalOwner)
+    void ForceSkinnedBoundsAlwaysUpdate()
     {
-        // Only the local owner needs forced bounds; once set true we never revert (ownership is fixed per avatar).
-        if (!isLocalOwner || _skinnedRenderersOffscreenForced)
+        // Once set true we never revert.
+        if (_skinnedRenderersOffscreenForced)
             return;
 
         if (_skinnedRenderers == null)
