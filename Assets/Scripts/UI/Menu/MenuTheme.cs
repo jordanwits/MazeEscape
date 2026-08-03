@@ -216,6 +216,156 @@ public static class MenuTheme
         });
     }
 
+    /// <summary>
+    /// Rounded rect that fades out over <paramref name="blur"/> px beyond its edge — the drop
+    /// shadow under smooth panels. 9-sliced, so one sprite serves every card size.
+    /// </summary>
+    public static Sprite RoundedShadow(int radius, int blur)
+    {
+        return CacheSprite($"rshadow{radius}_{blur}", () =>
+        {
+            const int center = 16;
+            int pad = blur + 4;
+            int size = 2 * (radius + pad) + center;
+            Texture2D tex = NewTexture(size, size);
+            var half = new Vector2(size * 0.5f - pad, size * 0.5f - pad);
+            var px = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    var p = new Vector2(x + 0.5f - size * 0.5f, y + 0.5f - size * 0.5f);
+                    float d = RoundedBoxDistance(p, half, radius);
+                    float t = Mathf.Clamp01(1f - d / blur);
+                    float a = t * t * (3f - 2f * t);
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(a * a * 255f));
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply(false, false);
+            int b = radius + pad + 2;
+            return ToSprite(tex, new Vector4(b, b, b, b));
+        });
+    }
+
+    // ---------------------------------------------------------------- hand-cut plates
+
+    public enum HandKind { Fill, Outline, Shadow }
+
+    /// <summary>
+    /// Hand-cut plate family: a rounded rect whose edge wanders with low-frequency noise, like a
+    /// board sawn by eye or a scrap torn against a straightedge. Generated per size (no slicing —
+    /// slicing would stretch the wobble flat on long edges) at a capped resolution, so the bilinear
+    /// upscale doubles as edge softening. Same (size, seed) → same silhouette across
+    /// Fill/Outline/Shadow, which is what lets a frame hug its plate.
+    /// Sizes are rounded to <see cref="HandSizeStep"/> before lookup to keep the cache small.
+    /// </summary>
+    public const int HandSizeStep = 8;
+
+    public static Sprite HandPlate(int w, int h, int seed) => HandSprite(w, h, seed, HandKind.Fill, 0f);
+    public static Sprite HandOutline(int w, int h, int seed, float stroke = 2.2f) => HandSprite(w, h, seed, HandKind.Outline, stroke);
+    public static Sprite HandShadow(int w, int h, int seed) => HandSprite(w, h, seed, HandKind.Shadow, 0f);
+
+    public static Sprite HandSprite(int w, int h, int seed, HandKind kind, float stroke)
+    {
+        w = Mathf.Max(HandSizeStep, Mathf.RoundToInt(w / (float)HandSizeStep) * HandSizeStep);
+        h = Mathf.Max(HandSizeStep, Mathf.RoundToInt(h / (float)HandSizeStep) * HandSizeStep);
+        seed = ((seed % 977) + 977) % 977;
+        return CacheSprite($"hand{(int)kind}_{w}x{h}_{seed}_{stroke:0.#}", () => BuildHandSprite(w, h, seed, kind, stroke));
+    }
+
+    // Per-kind resolution caps: outlines need near-native pixels to read as a drawn line rather
+    // than a glow; fills are forgiving (upscale blur doubles as edge softening); shadows are blurred
+    // on purpose. All SDF math runs in plate space so every kind of the same (size, seed) shares one
+    // silhouette regardless of its texture resolution.
+    static float HandResolutionCap(HandKind kind)
+    {
+        switch (kind)
+        {
+            case HandKind.Outline: return 460f;
+            case HandKind.Shadow: return 160f;
+            default: return 230f;
+        }
+    }
+
+    static Sprite BuildHandSprite(int w, int h, int seed, HandKind kind, float stroke)
+    {
+        float scale = Mathf.Min(1f, HandResolutionCap(kind) / Mathf.Max(w, h));
+        // shadows bleed well past their plate, so they get real margin
+        float padPlate = kind == HandKind.Shadow ? 30f : 7f;
+        int pad = Mathf.CeilToInt(padPlate * scale) + 2;
+        int tw = Mathf.Max(12, Mathf.RoundToInt(w * scale)) + pad * 2;
+        int th = Mathf.Max(12, Mathf.RoundToInt(h * scale)) + pad * 2;
+
+        Texture2D tex = NewTexture(tw, th);
+        var px = new Color32[tw * th];
+
+        var half = new Vector2(w * 0.5f, h * 0.5f);
+        float minHalf = Mathf.Min(half.x, half.y);
+        // soft: radius takes a third of the short side, wobble takes up to ~13% more
+        float radius = minHalf * (0.32f + ((seed * 13) % 7) * 0.014f);
+        float wobbleAmp = Mathf.Clamp(minHalf * 0.14f, 2.5f, 14f);
+        float wobbleFreq = 0.030f + ((seed * 7) % 5) * 0.0035f;
+        float ox = (seed % 31) * 3.17f;
+        float oy = (seed % 17) * 7.91f;
+        float aa = 1.35f / scale;                 // ~1.35 texture px of edge smoothing
+        float strokeHalf = Mathf.Max(0.6f, stroke * 0.5f);
+        float blur = 24f;
+
+        for (int y = 0; y < th; y++)
+        {
+            for (int x = 0; x < tw; x++)
+            {
+                // plate-space position (UI pixels from the plate center)
+                var p = new Vector2((x + 0.5f - tw * 0.5f) / scale, (y + 0.5f - th * 0.5f) / scale);
+                float d = RoundedBoxDistance(p, half, radius);
+
+                // the hand-cut: push the edge in and out with two octaves of noise
+                float n = Mathf.PerlinNoise(p.x * wobbleFreq + ox, p.y * wobbleFreq + oy) - 0.5f
+                        + 0.4f * (Mathf.PerlinNoise(p.x * wobbleFreq * 2.7f + oy, p.y * wobbleFreq * 2.7f + ox) - 0.5f);
+                d += n * 2f * wobbleAmp;
+
+                float a;
+                byte v = 255;
+                switch (kind)
+                {
+                    case HandKind.Outline:
+                        // band hugging the edge, alpha-jittered so it reads drawn, not printed
+                        float band = Mathf.Abs(d + strokeHalf) - strokeHalf;
+                        a = Mathf.Clamp01(0.5f - band / aa);
+                        a *= 0.8f + 0.2f * Mathf.PerlinNoise(p.x * 0.11f + oy, p.y * 0.11f + ox);
+                        break;
+                    case HandKind.Shadow:
+                        float t = Mathf.Clamp01(1f - (d + blur * 0.15f) / blur);
+                        a = t * t * (3f - 2f * t);
+                        a *= a;
+                        break;
+                    default:
+                        a = Mathf.Clamp01(0.5f - d / aa);
+                        // weathering baked into the fill RGB (a separate rect overlay would show
+                        // as a haze box past the silhouette): broad mottling plus sparse flecks
+                        if (a > 0f)
+                        {
+                            float mottle = 0.55f * Mathf.PerlinNoise(p.x * 0.045f + ox * 1.7f, p.y * 0.045f + oy * 1.3f)
+                                         + 0.45f * Mathf.PerlinNoise(p.x * 0.14f + oy, p.y * 0.14f + ox);
+                            float shade = 0.90f + 0.10f * mottle;
+                            float fleck = Mathf.PerlinNoise(p.x * 0.55f + ox, p.y * 0.55f + oy);
+                            if (fleck > 0.74f)
+                                shade -= 0.22f * (fleck - 0.74f) / 0.26f;
+                            v = (byte)(Mathf.Clamp01(shade) * 255f);
+                        }
+                        break;
+                }
+
+                px[y * tw + x] = new Color32(v, v, v, (byte)(Mathf.Clamp01(a) * 255f));
+            }
+        }
+
+        tex.SetPixels32(px);
+        tex.Apply(false, false);
+        return ToSprite(tex, Vector4.zero);
+    }
+
     /// <summary>Soft radial glow, white; tint via Image.color.</summary>
     public static Sprite SoftGlow()
     {

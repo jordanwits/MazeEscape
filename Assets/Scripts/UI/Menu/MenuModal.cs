@@ -33,17 +33,15 @@ public sealed class MenuModal : MonoBehaviour
         RectTransform card = MenuWidgets.CreateRect("Card", root);
         card.sizeDelta = new Vector2(520f, 100f);
 
-        Image shadow = MenuWidgets.CreateImage(card, "Shadow", MenuTheme.RoundedRect(3), MenuTheme.WithAlpha(MenuTheme.Ink, 0.7f));
+        Image shadow = MenuWidgets.CreateImage(card, "Shadow", MenuTheme.RoundedShadow(MenuWidgets.CardRadius, 26), MenuTheme.WithAlpha(MenuTheme.Ink, 0.7f));
         shadow.rectTransform.SetStretch();
-        shadow.rectTransform.offsetMin = new Vector2(9f, -12f);
-        shadow.rectTransform.offsetMax = new Vector2(9f, -12f);
+        shadow.rectTransform.offsetMin = new Vector2(-16f, -24f);
+        shadow.rectTransform.offsetMax = new Vector2(16f, 10f);
 
-        Image bg = MenuWidgets.CreateImage(card, "Bg", MenuTheme.RoundedRect(3), MenuTheme.PanelRaised, true);
-        bg.rectTransform.SetStretch();
-        MenuWidgets.CreateGrunge(card, MenuTheme.WithAlpha(Color.white, 0.05f));
-        Image outline = MenuWidgets.CreateImage(card, "Outline", MenuTheme.RoundedOutline(3, 1.6f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.22f));
+        Image bg = MenuWidgets.CreateRoundedMaskedFill(card, "Bg", MenuWidgets.CardRadius, MenuTheme.PanelRaised, true);
+        MenuWidgets.CreateGrunge(bg.transform, MenuTheme.WithAlpha(Color.white, 0.035f));
+        Image outline = MenuWidgets.CreateImage(card, "Outline", MenuTheme.RoundedOutline(MenuWidgets.CardRadius, 1.8f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.22f));
         outline.rectTransform.SetStretch();
-        MenuWidgets.CreateCornerBrackets(card, MenuTheme.WithAlpha(MenuTheme.Bone, 0.6f));
 
         RectTransform content = MenuWidgets.CreateStretched("Content", card);
         MenuWidgets.AddVertical(content.gameObject, new RectOffset(44, 44, 36, 36), 14f);

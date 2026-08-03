@@ -1,12 +1,17 @@
+/// <summary>
+/// The run-through the BRIEFING screen lists, in order. Kept platform-neutral: joining is
+/// invite-only, so there is no id, address, or port for anyone to read out.
+/// </summary>
 public static class OnlinePlaytestChecklist
 {
     public static readonly string[] Steps =
     {
-        "Two Windows machines use different Steam accounts and the same build.",
-        "Steam is running before the game starts; the Play Online screen shows Steam as ready.",
-        "Host starts a Steam lobby from Menu > Play Online > Host Steam Lobby.",
-        "Friend joins through Steam invite, lobby ID, or host SteamID64.",
-        "Every player toggles Ready in the lobby, then only the host can press Start Game.",
+        "Two Windows machines, two different accounts, the same build.",
+        "Sign in and let the game reach the menu before inviting anyone.",
+        "Host opens a game from Menu > Play > Host Game.",
+        "Host picks Invite Friends in the lobby and invites everyone by name.",
+        "Friends accept the invite and land in the lobby with no ids to type.",
+        "Every player toggles Ready, then only the host can press Start.",
         "All players load into Level01 together and spawn at valid start positions.",
         "Maze layout, doors, keys, chests, traps, and finish trigger match for both players.",
         "Flashlight pickup, battery, toggle, drop, and remote light visuals sync.",
@@ -14,6 +19,6 @@ public static class OnlinePlaytestChecklist
         "Zombies move only from server authority and replicate health/death/animation.",
         "Player death, ragdoll, item drop, respawn, and HUD recovery work for host and client.",
         "Client can leave and return to menu; host shutdown disconnects client cleanly.",
-        "Direct IP mode still hosts and joins on LAN for transport fallback debugging."
+        "Play Offline still loads Level01 solo with the network unreachable from outside."
     };
 }

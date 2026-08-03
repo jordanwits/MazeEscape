@@ -77,7 +77,7 @@ public class MultiplayerSceneFlow : MonoBehaviour
         if (_steamLobby == null)
             _steamLobby = GetComponent<SteamLobbyService>();
         if (_steamLobby != null)
-            _steamLobby.LobbyJoinRequested += OnSteamLobbyJoinRequested;
+            _steamLobby.LobbyJoinRequested += OnLobbyInviteAccepted;
     }
 
     void OnDisable()
@@ -85,7 +85,7 @@ public class MultiplayerSceneFlow : MonoBehaviour
         if (NetworkManager.Singleton != null)
             NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnectedFromSession;
         if (_steamLobby != null)
-            _steamLobby.LobbyJoinRequested -= OnSteamLobbyJoinRequested;
+            _steamLobby.LobbyJoinRequested -= OnLobbyInviteAccepted;
     }
 
     void OnClientDisconnectedFromSession(ulong clientId)
@@ -108,50 +108,37 @@ public class MultiplayerSceneFlow : MonoBehaviour
 #endif
     }
 
-    public void RequestHostLobby(ushort port)
+    /// <summary>Play Offline: skip the lobby entirely and load the first section as a solo run.</summary>
+    public void RequestOfflineGame()
     {
         if (_sceneOpInProgress || session == null)
             return;
 
         StopAllCoroutines();
-        session.StartHost(port);
+        session.StartOfflineGame(GameSceneName);
     }
 
-    public void RequestJoinLobby(string address, ushort port)
+    /// <summary>Host Game: open the lobby friends are invited into.</summary>
+    public void RequestHostOnlineLobby()
     {
         if (_sceneOpInProgress || session == null)
             return;
 
         StopAllCoroutines();
-        string trimmed = string.IsNullOrWhiteSpace(address) ? session.DefaultAddress : address.Trim();
-        session.StartClient(trimmed, port);
+        session.StartOnlineHost();
     }
 
-    public void RequestSteamHostLobby()
+    /// <summary>The one way into someone else's game: an invite the local player accepted.</summary>
+    public void RequestJoinFromInvite(ulong lobbyId)
     {
         if (_sceneOpInProgress || session == null)
             return;
 
-        StopAllCoroutines();
-        session.StartSteamHost();
-    }
-
-    public void RequestSteamJoinLobby(ulong hostSteamId)
-    {
-        if (_sceneOpInProgress || session == null)
+        if (session.IsSessionActive)
             return;
 
         StopAllCoroutines();
-        session.StartSteamClient(hostSteamId);
-    }
-
-    public void RequestSteamLobbyJoin(ulong lobbyId)
-    {
-        if (_sceneOpInProgress || session == null)
-            return;
-
-        StopAllCoroutines();
-        session.JoinSteamLobby(lobbyId);
+        session.JoinLobbyFromInvite(lobbyId);
     }
 
     public void RequestStartGameFromLobby(string sceneName = null)
@@ -174,8 +161,8 @@ public class MultiplayerSceneFlow : MonoBehaviour
         SceneManager.LoadScene(MenuSceneName, LoadSceneMode.Single);
     }
 
-    void OnSteamLobbyJoinRequested(ulong lobbyId)
+    void OnLobbyInviteAccepted(ulong lobbyId)
     {
-        RequestSteamLobbyJoin(lobbyId);
+        RequestJoinFromInvite(lobbyId);
     }
 }

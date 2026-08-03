@@ -33,10 +33,9 @@ public sealed class MenuToast : MonoBehaviour
         _group.blocksRaycasts = false;
         _group.interactable = false;
 
-        Image bg = MenuWidgets.CreateImage(rt, "Bg", MenuTheme.RoundedRect(2), MenuTheme.WithAlpha(MenuTheme.PanelRaised, 0.96f));
-        StretchFull(bg.rectTransform);
-        MenuWidgets.CreateGrunge(rt, MenuTheme.WithAlpha(Color.white, 0.05f));
-        Image outline = MenuWidgets.CreateImage(rt, "Outline", MenuTheme.RoundedOutline(2, 1.6f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.28f));
+        Image bg = MenuWidgets.CreateRoundedMaskedFill(rt, "Bg", 14, MenuTheme.WithAlpha(MenuTheme.PanelRaised, 0.96f));
+        MenuWidgets.CreateGrunge(bg.transform, MenuTheme.WithAlpha(Color.white, 0.035f));
+        Image outline = MenuWidgets.CreateImage(rt, "Outline", MenuTheme.RoundedOutline(14, 1.6f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.26f));
         StretchFull(outline.rectTransform);
 
         Image tick = MenuWidgets.CreateImage(rt, "Accent", MenuTheme.Solid(), MenuTheme.Amber);

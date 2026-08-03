@@ -145,7 +145,7 @@ public sealed class PauseMenuController : MonoBehaviour
         _root = canvas.gameObject;
         Transform root = canvas.transform;
 
-        MenuBackdrop.Build(root, true);
+        MenuBackdrop.Build(root);
 
         // ---- left column
         RectTransform block = MenuWidgets.CreateRect("TitleBlock", root);

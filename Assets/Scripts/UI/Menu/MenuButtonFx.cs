@@ -40,6 +40,10 @@ public sealed class MenuButtonFx : MonoBehaviour,
     /// <summary>Ledge shows permanently (primary CTAs) instead of only while selected.</summary>
     public bool ledgeAlways;
 
+    /// <summary>The tilted plate under this button; when set, hover straightens and lifts it like a nudged sign.</summary>
+    public RectTransform plate;
+    public float plateBaseTilt;
+
     CanvasGroup _group;
     float _hover;
     float _press;
@@ -140,7 +144,11 @@ public sealed class MenuButtonFx : MonoBehaviour,
                 ledgeImage.color = MenuTheme.WithAlpha(ledgeColor, ledgeColor.a * shown);
         }
 
-        float scale = 1f - 0.015f * _press;
+        // hover: the hand-placed sign straightens and leans forward a touch
+        if (plate != null)
+            plate.localRotation = Quaternion.Euler(0f, 0f, plateBaseTilt * (1f - 0.55f * _hover));
+
+        float scale = 1f + 0.022f * _hover - 0.03f * _press;
         transform.localScale = new Vector3(scale, scale, 1f);
 
         if (_group != null)

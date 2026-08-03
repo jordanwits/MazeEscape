@@ -99,6 +99,57 @@ public sealed class UiGrungeFit : MonoBehaviour
     }
 }
 
+/// <summary>
+/// Keeps an Image's hand-cut sprite (<see cref="MenuTheme.HandSprite"/>) matched to its rect —
+/// the plates aren't 9-sliced, so each size gets its own silhouette, regenerated when the rect
+/// crosses a size step. Fill/Outline siblings share a seed so the frame hugs its plate.
+/// </summary>
+[DisallowMultipleComponent]
+[RequireComponent(typeof(Image))]
+public sealed class UiHandPlate : MonoBehaviour
+{
+    public MenuTheme.HandKind kind = MenuTheme.HandKind.Fill;
+    public int seed;
+    public float stroke = 2.2f;
+
+    Image _image;
+    int _lastW = -1;
+    int _lastH = -1;
+
+    void OnEnable()
+    {
+        Apply();
+    }
+
+    void OnRectTransformDimensionsChange()
+    {
+        if (isActiveAndEnabled)
+            Apply();
+    }
+
+    public void Apply()
+    {
+        if (_image == null)
+            _image = GetComponent<Image>();
+
+        Rect r = ((RectTransform)transform).rect;
+        int w = Mathf.RoundToInt(r.width);
+        int h = Mathf.RoundToInt(r.height);
+        if (w < 4 || h < 4)
+            return;   // layout hasn't sized us yet
+
+        w = Mathf.Max(MenuTheme.HandSizeStep, Mathf.RoundToInt(w / (float)MenuTheme.HandSizeStep) * MenuTheme.HandSizeStep);
+        h = Mathf.Max(MenuTheme.HandSizeStep, Mathf.RoundToInt(h / (float)MenuTheme.HandSizeStep) * MenuTheme.HandSizeStep);
+        if (w == _lastW && h == _lastH)
+            return;
+
+        _lastW = w;
+        _lastH = h;
+        _image.sprite = MenuTheme.HandSprite(w, h, seed, kind, stroke);
+        _image.type = Image.Type.Simple;
+    }
+}
+
 /// <summary>Gentle alpha pulse for small indicators (e.g. "waiting" dots).</summary>
 [DisallowMultipleComponent]
 public sealed class UiPulse : MonoBehaviour

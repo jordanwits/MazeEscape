@@ -42,6 +42,7 @@ public class MultiplayerSessionController : MonoBehaviour
     const string LobbyCharacterRequestMessageName = "lobby-character-request";
     const string LobbyStateMessageName = "lobby-state";
     const byte NoCharacterByte = 0xFF;
+    const string OnlineUnavailableStatus = "Online play is unavailable right now.";
 
     [SerializeField] string defaultAddress = "127.0.0.1";
     [SerializeField] ushort defaultPort = 7777;
@@ -52,8 +53,10 @@ public class MultiplayerSessionController : MonoBehaviour
     SteamNetworkingSocketsTransport _steamTransport;
     MultiplayerProjectSettings _projectSettings;
     GameObject _playerPrefab;
-    string _status = "Multiplayer foundation ready. F8 toggles the debug menu.";
+    string _status = string.Empty;
     MultiplayerTransportMode _transportMode = MultiplayerTransportMode.DirectIp;
+    bool _isOfflineSession;
+    Coroutine _pendingGameLoad;
     bool _playerPrefabConfigured;
     Vector3 _levelStartSpawnPosition;
     Quaternion _levelStartSpawnRotation = Quaternion.identity;
@@ -76,12 +79,26 @@ public class MultiplayerSessionController : MonoBehaviour
     public ushort DefaultPort => defaultPort;
     public string CurrentStatus => _status;
     public MultiplayerTransportMode CurrentTransportMode => _transportMode;
-    public string CurrentTransportLabel => _transportMode == MultiplayerTransportMode.SteamP2P ? "Steam P2P" : "Direct IP";
-    public bool IsSteamReady => SteamworksBootstrap.IsReady && IsSteamTransportAvailable;
-    public string SteamStatus => SteamworksBootstrap.Status;
+
+    public string CurrentTransportLabel
+    {
+        get
+        {
+            if (_isOfflineSession)
+                return "Offline";
+            return _transportMode == MultiplayerTransportMode.SteamP2P ? "Online" : "Local";
+        }
+    }
+
+    /// <summary>True while this session is the solo run started from Play Offline (loopback only).</summary>
+    public bool IsOfflineSession => _isOfflineSession;
+    public bool IsOnlineReady => SteamworksBootstrap.IsReady && IsSteamTransportAvailable;
     public ulong LocalSteamId => SteamworksBootstrap.LocalSteamId;
     public string LocalSteamName => SteamworksBootstrap.LocalPersonaName;
     public ulong CurrentSteamLobbyId => _steamLobby != null ? _steamLobby.CurrentLobbyId : 0UL;
+
+    /// <summary>Friends can only be invited into a live online lobby.</summary>
+    public bool CanInviteFriends => IsOnlineReady && CurrentSteamLobbyId != 0UL;
     public bool IsSessionActive => _networkManager != null && _networkManager.IsListening;
     public bool IsLobbyHost => _networkManager != null && _networkManager.IsHost;
     public bool IsLocalReady => _localReady;
@@ -191,6 +208,9 @@ public class MultiplayerSessionController : MonoBehaviour
         }
     }
 
+    // Direct-IP host/join is the LAN transport fallback. It has no menu entry point any more —
+    // players host from Play > Host Game and join by invite — but the path is kept for
+    // transport-level debugging and for StartOnlineHost's fallback when the platform layer is down.
     public void StartHost(ushort? portOverride = null)
     {
         StartDirectIpHost(portOverride);
@@ -218,6 +238,7 @@ public class MultiplayerSessionController : MonoBehaviour
         ushort port = portOverride ?? defaultPort;
         defaultPort = port;
 
+        _isOfflineSession = false;
         SelectDirectIpTransport();
         ConfigurePlayerPrefab();
         ConfigureDirectHostTransport(port);
@@ -246,6 +267,7 @@ public class MultiplayerSessionController : MonoBehaviour
         defaultAddress = string.IsNullOrWhiteSpace(address) ? DefaultAddress : address.Trim();
         defaultPort = port;
 
+        _isOfflineSession = false;
         SelectDirectIpTransport();
         ConfigurePlayerPrefab();
         ConfigureDirectClientTransport(defaultAddress, defaultPort);
@@ -257,9 +279,15 @@ public class MultiplayerSessionController : MonoBehaviour
             : "Client start failed. Check the Unity console for details.");
     }
 
-    public void StartSteamHost()
+    /// <summary>
+    /// Solo run: a host bound to loopback only — nothing outside this machine can reach it — that
+    /// drops straight into the level with no lobby step. It is still a host rather than a
+    /// "no netcode" mode because every gameplay system (enemy AI, maze build, spawning, hit
+    /// adjudication) runs off server authority.
+    /// </summary>
+    public void StartOfflineGame(string sceneName = null)
     {
-        if (_networkManager == null)
+        if (_networkManager == null || _unityTransport == null)
         {
             UpdateStatus("NetworkManager is not ready yet.");
             return;
@@ -271,26 +299,34 @@ public class MultiplayerSessionController : MonoBehaviour
             return;
         }
 
-        if (!SelectSteamTransport())
-            return;
+        string targetScene = MultiplayerSceneFlow.IsMazeGameplayScene(sceneName)
+            ? sceneName
+            : MultiplayerSceneFlow.GameSceneName;
 
+        SelectDirectIpTransport();
         ConfigurePlayerPrefab();
-        bool started = _networkManager.StartHost();
-        if (started)
-            EnsureLobbyMessageHandlersRegistered();
-        if (started)
+        ConfigureOfflineHostTransport(defaultPort);
+        _isOfflineSession = true;
+
+        if (!_networkManager.StartHost())
         {
-            bool lobbyCreateStarted = _steamLobby != null && _steamLobby.CreateLobbyForCurrentHost();
-            string lobbyMessage = lobbyCreateStarted ? " Creating Steam lobby..." : " Steam lobby was not created.";
-            UpdateStatus($"Steam lobby host started. Share Steam ID {LocalSteamId}.{lobbyMessage}");
+            _isOfflineSession = false;
+            UpdateStatus("Could not start the solo run. Check the Unity console for details.");
+            return;
         }
-        else
-        {
-            UpdateStatus("Steam host start failed. Check the Unity console for details.");
-        }
+
+        EnsureLobbyMessageHandlersRegistered();
+        UpdateStatus("Starting solo run...");
+        CancelPendingGameLoad();
+        _pendingGameLoad = StartCoroutine(LoadGameSceneWhenSessionReady(targetScene));
     }
 
-    public void StartSteamClient(ulong hostSteamId)
+    /// <summary>
+    /// Opens the lobby friends join from an invite. Uses friend-to-friend networking when the
+    /// platform layer is up; without it the lobby still opens locally so the flow never dead-ends
+    /// on an unusable button.
+    /// </summary>
+    public void StartOnlineHost()
     {
         if (_networkManager == null)
         {
@@ -304,45 +340,91 @@ public class MultiplayerSessionController : MonoBehaviour
             return;
         }
 
-        if (hostSteamId == 0UL)
+        if (!SelectSteamTransport())
         {
-            UpdateStatus("Enter a valid host SteamID64 before joining.");
+            StartDirectIpHost(defaultPort);
+            UpdateStatus("Hosting locally — friends can't be invited right now.");
+            return;
+        }
+
+        _isOfflineSession = false;
+        ConfigurePlayerPrefab();
+        bool started = _networkManager.StartHost();
+        if (!started)
+        {
+            UpdateStatus("Could not open the session. Check the Unity console for details.");
+            return;
+        }
+
+        EnsureLobbyMessageHandlersRegistered();
+        if (_steamLobby == null || !_steamLobby.CreateLobbyForCurrentHost())
+            UpdateStatus("Session started, but friends can't be invited right now.");
+    }
+
+    /// <summary>Connects to the host of a lobby this player was invited into.</summary>
+    public void StartOnlineClient(ulong hostUserId)
+    {
+        if (_networkManager == null)
+        {
+            UpdateStatus("NetworkManager is not ready yet.");
+            return;
+        }
+
+        if (_networkManager.IsListening)
+        {
+            UpdateStatus("A session is already running.");
+            return;
+        }
+
+        if (hostUserId == 0UL)
+        {
+            UpdateStatus("That invite is no longer valid.");
             return;
         }
 
         if (!SelectSteamTransport())
+        {
+            UpdateStatus(OnlineUnavailableStatus);
             return;
+        }
 
-        _steamTransport.ConnectToSteamID = hostSteamId;
+        _isOfflineSession = false;
+        _steamTransport.ConnectToSteamID = hostUserId;
         ConfigurePlayerPrefab();
         bool started = _networkManager.StartClient();
         if (started)
             EnsureLobbyMessageHandlersRegistered();
         UpdateStatus(started
-            ? $"Joining Steam lobby host {hostSteamId}..."
-            : "Steam client start failed. Check the Unity console for details.");
+            ? "Connecting to the host..."
+            : "Could not connect to the host. Check the Unity console for details.");
     }
 
-    public void JoinSteamLobby(ulong lobbyId)
+    public void JoinLobbyFromInvite(ulong lobbyId)
     {
         if (_steamLobby == null)
         {
-            UpdateStatus("Steam lobby service is not ready.");
+            UpdateStatus(OnlineUnavailableStatus);
             return;
         }
 
         _steamLobby.JoinLobby(lobbyId);
     }
 
-    public void OpenSteamInviteDialog()
+    /// <summary>Friends who are logged in right now, for the lobby's invite list.</summary>
+    public bool TryGetFriends(List<OnlineFriend> results)
+    {
+        return _steamLobby != null && _steamLobby.TryGetFriends(results);
+    }
+
+    public bool InviteFriend(ulong friendUserId)
     {
         if (_steamLobby == null)
         {
-            UpdateStatus("Steam lobby service is not ready.");
-            return;
+            UpdateStatus(OnlineUnavailableStatus);
+            return false;
         }
 
-        _steamLobby.OpenInviteDialog();
+        return _steamLobby.InviteFriend(friendUserId);
     }
 
     public void ShutdownSession()
@@ -353,15 +435,68 @@ public class MultiplayerSessionController : MonoBehaviour
             return;
         }
 
+        CancelPendingGameLoad();
         CancelAllPendingSpawnMoves();
         _steamLobby?.LeaveLobby();
         ClearLobbyState();
         UnregisterLobbyMessageHandlers();
         ProximityVoiceSession.InvalidateProximityMessaging();
         _networkManager.Shutdown();
+        _isOfflineSession = false;
         SelectDirectIpTransport();
         ConfigureDirectClientTransport(defaultAddress, defaultPort);
         UpdateStatus("Session stopped.");
+    }
+
+    /// <summary>
+    /// The host's local client is not connected the instant <c>StartHost</c> returns, and
+    /// <c>NetworkSceneManager</c> refuses a load until it is — so poll instead of assuming.
+    /// </summary>
+    IEnumerator LoadGameSceneWhenSessionReady(string sceneName)
+    {
+        const float timeoutSeconds = 10f;
+        float elapsed = 0f;
+
+        while (elapsed < timeoutSeconds)
+        {
+            if (_networkManager == null || !_networkManager.IsListening)
+            {
+                _pendingGameLoad = null;
+                yield break;
+            }
+
+            if (_networkManager.IsHost && _networkManager.SceneManager != null
+                && _networkManager.ConnectedClientsIds.Count > 0)
+            {
+                _gameStartRequested = true;
+                LobbyStateChanged?.Invoke();
+
+                SceneEventProgressStatus status = _networkManager.SceneManager.LoadScene(sceneName, LoadSceneMode.Single);
+                if (status == SceneEventProgressStatus.Started)
+                {
+                    _pendingGameLoad = null;
+                    yield break;
+                }
+
+                _gameStartRequested = false;
+                LobbyStateChanged?.Invoke();
+            }
+
+            yield return null;
+            elapsed += Time.deltaTime;
+        }
+
+        _pendingGameLoad = null;
+        UpdateStatus($"Could not load {sceneName}. Check the Unity console for details.");
+    }
+
+    void CancelPendingGameLoad()
+    {
+        if (_pendingGameLoad == null)
+            return;
+
+        StopCoroutine(_pendingGameLoad);
+        _pendingGameLoad = null;
     }
 
     public void SetLocalPlayerReady(bool ready)
@@ -468,11 +603,15 @@ public class MultiplayerSessionController : MonoBehaviour
         EnsureNetworkConfig(_unityTransport);
     }
 
+    /// <summary>
+    /// Fails quietly on purpose: the platform layer's own wording ("SteamAPI.Init failed...") is
+    /// developer diagnostics, so it goes to the console and each caller decides what the player sees.
+    /// </summary>
     bool SelectSteamTransport()
     {
         if (!SteamworksBootstrap.IsReady)
         {
-            UpdateStatus(SteamworksBootstrap.Status);
+            Debug.LogWarning($"[Multiplayer] Online transport unavailable: {SteamworksBootstrap.Status}", this);
             return false;
         }
 
@@ -480,7 +619,7 @@ public class MultiplayerSessionController : MonoBehaviour
             _steamTransport = GetComponent<SteamNetworkingSocketsTransport>();
         if (_steamTransport == null)
         {
-            UpdateStatus("Steam Networking Sockets transport is missing.");
+            Debug.LogWarning("[Multiplayer] Online transport component is missing.", this);
             return false;
         }
 
@@ -499,6 +638,13 @@ public class MultiplayerSessionController : MonoBehaviour
     {
         EnsureNetworkConfig(_unityTransport);
         _unityTransport.SetConnectionData(address, port);
+    }
+
+    /// <summary>Solo run: bind the listen socket to loopback so the session is unreachable from the network.</summary>
+    void ConfigureOfflineHostTransport(ushort port)
+    {
+        EnsureNetworkConfig(_unityTransport);
+        _unityTransport.SetConnectionData(HostLoopbackAddress, port, HostLoopbackAddress);
     }
 
     void ConfigurePlayerPrefab()
@@ -616,10 +762,12 @@ public class MultiplayerSessionController : MonoBehaviour
         if (!_networkManager.IsHost)
             return;
 
-        if (_transportMode == MultiplayerTransportMode.SteamP2P)
-            UpdateStatus($"Steam host session active. Steam ID: {LocalSteamId}.");
+        if (_isOfflineSession)
+            UpdateStatus("Solo run started.");
+        else if (_transportMode == MultiplayerTransportMode.SteamP2P)
+            UpdateStatus("Hosting. Invite friends when you're ready.");
         else
-            UpdateStatus($"Direct IP host session active on port {defaultPort}.");
+            UpdateStatus($"Hosting locally on port {defaultPort}.");
     }
 
     void HandleClientConnected(ulong clientId)
@@ -631,9 +779,6 @@ public class MultiplayerSessionController : MonoBehaviour
         {
             RegisterLobbyClient(clientId);
             QueueSpawnOrMovePlayerToLevelStart(clientId);
-            UpdateStatus(_transportMode == MultiplayerTransportMode.SteamP2P
-                ? $"Steam host client connected locally. Steam ID: {LocalSteamId}."
-                : $"Host client connected locally on port {defaultPort}.");
             return;
         }
 
@@ -648,9 +793,7 @@ public class MultiplayerSessionController : MonoBehaviour
         if (clientId == _networkManager.LocalClientId)
         {
             EnsureLobbyMessageHandlersRegistered();
-            UpdateStatus(_transportMode == MultiplayerTransportMode.SteamP2P
-                ? "Connected."
-                : $"Connected to {defaultAddress}:{defaultPort}.");
+            UpdateStatus("Connected.");
         }
     }
 
@@ -698,7 +841,7 @@ public class MultiplayerSessionController : MonoBehaviour
         if (_networkManager != null && _networkManager.IsListening)
             return;
 
-        StartSteamClient(hostSteamId);
+        StartOnlineClient(hostSteamId);
     }
 
     void HandleSteamLobbyStatusChanged(string message)

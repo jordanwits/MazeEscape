@@ -71,6 +71,33 @@ public static class MenuWidgets
         return image;
     }
 
+    /// <summary>
+    /// Rounded fill that also clips its own children to that rounded silhouette. Anything square
+    /// — weathering overlays, portraits — must be parented under this, otherwise its corners poke
+    /// out past the card's rounded edge. Stretched to the parent rect.
+    /// </summary>
+    public static Image CreateRoundedMaskedFill(Transform parent, string name, int radius, Color color,
+        bool raycastTarget = false)
+    {
+        Image bg = CreateImage(parent, name, MenuTheme.RoundedRect(radius), color, raycastTarget);
+        Stretch(bg.rectTransform);
+        var mask = bg.gameObject.AddComponent<Mask>();
+        mask.showMaskGraphic = true;
+        return bg;
+    }
+
+    /// <summary>Image whose hand-cut sprite follows its rect size (see <see cref="UiHandPlate"/>).</summary>
+    public static Image CreateHandImage(Transform parent, string name, MenuTheme.HandKind kind, int seed,
+        Color color, float stroke = 2.2f, bool raycastTarget = false)
+    {
+        Image image = CreateImage(parent, name, null, color, raycastTarget);
+        var plate = image.gameObject.AddComponent<UiHandPlate>();
+        plate.kind = kind;
+        plate.seed = seed;
+        plate.stroke = stroke;
+        return image;
+    }
+
     public static RawImage CreateRawImage(Transform parent, string name, Texture texture, Color color)
     {
         RectTransform rt = CreateRect(name, parent);
@@ -182,7 +209,7 @@ public static class MenuWidgets
         return line;
     }
 
-    /// <summary>Section header: mustard diamond chip, spaced caps, hairline underneath.</summary>
+    /// <summary>Section header: mustard diamond chip, spaced caps, a faded torn strip underneath.</summary>
     public static void CreateSection(Transform parent, string title)
     {
         CreateSpacer(parent, 10f);
@@ -202,37 +229,42 @@ public static class MenuWidgets
             MenuTheme.WithAlpha(MenuTheme.Mist, 0.95f), FontKind.Display, TextAlignmentOptions.MidlineLeft, 9f);
         SetLayout(label, flexibleWidth: 1f);
 
-        CreateHairline(parent);
+        // torn strip instead of a ruled hairline — a rubbed-off chalk line, not a printed one
+        Image strip = CreateImage(parent, "Tear", MenuTheme.TornBar(), MenuTheme.WithAlpha(MenuTheme.Bone, 0.12f));
+        var stripLe = strip.gameObject.AddComponent<LayoutElement>();
+        stripLe.minHeight = 3f;
+        stripLe.preferredHeight = 3f;
+        strip.rectTransform.localRotation = Quaternion.Euler(0f, 0f, -0.25f);
         CreateSpacer(parent, 4f);
     }
 
+    /// <summary>Corner radius shared by every smooth surface (cards, modals, toasts).</summary>
+    public const int CardRadius = 26;
+
     /// <summary>
-    /// Panel: hard print-offset shadow, weathered plate fill, faint frame, corner brackets,
-    /// vertical content layout. Returns the content rect.
+    /// Panel: a soft rounded board on a diffuse drop shadow, sitting square. Cards stay smooth on
+    /// purpose — the hand-cut/torn silhouette is reserved for things you click, so a ragged edge
+    /// always signals "button". Returns the content rect.
     /// </summary>
-    public static RectTransform CreateCard(Transform parent, string name, float width)
+    public static RectTransform CreateCard(Transform parent, string name, float width, RectOffset padding = null)
     {
         RectTransform rt = CreateRect(name, parent);
         rt.sizeDelta = new Vector2(width, 100f);
 
-        Image shadow = CreateImage(rt, "Shadow", MenuTheme.RoundedRect(3), MenuTheme.WithAlpha(MenuTheme.Ink, 0.55f));
+        Image shadow = CreateImage(rt, "Shadow", MenuTheme.RoundedShadow(CardRadius, 26), MenuTheme.WithAlpha(MenuTheme.Ink, 0.55f));
         RectTransform shadowRt = shadow.rectTransform;
         Stretch(shadowRt);
-        shadowRt.offsetMin = new Vector2(9f, -12f);
-        shadowRt.offsetMax = new Vector2(9f, -12f);
+        shadowRt.offsetMin = new Vector2(-16f, -24f);
+        shadowRt.offsetMax = new Vector2(16f, 10f);
 
-        Image bg = CreateImage(rt, "Bg", MenuTheme.RoundedRect(3), MenuTheme.WithAlpha(MenuTheme.Panel, 0.97f), true);
-        Stretch(bg.rectTransform);
+        Image bg = CreateRoundedMaskedFill(rt, "Bg", CardRadius, MenuTheme.WithAlpha(MenuTheme.Panel, 0.95f), true);
+        CreateGrunge(bg.transform, MenuTheme.WithAlpha(Color.white, 0.035f));
 
-        CreateGrunge(rt, MenuTheme.WithAlpha(Color.white, 0.045f));
-
-        Image outline = CreateImage(rt, "Outline", MenuTheme.RoundedOutline(3, 1.6f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.16f));
+        Image outline = CreateImage(rt, "Outline", MenuTheme.RoundedOutline(CardRadius, 1.6f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.13f));
         Stretch(outline.rectTransform);
 
-        CreateCornerBrackets(rt, MenuTheme.WithAlpha(MenuTheme.Bone, 0.55f));
-
         RectTransform content = CreateStretched("Content", rt);
-        AddVertical(content.gameObject, new RectOffset(46, 46, 38, 40), 12f);
+        AddVertical(content.gameObject, padding ?? new RectOffset(48, 48, 40, 42), 12f);
 
         // The card's height should follow its content: mirror the content's preferred height.
         var mirror = rt.gameObject.AddComponent<CardHeightMirror>();
@@ -272,8 +304,10 @@ public static class MenuWidgets
     // ---------------------------------------------------------------- plates (buttons)
 
     /// <summary>
-    /// Core plate builder. Structure: root(Button) → Plate(tilted) → fill/grunge/frame/ledge/label.
-    /// The whole plate carries a tiny per-widget tilt so rows read hand-placed, not templated.
+    /// Core plate builder. Structure: root(Button) → Plate(tilted) → shadow/fill/grunge/frame/ledge/label.
+    /// Every plate is a hand-cut board: wobbled silhouette, a real tilt (bigger than the old print
+    /// misregister), and — on solid styles — a soft pooled shadow so it sits on the page instead of
+    /// being ruled onto it. Hover straightens the sign (see <see cref="MenuButtonFx"/>).
     /// </summary>
     public static MenuButtonFx CreatePlate(Transform parent, string name, string text, Action onClick,
         PlateStyle style, float height, float fontSize,
@@ -284,23 +318,34 @@ public static class MenuWidgets
 
         RectTransform plate = CreateStretched("Plate", rt);
         int hash = Mathf.Abs(name.GetHashCode());
-        float tilt = ((hash % 100) / 100f - 0.5f) * 0.55f;
+        float tilt = ((hash % 100) / 100f - 0.5f) * 2.6f;
         plate.localRotation = Quaternion.Euler(0f, 0f, tilt);
 
-        Image fill = CreateImage(plate, "Fill", MenuTheme.RoundedRect(2), Color.clear, true);
+        // ghost plates are mostly air — a shadow under them would read as a smudge
+        bool solid = style == PlateStyle.Nav || style == PlateStyle.Primary;
+        if (solid)
+        {
+            Image shadow = CreateHandImage(plate, "Shadow", MenuTheme.HandKind.Shadow, hash, MenuTheme.WithAlpha(MenuTheme.Ink, 0.5f));
+            RectTransform shadowRt = shadow.rectTransform;
+            Stretch(shadowRt);
+            shadowRt.offsetMin = new Vector2(-12f, -18f);
+            shadowRt.offsetMax = new Vector2(12f, 6f);
+        }
+
+        // no grunge overlay here: the weathering is baked into the hand-fill sprite, which keeps it
+        // inside the silhouette (a rect overlay reads as a haze box against dark backgrounds)
+        Image fill = CreateHandImage(plate, "Fill", MenuTheme.HandKind.Fill, hash, Color.clear, 0f, true);
         Stretch(fill.rectTransform);
 
-        RawImage grunge = CreateGrunge(plate, Color.clear);
-
-        Image frame = CreateImage(plate, "Frame", MenuTheme.RoundedOutline(2, 2f), Color.clear);
+        Image frame = CreateHandImage(plate, "Frame", MenuTheme.HandKind.Outline, hash, Color.clear);
         Stretch(frame.rectTransform);
 
         Image ledge = CreateImage(plate, "Ledge", MenuTheme.TornBar(), Color.clear);
         RectTransform ledgeRt = ledge.rectTransform;
-        ledgeRt.anchorMin = new Vector2(0.035f, 0f);
-        ledgeRt.anchorMax = new Vector2(0.64f, 0f);
+        ledgeRt.anchorMin = new Vector2(0.06f, 0f);
+        ledgeRt.anchorMax = new Vector2(0.62f, 0f);
         ledgeRt.pivot = new Vector2(0f, 1f);
-        ledgeRt.anchoredPosition = new Vector2(0f, -2.5f);
+        ledgeRt.anchoredPosition = new Vector2(0f, 1.5f);
         ledgeRt.sizeDelta = new Vector2(0f, 5f);
 
         TextMeshProUGUI label = CreateText(plate, "Label", text, fontSize, Color.white,
@@ -316,9 +361,10 @@ public static class MenuWidgets
         fx.label = label;
         fx.fill = fill;
         fx.frame = frame;
-        fx.grunge = grunge;
         fx.ledge = ledgeRt;
         fx.ledgeImage = ledge;
+        fx.plate = plate;
+        fx.plateBaseTilt = tilt;
         ApplyPlateStyle(fx, style);
         return fx;
     }
@@ -342,8 +388,9 @@ public static class MenuWidgets
         switch (style)
         {
             case PlateStyle.Nav:
-                fx.fillNormal = MenuTheme.WithAlpha(MenuTheme.Tile, 0.92f);
-                fx.frameNormal = MenuTheme.WithAlpha(MenuTheme.Bone, 0.30f);
+                // a touch translucent so the plates sit IN the scene rather than on top of it
+                fx.fillNormal = MenuTheme.WithAlpha(MenuTheme.Tile, 0.9f);
+                fx.frameNormal = MenuTheme.WithAlpha(MenuTheme.Bone, 0.34f);
                 fx.labelNormal = MenuTheme.WithAlpha(MenuTheme.Bone, 0.92f);
                 fx.grungeNormal = MenuTheme.WithAlpha(Color.white, 0.05f);
                 break;
@@ -380,10 +427,23 @@ public static class MenuWidgets
         }
     }
 
-    public static Button CreateNavButton(Transform parent, string text, Action onClick, out MenuButtonFx fx)
+    public static Button CreateNavButton(Transform parent, string text, Action onClick, out MenuButtonFx fx,
+        bool centered = false, bool fitWidth = false, float height = 58f, float fontSize = 23f)
     {
-        fx = CreatePlate(parent, "Nav_" + text, text, onClick, PlateStyle.Nav, 56f, 23f,
-            TextAlignmentOptions.MidlineLeft, 24f);
+        fx = CreatePlate(parent, "Nav_" + text, text, onClick, PlateStyle.Nav, height, fontSize,
+            centered ? TextAlignmentOptions.Center : TextAlignmentOptions.MidlineLeft, centered ? 0f : 24f);
+
+        // signpost mode: each plank is only as long as its label wants, like boards cut per sign.
+        // Measure with the single-arg overload — the (text, w, h) one treats those as layout
+        // CONSTRAINTS, so passing a font size there measures against a few-pixel-wide box.
+        if (fitWidth && fx.label != null)
+        {
+            float labelWidth = fx.label.GetPreferredValues(text).x;
+            // side padding scales with the type so the cut looks consistent at any size
+            float width = Mathf.Clamp(labelWidth + fontSize * 5.2f, height * 3.4f, height * 8.6f);
+            SetLayout(fx.transform, minWidth: width, preferredWidth: width, minHeight: height, preferredHeight: height);
+        }
+
         return fx.button;
     }
 
@@ -489,9 +549,9 @@ public static class MenuWidgets
         handleArea.offsetMin = new Vector2(8f, 0f);
         handleArea.offsetMax = new Vector2(-8f, 0f);
 
-        Image handle = CreateImage(handleArea, "Handle", MenuTheme.RoundedRect(1), MenuTheme.Bone, true);
+        Image handle = CreateImage(handleArea, "Handle", MenuTheme.RoundedRect(5), MenuTheme.Bone, true);
         RectTransform handleRt = handle.rectTransform;
-        handleRt.sizeDelta = new Vector2(12f, 20f);
+        handleRt.sizeDelta = new Vector2(13f, 21f);
 
         var slider = rt.gameObject.AddComponent<Slider>();
         slider.fillRect = fillRt;
@@ -520,9 +580,9 @@ public static class MenuWidgets
         RectTransform rt = CreateRect("Input_" + name, parent);
         SetLayout(rt, minWidth: width, preferredWidth: width, minHeight: 48f, preferredHeight: 48f);
 
-        Image bg = CreateImage(rt, "Bg", MenuTheme.RoundedRect(2), MenuTheme.WithAlpha(MenuTheme.Tile, 0.75f), true);
+        Image bg = CreateImage(rt, "Bg", MenuTheme.RoundedRect(12), MenuTheme.WithAlpha(MenuTheme.Tile, 0.75f), true);
         Stretch(bg.rectTransform);
-        Image outline = CreateImage(rt, "Outline", MenuTheme.RoundedOutline(2, 1.6f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.22f));
+        Image outline = CreateImage(rt, "Outline", MenuTheme.RoundedOutline(12, 1.6f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.22f));
         Stretch(outline.rectTransform);
 
         RectTransform viewport = CreateStretched("Text Area", rt);
@@ -710,13 +770,16 @@ public sealed class MenuSegmented : MonoBehaviour
             int index = i;
             RectTransform opt = MenuWidgets.CreateRect("Option_" + options[i], transform);
             MenuWidgets.SetLayout(opt, flexibleWidth: 1f, minHeight: height, preferredHeight: height);
+            int optSeed = Mathf.Abs((options[i] + i).GetHashCode());
+            opt.localRotation = Quaternion.Euler(0f, 0f, ((optSeed % 100) / 100f - 0.5f) * 1.6f);
 
             var fill = opt.gameObject.AddComponent<Image>();
-            fill.sprite = MenuTheme.RoundedRect(2);
-            fill.type = Image.Type.Sliced;
             fill.raycastTarget = true;
+            var fillPlate = opt.gameObject.AddComponent<UiHandPlate>();
+            fillPlate.kind = MenuTheme.HandKind.Fill;
+            fillPlate.seed = optSeed;
 
-            Image outline = MenuWidgets.CreateImage(opt, "Outline", MenuTheme.RoundedOutline(2, 1.6f), MenuTheme.Stroke);
+            Image outline = MenuWidgets.CreateHandImage(opt, "Outline", MenuTheme.HandKind.Outline, optSeed, MenuTheme.Stroke, 1.6f);
             outline.rectTransform.SetStretch();
 
             TMPro.TextMeshProUGUI label = MenuWidgets.CreateText(opt, "Label", options[i], 15f, MenuTheme.Mist,
@@ -810,9 +873,9 @@ public sealed class MenuStepper : MonoBehaviour
 
         RectTransform value = MenuWidgets.CreateRect("Value", transform);
         MenuWidgets.SetLayout(value, flexibleWidth: 1f, minHeight: height, preferredHeight: height);
-        Image bg = MenuWidgets.CreateImage(value, "Bg", MenuTheme.RoundedRect(2), MenuTheme.WithAlpha(MenuTheme.Tile, 0.7f), true);
+        Image bg = MenuWidgets.CreateImage(value, "Bg", MenuTheme.RoundedRect(12), MenuTheme.WithAlpha(MenuTheme.Tile, 0.7f), true);
         bg.rectTransform.SetStretch();
-        Image outline = MenuWidgets.CreateImage(value, "Outline", MenuTheme.RoundedOutline(2, 1.4f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.16f));
+        Image outline = MenuWidgets.CreateImage(value, "Outline", MenuTheme.RoundedOutline(12, 1.4f), MenuTheme.WithAlpha(MenuTheme.Bone, 0.16f));
         outline.rectTransform.SetStretch();
 
         _label = MenuWidgets.CreateText(value, "Val", "—", 15.5f, MenuTheme.Mist,
