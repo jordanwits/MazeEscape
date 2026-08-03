@@ -13,10 +13,13 @@ public class MultiplayerProjectSettings : ScriptableObject
         [SerializeField] GameObject playerPrefab;
         [Tooltip("Lobby portrait shown on the character select card.")]
         [SerializeField] Sprite portrait;
+        [Tooltip("Visual-only rig (no gameplay scripts) that stands in the menu hallway while the local player has this character selected in the lobby.")]
+        [SerializeField] GameObject menuPreviewPrefab;
 
         public string DisplayName => displayName;
         public GameObject PlayerPrefab => playerPrefab;
         public Sprite Portrait => portrait;
+        public GameObject MenuPreviewPrefab => menuPreviewPrefab;
     }
 
     [SerializeField] GameObject playerPrefab;
@@ -27,6 +30,8 @@ public class MultiplayerProjectSettings : ScriptableObject
     [Header("Lobby characters")]
     [Tooltip("Selectable characters in the menu lobby (one owner each). When empty, every player spawns the default Player Prefab.")]
     [SerializeField] LobbyCharacter[] lobbyCharacters = Array.Empty<LobbyCharacter>();
+    [Tooltip("Flashlight item prefab the lobby preview character holds, lit, in the menu hallway.")]
+    [SerializeField] GameObject menuPreviewFlashlightPrefab;
 
     [Header("Connection approval")]
     [Tooltip("If left empty, falls back to Application.version (the build version set in PlayerSettings). " +
@@ -41,6 +46,8 @@ public class MultiplayerProjectSettings : ScriptableObject
     public float RespawnDelaySeconds => respawnDelaySeconds;
     public string BuildVersion => string.IsNullOrWhiteSpace(buildVersionOverride) ? Application.version : buildVersionOverride;
     public int MaxPlayers => maxPlayers;
+
+    public GameObject MenuPreviewFlashlightPrefab => menuPreviewFlashlightPrefab;
 
     public int LobbyCharacterCount => lobbyCharacters != null ? lobbyCharacters.Length : 0;
 

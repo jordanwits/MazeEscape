@@ -56,6 +56,7 @@ public sealed class MainMenuController : MonoBehaviour
     MenuScreenFader _settingsFader;
     MenuScreenFader _lobbyFader;
     MenuScreen _current = MenuScreen.Root;
+    LobbyCharacterPreview _characterPreview;
 
     /// <summary>The lobby screen opens itself once per session; after that BACK stays respected.</summary>
     bool _lobbyAutoShown;
@@ -111,6 +112,11 @@ public sealed class MainMenuController : MonoBehaviour
             gameObject.AddComponent<MenuVhsFx>();
 
         BuildUi();
+
+        // The selected survivor standing in the hallway while the lobby screen is up (3D, not UI).
+        var previewGo = new GameObject(nameof(LobbyCharacterPreview));
+        previewGo.transform.SetParent(transform, false);
+        _characterPreview = previewGo.AddComponent<LobbyCharacterPreview>();
 
         if (_session != null)
         {
@@ -329,7 +335,8 @@ public sealed class MainMenuController : MonoBehaviour
     /// The lobby spreads over the whole screen instead of stacking into one card: session identity
     /// top-left, crew top-right, the host's deploy controls mid-right, exits bottom-left, and the
     /// survivor plates as a wide strip along the bottom. The middle stays empty on purpose so the
-    /// hallway — and whoever is patrolling it — remains the backdrop.
+    /// hallway — and whoever is patrolling it — remains the backdrop, with the local player's picked
+    /// survivor standing in it (see <see cref="LobbyCharacterPreview"/>).
     /// </summary>
     MenuScreenFader BuildLobbyScreen(Transform root)
     {
@@ -828,6 +835,14 @@ public sealed class MainMenuController : MonoBehaviour
         // the lobby's identity panel already carries the status line; don't print it twice
         if (_statusLabel != null)
             _statusLabel.enabled = _current != MenuScreen.Lobby;
+
+        // Only your own pick, only while the lobby screen itself is up — every other screen (and a
+        // dead session) tears the preview down.
+        if (_characterPreview != null)
+        {
+            _characterPreview.Apply(_current == MenuScreen.Lobby && HasLobbySession,
+                _session != null ? _session.LocalCharacterIndex : -1);
+        }
 
         RefreshLobbyDynamic();
     }
