@@ -193,6 +193,21 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("How many teleport orbs to actually spawn this build. If there are more TeleportOrbAnchor markers in the maze than this, a random subset (seeded by the maze seed, so reproducible per seed) is chosen; if there are fewer anchors, one orb spawns at each available anchor. 0 = spawn no orbs even if anchors exist.")]
     [SerializeField, Min(0)] int mazeTeleportOrbCount = 3;
 
+    [Header("Decorative Bats (Dead-End Roosts)")]
+    [Tooltip("Bat roost prefab (BatSwarmRoost) dropped into randomly chosen dead-end cells. Purely cosmetic "
+        + "and NOT a NetworkObject — every peer builds its own roosts from the maze seed and fires them for "
+        + "its own player. Leave empty to skip bats on this level.")]
+    [SerializeField] GameObject mazeBatRoostPrefab;
+    [Tooltip("How many dead ends get a bat colony. Dead ends are picked from the maze seed, excluding the "
+        + "start, exit and jail cells. 0 = no bats even if a prefab is assigned.")]
+    [SerializeField, Min(0)] int mazeBatRoostCount = 3;
+    [Tooltip("Bats per colony. Each is a ~180-tri mesh with a shader-driven flap, so this is cheap — the "
+        + "limit is readability, not performance. Above roughly 14 the burst turns into an unreadable smear.")]
+    [SerializeField, Min(1)] int mazeBatsPerRoost = 8;
+    [Tooltip("Height above the cell floor where the colony roosts, in metres. Should sit just under this "
+        + "level's ceiling so the bats drop out of the dark rather than materialising at head height.")]
+    [SerializeField] float mazeBatRoostHeight = 2.4f;
+
     [Header("RatBot (Anchor-Based)")]
     [Tooltip("Prefab spawned at child transforms named RatSpawn on generated maze pieces / interior rooms. Use the RatBot NetworkObject prefab. Leave empty to skip.")]
     [SerializeField] GameObject mazeRatBotPrefab;
@@ -329,6 +344,10 @@ public class ProceduralMazeConfig : ScriptableObject
     public float MazeItemSpawnChance => Mathf.Clamp01(mazeItemSpawnChance);
     public GameObject MazeTeleportOrbPrefab => mazeTeleportOrbPrefab;
     public int MazeTeleportOrbCount => Mathf.Max(0, mazeTeleportOrbCount);
+    public GameObject MazeBatRoostPrefab => mazeBatRoostPrefab;
+    public int MazeBatRoostCount => Mathf.Max(0, mazeBatRoostCount);
+    public int MazeBatsPerRoost => Mathf.Max(1, mazeBatsPerRoost);
+    public float MazeBatRoostHeight => mazeBatRoostHeight;
     public GameObject MazeRatBotPrefab => mazeRatBotPrefab;
     public int MazeRatBotCount => Mathf.Max(0, mazeRatBotCount);
     /// <summary>Per <c>PosterSpawn</c> anchor, probability [0,1] of spawning a poster for this maze build.</summary>
