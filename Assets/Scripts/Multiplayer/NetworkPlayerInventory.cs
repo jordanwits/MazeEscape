@@ -146,6 +146,15 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         return 0f;
     }
 
+    /// <summary>
+    /// Flare gun rounds in a slot, decoded from the shared per-slot charge variable (rounds / capacity,
+    /// quantized to 1% — exact for round counts up to 33). Only meaningful when the slot holds a flare gun.
+    /// </summary>
+    public int GetSlotFlareRoundsForHud(int index)
+    {
+        return Mathf.RoundToInt(Mathf.Clamp01(GetSlotFlashlightBatteryNormalizedForHud(index)) * FlareGunItem.MaxRounds);
+    }
+
     void SetSlotFlashlightBatteryNormalized(int index, float value)
     {
         // Quantize to 1% steps so a continuously-draining battery only replicates ~100 deltas over its
@@ -286,6 +295,13 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                 && !GrabbableInventoryItem.TryResolveForState(id, resolveHint, out g))
             {
                 SetSlotFlashlightBatteryNormalized(i, 0f);
+                continue;
+            }
+            if (g is FlareGunItem flareGun)
+            {
+                // The per-slot charge NetworkVariable is shared: battery fraction for flashlights,
+                // loaded rounds / capacity for the flare gun (a slot only ever holds one of the two).
+                SetSlotFlashlightBatteryNormalized(i, flareGun.LoadedRounds / (float)FlareGunItem.MaxRounds);
                 continue;
             }
             if (g is not FlashlightItem f)
@@ -1274,6 +1290,249 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
     void PlayEnergyDrinkUseObserversClientRpc()
     {
         playerController?.PlayEnergyDrinkUseSfx();
+    }
+
+    // ----- Flare gun: fire + reload (server-authoritative) -----
+
+    static readonly List<ulong> s_FlareFxObserverClientIds = new List<ulong>(16);
+
+    float _serverNextFlareFireTime;
+    float _serverFlareBusyUntil;
+
+    /// <summary>Owner-side request to fire the selected flare gun toward the camera aim.</summary>
+    public void RequestFireSelectedFlareGun(Vector3 origin, Vector3 direction)
+    {
+        if (!IsSpawned)
+            return;
+
+        if (IsServer)
+        {
+            ServerFireSelectedFlareGun(origin, direction);
+            return;
+        }
+
+        RequestFireSelectedFlareGunServerRpc(origin, direction);
+    }
+
+    [ServerRpc]
+    void RequestFireSelectedFlareGunServerRpc(Vector3 origin, Vector3 direction, ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+
+        ServerFireSelectedFlareGun(origin, direction);
+    }
+
+    void ServerFireSelectedFlareGun(Vector3 origin, Vector3 direction)
+    {
+        if (!IsServer)
+            return;
+
+        PlayerHealth health = playerController != null
+            ? playerController.GetComponent<PlayerHealth>()
+            : GetComponent<PlayerHealth>();
+        if (health != null && health.IsDead)
+            return;
+
+        float now = Time.time;
+        if (now < _serverNextFlareFireTime || now < _serverFlareBusyUntil)
+            return;
+
+        if (!ServerTryResolveSelectedFlareGun(out FlareGunItem gun))
+            return;
+
+        if (!gun.TryConsumeRound())
+            return;
+
+        _serverNextFlareFireTime = now + FlareGunItem.FireCooldownSeconds * 0.9f;
+
+        // The aim is client-supplied (camera position + forward, the same trust model as heavy-throwable
+        // shots) but the origin is clamped to the server-known player so a client can't fire from across
+        // the map.
+        Vector3 shooterHead = transform.position + Vector3.up * 1.5f;
+        if ((origin - shooterHead).sqrMagnitude > 9f)
+            origin = shooterHead;
+        Vector3 dir = direction.sqrMagnitude > 0.0001f ? direction.normalized : transform.forward;
+
+        if (gun.ProjectilePrefab != null)
+        {
+            GameObject go = Object.Instantiate(gun.ProjectilePrefab, origin, Quaternion.LookRotation(dir));
+            if (go.TryGetComponent(out FlareProjectile projectile))
+            {
+                projectile.Launch(origin, dir, transform, health);
+                if (go.TryGetComponent(out NetworkObject netObj))
+                    netObj.Spawn();
+            }
+            else
+            {
+                Object.Destroy(go);
+            }
+        }
+
+        PlayFlareFireFxForNonOwnerClients();
+    }
+
+    bool ServerTryResolveSelectedFlareGun(out FlareGunItem gun)
+    {
+        gun = null;
+        int sel = SelectedSlotIndex;
+        if (GetSlotItemTypeId(sel) != GrabbableInventoryItem.TypeIdFlareGun)
+            return false;
+
+        ulong id = GetSlotItemId(sel);
+        GrabbableInventoryItem g = null;
+        bool resolved = id != 0UL && GrabbableInventoryItem.TryGetRegistered(id, out g) && g is FlareGunItem;
+        if (!resolved)
+        {
+            Vector3 hint = playerController != null ? playerController.transform.position : transform.position;
+            resolved = GrabbableInventoryItem.TryResolveForStateByType(id, hint, GrabbableInventoryItem.TypeIdFlareGun, out g)
+                && g is FlareGunItem;
+        }
+
+        gun = g as FlareGunItem;
+        return gun != null;
+    }
+
+    /// <summary>The owner predicted its own muzzle flash; every other client gets it from the server.</summary>
+    void PlayFlareFireFxForNonOwnerClients()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null)
+            return;
+
+        s_FlareFxObserverClientIds.Clear();
+        foreach (ulong id in nm.ConnectedClientsIds)
+        {
+            if (id != OwnerClientId)
+                s_FlareFxObserverClientIds.Add(id);
+        }
+
+        if (s_FlareFxObserverClientIds.Count == 0)
+            return;
+
+        PlayFlareFireFxClientRpc(new ClientRpcParams
+        {
+            Send = new ClientRpcSendParams { TargetClientIds = s_FlareFxObserverClientIds.ToArray() }
+        });
+    }
+
+    [ClientRpc]
+    void PlayFlareFireFxClientRpc(ClientRpcParams clientRpcParams = default)
+    {
+        if (ServerTryResolveSelectedFlareGunLocalView(out FlareGunItem gun))
+            gun.PlayFireEffects();
+    }
+
+    /// <summary>Client-side resolve of this inventory's selected flare gun (replicated slot data + local registry).</summary>
+    bool ServerTryResolveSelectedFlareGunLocalView(out FlareGunItem gun)
+    {
+        gun = null;
+        int sel = SelectedSlotIndex;
+        if (GetSlotItemTypeId(sel) != GrabbableInventoryItem.TypeIdFlareGun)
+            return false;
+
+        ulong id = GetSlotItemId(sel);
+        if (id != 0UL && GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g))
+            gun = g as FlareGunItem;
+        return gun != null;
+    }
+
+    /// <summary>Owner-side request to load one carried flare round into the selected flare gun.</summary>
+    public void RequestReloadSelectedFlareGun()
+    {
+        if (!IsSpawned)
+            return;
+
+        if (IsServer)
+        {
+            ServerReloadSelectedFlareGun();
+            return;
+        }
+
+        RequestReloadSelectedFlareGunServerRpc();
+    }
+
+    [ServerRpc]
+    void RequestReloadSelectedFlareGunServerRpc(ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+
+        ServerReloadSelectedFlareGun();
+    }
+
+    void ServerReloadSelectedFlareGun()
+    {
+        if (!IsServer)
+            return;
+
+        PlayerHealth health = playerController != null
+            ? playerController.GetComponent<PlayerHealth>()
+            : GetComponent<PlayerHealth>();
+        if (health != null && health.IsDead)
+            return;
+
+        if (Time.time < _serverFlareBusyUntil)
+            return;
+
+        if (!ServerTryResolveSelectedFlareGun(out FlareGunItem gun))
+            return;
+
+        if (gun.LoadedRounds >= FlareGunItem.MaxRounds)
+            return;
+
+        // Consume one FlareAmmo item from any hotbar slot (selection stays on the gun).
+        int ammoSlot = -1;
+        GrabbableInventoryItem ammo = null;
+        for (int i = 0; i < 3; i++)
+        {
+            ulong id = GetSlotItemId(i);
+            bool slotSaysAmmo = GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdFlareAmmo;
+            if (id == 0UL && !slotSaysAmmo)
+                continue;
+
+            GrabbableInventoryItem g = null;
+            bool resolved = id != 0UL
+                && GrabbableInventoryItem.TryGetRegistered(id, out g)
+                && g is FlareAmmoItem;
+            if (!resolved && slotSaysAmmo)
+            {
+                Vector3 hint = playerController != null ? playerController.transform.position : transform.position;
+                resolved = GrabbableInventoryItem.TryResolveForStateByType(id, hint, GrabbableInventoryItem.TypeIdFlareAmmo, out g)
+                    && g is FlareAmmoItem;
+            }
+
+            if (!resolved || g == null)
+                continue;
+
+            ammoSlot = i;
+            ammo = g;
+            break;
+        }
+
+        if (ammoSlot < 0 || ammo == null)
+            return;
+
+        SetSlotItemId(ammoSlot, 0UL);
+        SetSlotItemTypeId(ammoSlot, GrabbableInventoryItem.TypeIdNone);
+        SetSlotStackCount(ammoSlot, 0);
+        ulong consumeId = ammo.ItemId;
+        ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
+        ConsumeItemClientRpc(consumeId);
+        Object.Destroy(ammo.gameObject);
+
+        gun.TryAddRound();
+        _serverFlareBusyUntil = Time.time + FlareGunItem.ReloadDurationSeconds;
+
+        PlayFlareReloadFxClientRpc();
+        RaiseChangedAndRefresh();
+    }
+
+    [ClientRpc]
+    void PlayFlareReloadFxClientRpc()
+    {
+        if (ServerTryResolveSelectedFlareGunLocalView(out FlareGunItem gun))
+            playerController?.PlayFlareReloadEffects(gun);
     }
 
     public bool ServerTryConsumeKeyItem()

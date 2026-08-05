@@ -112,7 +112,10 @@ MonoBehaviour:
   mazeTrapExcludeExitCell: 1
   mazeTrapMinSeparation: 1
   mazeChestPrefab: {fileID: 7786454923030501191, guid: e621573098a2cb04a8ec9019443befb6, type: 3}
-  mazeItemSpawnPrefabs: []
+  mazeItemSpawnPrefabs:
+  - {fileID: 626251595928374232, guid: e6051843afd979c49a2160cb2602adcb, type: 3}
+  - {fileID: 8486127490677680942, guid: 67bf06df404bf0c4cba9e9bb1c8f7f06, type: 3}
+  - {fileID: 8486127490677680942, guid: 67bf06df404bf0c4cba9e9bb1c8f7f06, type: 3}
   mazeItemSpawnChance: 1
   mazeTeleportOrbPrefab: {fileID: 6503207978257455889, guid: 57af5772f43301f44b2190988f5251bf, type: 3}
   mazeTeleportOrbCount: 2

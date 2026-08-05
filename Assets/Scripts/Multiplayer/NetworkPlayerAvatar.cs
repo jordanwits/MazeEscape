@@ -22,6 +22,14 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     [SerializeField] Renderer[] localViewShadowOnlyRenderers;
     [SerializeField] NetworkPlayerInventory playerInventory;
 
+    [Header("Carried-by-Jailor own-body hide")]
+    [Tooltip("While the Jailor carries this player, hide their own body (everything but the arms) from their first-person view via ShadowsOnly. Local only — other players still see the whole body.")]
+    [SerializeField] bool hideOwnBodyWhileCarriedByJailor = true;
+    [Tooltip("Body renderers that stay visible while carried. Left empty by design: the name fragments below already match the arm meshes on every character.")]
+    [SerializeField] Renderer[] carriedVisibleRenderers;
+    [Tooltip("Name fragments (case-insensitive) marking a body renderer as an arm/hand, which stays visible while carried.")]
+    [SerializeField] string[] carriedVisibleNameFragments = { "arm", "glove", "hand" };
+
     [Header("Flashlight replication")]
     [Tooltip("First-person pitch node (same as PlayerController camera / CameraPitch). Resolved automatically when empty.")]
     [SerializeField] Transform flashlightAimPivot;
@@ -63,6 +71,9 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     SkinnedMeshRenderer[] _skinnedRenderers;
     bool _skinnedRenderersOffscreenForced;
     bool _localViewHeadHidden;
+    bool _carriedBodyHidden;
+    Renderer[] _carriedHiddenRenderers;
+    UnityEngine.Rendering.ShadowCastingMode[] _carriedHiddenPreviousModes;
     NetworkManager _networkManager;
     OwnerNetworkAnimator _ownerNetworkAnimator;
     Light _remoteFlashlightProxyLight;
@@ -688,6 +699,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             && localViewShadowOnlyRenderers != null
             && localViewShadowOnlyRenderers.Length > 0;
 
+        ApplyCarriedBodyHide(hideOwnBodyWhileCarriedByJailor && isLocalOwner && jailorCarried);
+
         ForceSkinnedBoundsAlwaysUpdate();
     }
 
@@ -723,6 +736,96 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     }
 
     /// <summary>
+    /// Owner-only body hide for the Jailor carry: hanging off the Jailor puts the first-person camera inside
+    /// the player's own torso and legs, so every body renderer except the arms is switched to
+    /// <see cref="UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly"/> for the duration of the carry — the
+    /// mesh stops drawing but still casts its shadow. Purely local: remote peers keep seeing the whole body,
+    /// because only the owner's <see cref="ApplyPresentation"/> ever passes true here.
+    ///
+    /// Only skinned (character) renderers are touched, so a held item stays in view, and the work happens on
+    /// state transitions only — each renderer is restored to the exact mode it had when the carry began, so
+    /// this never fights the other writers of <c>shadowCastingMode</c> (the head in
+    /// <see cref="localViewShadowOnlyRenderers"/>, <see cref="RagdollCameraCollision"/>'s close-camera hide).
+    /// </summary>
+    void ApplyCarriedBodyHide(bool hide)
+    {
+        if (hide == _carriedBodyHidden)
+            return;
+
+        if (hide)
+        {
+            if (_skinnedRenderers == null)
+                _skinnedRenderers = GetComponentsInChildren<SkinnedMeshRenderer>(true);
+
+            int hideCount = 0;
+            foreach (SkinnedMeshRenderer skinned in _skinnedRenderers)
+            {
+                if (skinned != null && !IsKeptVisibleWhileCarried(skinned))
+                    hideCount++;
+            }
+
+            _carriedHiddenRenderers = new Renderer[hideCount];
+            _carriedHiddenPreviousModes = new UnityEngine.Rendering.ShadowCastingMode[hideCount];
+
+            int index = 0;
+            foreach (SkinnedMeshRenderer skinned in _skinnedRenderers)
+            {
+                if (skinned == null || IsKeptVisibleWhileCarried(skinned))
+                    continue;
+
+                _carriedHiddenRenderers[index] = skinned;
+                _carriedHiddenPreviousModes[index] = skinned.shadowCastingMode;
+                skinned.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly;
+                index++;
+            }
+
+            _carriedBodyHidden = true;
+            return;
+        }
+
+        if (_carriedHiddenRenderers != null)
+        {
+            for (int i = 0; i < _carriedHiddenRenderers.Length; i++)
+            {
+                if (_carriedHiddenRenderers[i] != null)
+                    _carriedHiddenRenderers[i].shadowCastingMode = _carriedHiddenPreviousModes[i];
+            }
+        }
+
+        _carriedHiddenRenderers = null;
+        _carriedHiddenPreviousModes = null;
+        _carriedBodyHidden = false;
+    }
+
+    /// <summary>Arms / hands stay drawn while the body is hidden during a Jailor carry.</summary>
+    bool IsKeptVisibleWhileCarried(Renderer candidate)
+    {
+        if (carriedVisibleRenderers != null)
+        {
+            foreach (Renderer keepVisible in carriedVisibleRenderers)
+            {
+                if (keepVisible == candidate)
+                    return true;
+            }
+        }
+
+        if (carriedVisibleNameFragments == null)
+            return false;
+
+        string rendererName = candidate.name;
+        foreach (string fragment in carriedVisibleNameFragments)
+        {
+            if (!string.IsNullOrEmpty(fragment)
+                && rendererName.IndexOf(fragment, System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// While a mirror renders its reflection, temporarily draw the local owner's first-person-hidden
     /// renderers (the head — normally <see cref="UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly"/>
     /// so the FP camera never shows the inside of the skull) so the player sees a complete reflection
@@ -732,6 +835,20 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     /// </summary>
     void OnMirrorReflectionPass(bool revealing)
     {
+        // Carry hide first, head second: the head is in both sets, and its own state must win.
+        if (_carriedBodyHidden && _carriedHiddenRenderers != null)
+        {
+            for (int i = 0; i < _carriedHiddenRenderers.Length; i++)
+            {
+                if (_carriedHiddenRenderers[i] != null)
+                {
+                    _carriedHiddenRenderers[i].shadowCastingMode = revealing
+                        ? _carriedHiddenPreviousModes[i]
+                        : UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly;
+                }
+            }
+        }
+
         if (!_localViewHeadHidden || localViewShadowOnlyRenderers == null)
             return;
 

@@ -114,6 +114,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     const string RatBotSpawnMarkerName = "RatSpawn";
     const string PosterSpawnName = "PosterSpawn";
     const string ItemSpawnNamePrefix = "ItemSpawn";
+    /// <summary>Stands in for a pool index in item ids spawned from a <see cref="MazeItemSpawnPoint"/> override.</summary>
+    const int OverrideItemPrefabIndex = -1;
     const string LightSpawnNamePrefix = "LightSpawn";
 
     static readonly DirectionStep[] Steps =
@@ -3910,9 +3912,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
     /// <summary>
     /// Spawns pickup items at child transforms whose name starts with <see cref="ItemSpawnNamePrefix"/> on
-    /// generated maze pieces. Unlike chests/orbs these are NOT server-spawned NetworkObjects: every peer
-    /// (and offline play) builds the same pickups locally from the maze seed, chest-loot style, and stamps
-    /// a stable item id so pickup/consumption replicates through the usual item stores.
+    /// generated maze pieces, plus any marker carrying a <see cref="MazeItemSpawnPoint"/> (which names its
+    /// own prefab and rate instead of drawing from the level pool). Unlike chests/orbs these are NOT
+    /// server-spawned NetworkObjects: every peer (and offline play) builds the same pickups locally from
+    /// the maze seed, chest-loot style, and stamps a stable item id so pickup/consumption replicates
+    /// through the usual item stores.
     /// </summary>
     void TrySpawnMazeItemPickups(Transform mazeRoot, IReadOnlyDictionary<Vector2Int, Transform> cellRoots, int mazeSeed)
     {
@@ -3924,11 +3928,12 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 nonNullItems++;
         }
 
-        float chance = _config.MazeItemSpawnChance;
-        if (nonNullItems == 0 || chance <= 0f)
-            return;
+        float poolChance = _config.MazeItemSpawnChance;
+        bool poolUsable = nonNullItems > 0 && poolChance > 0f;
 
-        Transform itemsRoot = CreateChild(mazeRoot, "GeneratedItemPickups");
+        // Built on first use: a level whose pool is empty and whose pieces carry no per-marker overrides
+        // (most of them) leaves no empty container behind.
+        Transform itemsRoot = null;
         List<Transform> cellItemSpawns = new(4);
 
         foreach (KeyValuePair<Vector2Int, Transform> pair in cellRoots)
@@ -3947,6 +3952,16 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 if (marker == null)
                     continue;
 
+                MazeItemSpawnPoint spawnPoint = marker.GetComponent<MazeItemSpawnPoint>();
+                GameObject overridePrefab = spawnPoint != null ? spawnPoint.ItemPrefab : null;
+                bool isOverride = overridePrefab != null;
+                if (!isOverride && !poolUsable)
+                    continue;
+
+                float chance = isOverride ? spawnPoint.SpawnChance : poolChance;
+                if (chance <= 0f)
+                    continue;
+
                 // Per-marker seeds derive from maze seed + cell + marker index (not iteration order),
                 // so every peer rolls identical loot regardless of dictionary enumeration order.
                 int gateSeed = MixSeed(
@@ -3955,12 +3970,33 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 if (!RollUnitInterval(gateSeed, chance))
                     continue;
 
-                int pickSeed = MixSeed(gateSeed, unchecked((int)0x5EEDBA11));
-                int prefabIndex = PickNonNullPrefabIndex(itemPrefabs, nonNullItems, pickSeed);
-                if (prefabIndex < 0)
-                    continue;
+                GameObject prefab;
+                int prefabIndex;
+                if (isOverride)
+                {
+                    prefab = overridePrefab;
+                    prefabIndex = OverrideItemPrefabIndex;
+                }
+                else
+                {
+                    int pickSeed = MixSeed(gateSeed, unchecked((int)0x5EEDBA11));
+                    prefabIndex = PickNonNullPrefabIndex(itemPrefabs, nonNullItems, pickSeed);
+                    if (prefabIndex < 0)
+                        continue;
 
-                SpawnMazeItemPickup(itemPrefabs[prefabIndex], marker, itemsRoot, mazeSeed, cell, a, prefabIndex);
+                    prefab = itemPrefabs[prefabIndex];
+                }
+
+                itemsRoot ??= CreateChild(mazeRoot, "GeneratedItemPickups");
+                SpawnMazeItemPickup(
+                    prefab,
+                    marker,
+                    itemsRoot,
+                    mazeSeed,
+                    cell,
+                    a,
+                    prefabIndex,
+                    isOverride && spawnPoint.StandUprightOnMarker);
             }
         }
     }
@@ -3992,9 +4028,13 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int mazeSeed,
         Vector2Int cell,
         int markerIndex,
-        int prefabIndex)
+        int prefabIndex,
+        bool standUprightOnMarker)
     {
         GameObject instance = Instantiate(prefab, marker.position, marker.rotation, itemsRoot);
+        if (standUprightOnMarker)
+            StandPickupOnMarker(instance, prefab, marker);
+
         if (instance.TryGetComponent(out GrabbableInventoryItem grabbable))
             grabbable.AssignNetworkItemId(ComputeMazeItemPickupId(mazeSeed, cell, markerIndex, prefabIndex));
 
@@ -4002,6 +4042,50 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             glowstick.SetStackCount(GlowstickItem.MaxStack);
 
         ApplyMazeItemPickupAtRest(instance);
+    }
+
+    /// <summary>
+    /// Stands a pickup up on its marker, for markers that name their own prefab.
+    ///
+    /// Two things make this more than "use the marker's transform". Item prefabs are not authored at
+    /// identity — the EnergyDrink root, for one, carries a -90° X so the can is vertical — so upright means
+    /// the prefab's own root rotation with the marker's yaw applied on top, not the marker's rotation.
+    /// And item pivots sit at the mesh centre, so a marker placed on a table surface would bury the lower
+    /// half of the item in it; the instance is lifted until the bottom of its bounds meets the marker.
+    ///
+    /// Both steps read only the prefab and the marker, so every peer lands on the same pose.
+    /// </summary>
+    static void StandPickupOnMarker(GameObject instance, GameObject prefab, Transform marker)
+    {
+        Transform instanceRoot = instance.transform;
+        instanceRoot.SetPositionAndRotation(
+            marker.position,
+            Quaternion.Euler(0f, marker.eulerAngles.y, 0f) * prefab.transform.rotation);
+
+        Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(true);
+        bool hasBounds = false;
+        Bounds bounds = new(instanceRoot.position, Vector3.zero);
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer renderer = renderers[i];
+            if (renderer == null)
+                continue;
+
+            if (!hasBounds)
+            {
+                bounds = renderer.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+        }
+
+        if (!hasBounds)
+            return;
+
+        instanceRoot.position += new Vector3(0f, marker.position.y - bounds.min.y, 0f);
     }
 
     static ulong ComputeMazeItemPickupId(int mazeSeed, Vector2Int cell, int markerIndex, int prefabIndex)
@@ -4353,7 +4437,10 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             if (candidate == null)
                 continue;
 
-            if (candidate.name.StartsWith(ItemSpawnNamePrefix, StringComparison.Ordinal))
+            // A MazeItemSpawnPoint identifies its own marker, so those are free to be named after what they
+            // hold ("EnergyDrinkSpawn") rather than carrying the ItemSpawn prefix.
+            if (candidate.name.StartsWith(ItemSpawnNamePrefix, StringComparison.Ordinal)
+                || candidate.GetComponent<MazeItemSpawnPoint>() != null)
                 into.Add(candidate);
         }
     }

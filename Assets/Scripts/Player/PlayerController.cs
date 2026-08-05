@@ -214,6 +214,7 @@ public partial class PlayerController : MonoBehaviour
     InputAction _flashlightAction;
     InputAction _attackAction;
     InputAction _crouchAction;
+    InputAction _reloadAction;
     InputActionAsset _runtimeInputActions;
 
     float _lookYawDegrees;
@@ -649,6 +650,9 @@ public partial class PlayerController : MonoBehaviour
         bool crouchHeld = enableCrouch && (_crouchAction != null
             ? _crouchAction.IsPressed()
             : IsCrouchHeldFallback());
+        bool reloadPressed = _reloadAction != null
+            ? _reloadAction.WasPressedThisFrame()
+            : WasReloadPressedFallback();
 
         if (IsPostJailMovementLocked)
         {
@@ -699,6 +703,9 @@ public partial class PlayerController : MonoBehaviour
 
         if (flashlightPressed)
             HandleFlashlightToggleInput();
+
+        if (reloadPressed)
+            RequestFlareReloadFromInput();
 
         HandleAttackInput(attackPressed, attackReleased, attackHeld);
         RefreshThrowChargeUI();
@@ -1210,6 +1217,7 @@ public partial class PlayerController : MonoBehaviour
         _flashlightAction?.Enable();
         _attackAction?.Disable();
         _crouchAction?.Disable();
+        _reloadAction?.Disable();
         _lookAction?.Enable();
         ApplyCursorLock();
     }
@@ -1277,6 +1285,7 @@ public partial class PlayerController : MonoBehaviour
         _flashlightAction ??= _playerMap.FindAction("Flashlight");
         _attackAction ??= _playerMap.FindAction("Attack");
         _crouchAction ??= _playerMap.FindAction("Crouch");
+        _reloadAction ??= _playerMap.FindAction("Reload");   // absent from the asset is fine — R-key fallback covers it
 
         if (!_playerMap.enabled)
             _playerMap.Enable();
@@ -1475,8 +1484,11 @@ public partial class PlayerController : MonoBehaviour
         if (_hasLocalControl)
         {
             bool heldFlashlight = TryGetHeldFlashlightChargeForHud(out float charge, out FlashlightItem heldFlashlightItem);
+            // The flare gun re-uses the flashlight's charge gauge to show rounds (a slot holds one or the other).
+            float flareRounds01 = 0f;
+            bool heldFlareGun = !heldFlashlight && TryGetHeldFlareGunRoundsForHud(out flareRounds01);
             if (_vitalsHud != null)
-                _vitalsHud.SetFlashlightCharge(heldFlashlight, charge);
+                _vitalsHud.SetFlashlightCharge(heldFlashlight || heldFlareGun, heldFlashlight ? charge : flareRounds01);
             // Dying-light flicker on the held flashlight, driven with the peer-correct (synced) battery fraction.
             if (heldFlashlight && heldFlashlightItem != null)
                 heldFlashlightItem.TickLowBatteryFlicker(charge);
@@ -2501,6 +2513,16 @@ public partial class PlayerController : MonoBehaviour
         return pad != null && pad.buttonWest.wasReleasedThisFrame;
     }
 
+    static bool WasReloadPressedFallback()
+    {
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null && keyboard.rKey.wasPressedThisFrame)
+            return true;
+
+        Gamepad pad = Gamepad.current;
+        return pad != null && pad.buttonNorth.wasPressedThisFrame;
+    }
+
     static bool IsAttackHeldFallback()
     {
         Mouse mouse = Mouse.current;
@@ -2530,6 +2552,9 @@ public partial class PlayerController : MonoBehaviour
         }
         else if (pressed && !_isChargingThrow)
         {
+            // With a flare gun selected, attack fires (or dry-clicks/auto-reloads) instead of punching.
+            if (TryHandleFlareGunAttackPress())
+                return;
             if (_currentStamina > 0f)
                 TryMelee();
             return;

@@ -100,8 +100,27 @@ public class RagdollCameraCollision : MonoBehaviour
 
         _playerColliders = GetComponentsInChildren<Collider>(true);
 
+        // Snapshot the authored shadow modes now, before anything else can temporarily change them (e.g.
+        // NetworkPlayerAvatar hiding the body for a Jailor carry). Capturing lazily at the first hide could
+        // snapshot such a temporary mode and then "restore" the body to permanently invisible.
+        CacheBodyRenderers();
+
         if (solidLayers.value == 0)
             solidLayers = BuildSolidMask();
+    }
+
+    void CacheBodyRenderers()
+    {
+        if (_bodyRenderers != null)
+            return;
+
+        _bodyRenderers = GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        _bodyOriginalShadowModes = new ShadowCastingMode[_bodyRenderers.Length];
+        for (int i = 0; i < _bodyRenderers.Length; i++)
+        {
+            if (_bodyRenderers[i] != null)
+                _bodyOriginalShadowModes[i] = _bodyRenderers[i].shadowCastingMode;
+        }
     }
 
     void OnDisable()
@@ -380,13 +399,7 @@ public class RagdollCameraCollision : MonoBehaviour
         if (_bodyHidden == hidden)
             return;
 
-        if (_bodyRenderers == null)
-        {
-            _bodyRenderers = GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            _bodyOriginalShadowModes = new ShadowCastingMode[_bodyRenderers.Length];
-            for (int i = 0; i < _bodyRenderers.Length; i++)
-                _bodyOriginalShadowModes[i] = _bodyRenderers[i].shadowCastingMode;
-        }
+        CacheBodyRenderers();
 
         for (int i = 0; i < _bodyRenderers.Length; i++)
         {

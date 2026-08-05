@@ -21,6 +21,8 @@ public class GrabbableInventoryItem : MonoBehaviour
     public const byte TypeIdRingGreen = 7;
     public const byte TypeIdRingYellow = 8;
     public const byte TypeIdEnergyDrink = 9;
+    public const byte TypeIdFlareGun = 10;
+    public const byte TypeIdFlareAmmo = 11;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -44,6 +46,16 @@ public class GrabbableInventoryItem : MonoBehaviour
     [SerializeField] bool heldAttachToHandSocket = true;
     [Tooltip("Extra wrist rotation in player space (degrees) while this item is held. The fist's finger tunnel points forward by default, so tilt the wrist up (negative X) to grip an upright item like a can or a raised glowstick.")]
     [SerializeField] Vector3 heldWristEulerOffset;
+    [Tooltip(
+        "How much the whole ARM swings up/down at the shoulder with the view pitch while this item is held. "
+        + "0 = arms stay put and only the wrist tips (flashlight). 1 = the arms track the aim, so looking down "
+        + "drops the weapon out of your view instead of leaving it planted across your chest (flare gun).")]
+    [SerializeField, Range(0f, 1f)] float heldArmViewPitchFollow;
+    [Tooltip(
+        "Clamp on how far the ARMS swing up/down at the shoulder while this item is held, in degrees each "
+        + "way (0 = use the follower's default). The view keeps its full range; only the arms stop, so "
+        + "looking straight up or down no longer throws the weapon vertical.")]
+    [SerializeField, Range(0f, 89f)] float heldArmViewPitchMaxDegrees;
     [Tooltip("How the hand shapes itself around this item: a closed fist for thin items, a thumb/index pinch for flat ones, or an open C for cans and rolls.")]
     [SerializeField] HeldGripStyle gripStyle = HeldGripStyle.Fist;
 
@@ -56,6 +68,21 @@ public class GrabbableInventoryItem : MonoBehaviour
     /// </summary>
     public Vector3 HeldWristEulerOffset => heldWristEulerOffset;
 
+    /// <summary>
+    /// 0…1 — how much both upper arms rotate about the shoulder line with the view pitch while this item is
+    /// held. Aiming a weapon should move the arms, not just the wrist; see
+    /// <see cref="HeldItemHandSocketFollow"/>, which also fades out the wrist tip as this rises so the hand
+    /// is not pitched twice.
+    /// </summary>
+    public virtual float HeldArmViewPitchFollow => heldArmViewPitchFollow;
+
+    /// <summary>
+    /// Degrees each way the arms may swing at the shoulder while this item is held, or 0 to use the
+    /// follower's default. Caps <see cref="HeldArmViewPitchFollow"/> at the extremes of the look range so
+    /// the arms stop short of vertical while the view itself stays unrestricted.
+    /// </summary>
+    public virtual float HeldArmViewPitchMaxDegrees => heldArmViewPitchMaxDegrees;
+
     /// <summary>How the hand shapes itself around this item while held.</summary>
     public HeldGripStyle GripStyle => gripStyle;
 
@@ -63,7 +90,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     /// The "HoldPose" animator value for this item's grip: 1 fist, 3 pinch, 4 cup, 5 ball. Kept here so the
     /// style-to-clip mapping lives in one place. (2 is the two-hand chest carry, which is not a grip style.)
     /// </summary>
-    public int HeldPoseIndex
+    public virtual int HeldPoseIndex
     {
         get
         {
@@ -110,6 +137,8 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhRingGreen;
     static Sprite s_hudPhRingYellow;
     static Sprite s_hudPhEnergyDrink;
+    static Sprite s_hudPhFlareGun;
+    static Sprite s_hudPhFlareAmmo;
 
     /// <summary>Inspector <see cref="_slotIcon"/> if set; otherwise a simple circular runtime glyph (transparent outside the disk).</summary>
     public Sprite GetEffectiveSlotIconForHud()
@@ -138,6 +167,10 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdBandage;
         if (GetComponent<EnergyDrinkItem>() != null)
             return TypeIdEnergyDrink;
+        if (GetComponent<FlareGunItem>() != null)
+            return TypeIdFlareGun;
+        if (GetComponent<FlareAmmoItem>() != null)
+            return TypeIdFlareAmmo;
         if (GetComponent<RingTossItem>() != null)
             return _itemTypeId != TypeIdNone ? _itemTypeId : TypeIdRingBlue;
         if (GetComponent<StarBallItem>() != null)
@@ -158,6 +191,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdRingBlue => s_hudPhRingBlue ??= CreatePlaceholderSprite(0.25f, 0.45f, 0.95f),
             TypeIdRingGreen => s_hudPhRingGreen ??= CreatePlaceholderSprite(0.25f, 0.85f, 0.35f),
             TypeIdRingYellow => s_hudPhRingYellow ??= CreatePlaceholderSprite(0.95f, 0.85f, 0.25f),
+            TypeIdFlareGun => s_hudPhFlareGun ??= CreatePlaceholderSprite(0.95f, 0.32f, 0.12f),
+            TypeIdFlareAmmo => FlareAmmoItem.SharedHudSlotIcon ?? (s_hudPhFlareAmmo ??= CreatePlaceholderSprite(0.9f, 0.6f, 0.18f)),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
     }

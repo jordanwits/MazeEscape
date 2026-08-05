@@ -30,9 +30,15 @@ public class HeldItemHandSocketFollow : MonoBehaviour
     [Tooltip("Clamp on how far the wrist tips up/down (degrees).")]
     [SerializeField] float maxWristPitchDegrees = 55f;
 
+    [Header("View pitch → arms")]
+    [Tooltip("Clamp on how far the arms swing up/down at the shoulder (degrees). Per-item amount comes from GrabbableInventoryItem.HeldArmViewPitchFollow.")]
+    [SerializeField] float maxArmPitchDegrees = 70f;
+
     Transform _holdPoint;
     Transform _followTransform; // camera-pitch transform, for view-aimed items (flashlight)
     Transform _handBone;
+    Transform _upperArmR;
+    Transform _upperArmL;
     Transform _pinchSocket;     // where the thumb and index tips meet, for pinched flat items
     Transform _cupSocket;       // axis of the C the hand forms in the cup pose, for cans and rolls
     Transform _ballSocket;      // centre of the sphere the hand drapes over, for the throwable ball
@@ -83,9 +89,23 @@ public class HeldItemHandSocketFollow : MonoBehaviour
             {
                 Vector3 localView = Quaternion.Inverse(transform.rotation) * _followTransform.forward;
                 float elevationDeg = Mathf.Asin(Mathf.Clamp(localView.y, -1f, 1f)) * Mathf.Rad2Deg;
-                // Negative: rotating the wrist around player-right the other way tips the hand up when looking up.
-                float pitch = Mathf.Clamp(-elevationDeg * viewPitchWristFollow, -maxWristPitchDegrees, maxWristPitchDegrees);
-                _handBone.rotation = Quaternion.AngleAxis(pitch, transform.right) * _handBone.rotation;
+
+                // Weapons swing the whole arm at the shoulder, so looking down lowers the gun instead of
+                // leaving it planted across the chest. Applied first: the wrist tip below then works on
+                // top of the already-swung arm.
+                float armFollow = Mathf.Clamp01(_heldItem.HeldArmViewPitchFollow);
+                if (armFollow > 0.001f)
+                    SwingArmsWithViewPitch(elevationDeg, armFollow);
+
+                // The hand rides the arm, so a fully-following arm has already pitched it — fade the wrist
+                // tip out by the same amount or the hand ends up pitched twice.
+                float wristFollow = viewPitchWristFollow * (1f - armFollow);
+                if (wristFollow > 0.001f)
+                {
+                    // Negative: rotating the wrist around player-right the other way tips the hand up when looking up.
+                    float pitch = Mathf.Clamp(-elevationDeg * wristFollow, -maxWristPitchDegrees, maxWristPitchDegrees);
+                    _handBone.rotation = Quaternion.AngleAxis(pitch, transform.right) * _handBone.rotation;
+                }
             }
         }
 
@@ -108,6 +128,35 @@ public class HeldItemHandSocketFollow : MonoBehaviour
 
         if (_heldItem is FlashlightItem flashlight)
             flashlight.AimHeldLightAlongPitch();
+    }
+
+    /// <summary>
+    /// Rotates both upper arms about the shoulder line so the whole arm cluster tracks the aim. Each arm is
+    /// turned about its own shoulder rather than a shared pivot — that is the same rigid motion here, because
+    /// the shoulders are offset along the rotation axis (player-right), and it keeps each shoulder joint
+    /// exactly where the animation put it, so nothing stretches at the deltoid.
+    /// </summary>
+    void SwingArmsWithViewPitch(float elevationDeg, float armFollow)
+    {
+        if (_upperArmR == null)
+            _upperArmR = animator.GetBoneTransform(HumanBodyBones.RightUpperArm);
+        if (_upperArmL == null)
+            _upperArmL = animator.GetBoneTransform(HumanBodyBones.LeftUpperArm);
+
+        // Per-item cap wins when set: the arms stop short of vertical at the extremes of the look range
+        // while the view itself stays free to keep going.
+        float itemMax = _heldItem != null ? _heldItem.HeldArmViewPitchMaxDegrees : 0f;
+        float limit = itemMax > 0.01f ? itemMax : maxArmPitchDegrees;
+
+        float armPitch = Mathf.Clamp(-elevationDeg * armFollow, -limit, limit);
+        if (Mathf.Abs(armPitch) < 0.01f)
+            return;
+
+        Quaternion swing = Quaternion.AngleAxis(armPitch, transform.right);
+        if (_upperArmR != null)
+            _upperArmR.rotation = swing * _upperArmR.rotation;
+        if (_upperArmL != null)
+            _upperArmL.rotation = swing * _upperArmL.rotation;
     }
 
     void ResolveHandSocket()
