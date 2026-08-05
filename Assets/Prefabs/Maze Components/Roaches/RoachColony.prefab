@@ -1,6 +1,6 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
---- !u!1 &2083198874474502080
+--- !u!1 &6160652047422061394
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -8,22 +8,22 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 9219258213428324213}
-  - component: {fileID: 274777226744354307}
+  - component: {fileID: 8588654797225264515}
+  - component: {fileID: 2485995946538558029}
   m_Layer: 0
-  m_Name: BatRoost
+  m_Name: RoachColony
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!4 &9219258213428324213
+--- !u!4 &8588654797225264515
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2083198874474502080}
+  m_GameObject: {fileID: 6160652047422061394}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -32,33 +32,26 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &274777226744354307
+--- !u!114 &2485995946538558029
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2083198874474502080}
+  m_GameObject: {fileID: 6160652047422061394}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 069a147ff5d98c84a8da19eb28d38286, type: 3}
+  m_Script: {fileID: 11500000, guid: 7731ecb0dda7d74488930d1b38d1f15e, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::BatSwarmRoost
-  batPrefab: {fileID: 4080314544255748478, guid: b5b484bf5eaea604db6eb70c297a9ad6, type: 3}
-  swarmSize: 8
-  perchSpread: 0.7
-  launchSpreadSeconds: 0.4
-  triggerRadius: 6
-  viewConeDegrees: 75
-  requireLineOfSight: 1
-  lineOfSightMask:
+  m_EditorClassIdentifier: Assembly-CSharp::RoachColony
+  roachPrefab: {fileID: 7232988707392371678, guid: 1d7102fde59876c44aaa191c9c39c019, type: 3}
+  roachCount: 14
+  wallShare: 0.45
+  spreadRadius: 2.4
+  wallHeightRange: {x: 0.1, y: 2.2}
+  surfaceMask:
     serializedVersion: 2
     m_Bits: 4294967295
-  rearmSeconds: 0
-  pollInterval: 0.08
-  chirpClip: {fileID: 8300000, guid: a30facdc29dac5145bdcc107ba88c03e, type: 3}
-  chirpVolume: 0.8
-  wingsClip: {fileID: 8300000, guid: 6140f4abef9322349a3e8904f2dcaa8f, type: 3}
-  wingsVolume: 0.9
-  audioRange: 22
-  pitchJitter: 0.12
+  triggerRadius: 2
+  requireLineOfSight: 1
+  pollInterval: 0.1

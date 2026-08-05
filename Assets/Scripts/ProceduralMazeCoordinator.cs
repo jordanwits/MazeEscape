@@ -597,6 +597,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         TrySpawnMazeTeleportOrbs(root.transform, builtCellRoots, seed);
         TrySpawnMazePosters(root.transform, builtCellRoots, seed);
         TrySpawnMazeBatRoosts(root.transform, grid, builtCellRoots, start, exit, jailDeadEndCell, interiorPlan, seed, cellSize);
+        TrySpawnMazeRoachColonies(root.transform, grid, builtCellRoots, start, exit, jailDeadEndCell, interiorPlan, seed, cellSize);
         TrySpawnMazeStartFlashlights(root.transform);
         CreateSpawnPoints(root.transform, start, cellSize, multiStartFootprint);
         if (MultiplayerSpawnRegistry.Instance != null)
@@ -4040,16 +4041,25 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     }
 
     /// <summary>
-    /// Drops decorative bat colonies into maze-seeded dead-end cells.
+    /// Drops decorative bat colonies into maze-seeded dead ends, corridors and corners (any cell with one
+    /// or two openings — junctions are excluded, they're too open to read as a roost).
     ///
     /// Unlike every other spawner here these are NOT server-spawned NetworkObjects, and there is
     /// deliberately no IsServer gate: the bats are cosmetic, so each peer builds its own roosts from the
     /// maze seed (identical cells everywhere) and fires them for its own local player. Two players who
     /// walk into the same dead end a minute apart each get the scare, and nothing crosses the wire.
     ///
-    /// Dead ends are the natural roost. They have exactly one opening, so the swarm always bursts out
-    /// toward the only direction a player can arrive from and then flees past them down that same
-    /// corridor. The roost's +Z is aimed down that opening; <see cref="BatSwarmRoost"/> flees along it.
+    /// Two things make this more than a cell filter:
+    /// <list type="bullet">
+    /// <item>A dead end's one opening necessarily faces where the player came from, so bats burst out and
+    /// carry on past them. A corridor or corner has two, and which one leads away from the player isn't
+    /// known until they arrive — so every opening is handed to <see cref="BatSwarmRoost"/> and the choice
+    /// is made at fire time. The roost's +Z is still aimed down the first opening as a fallback for
+    /// hand-placed roosts.</item>
+    /// <item>Straights outnumber dead ends by a wide margin, so an even draw across all eligible cells
+    /// would effectively delete dead-end roosts. <see cref="ProceduralMazeConfig.MazeBatDeadEndShare"/>
+    /// reserves a slice of the roost budget for them.</item>
+    /// </list>
     /// </summary>
     void TrySpawnMazeBatRoosts(
         Transform mazeRoot,
@@ -4070,9 +4080,10 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         int width = grid.GetLength(0);
         int height = grid.GetLength(1);
 
-        // Walk the grid in fixed order rather than enumerating cellRoots, so the candidate list — and
-        // therefore the seeded shuffle below — comes out identical on every peer.
-        List<Vector2Int> candidates = new();
+        // Walk the grid in fixed order rather than enumerating cellRoots, so the candidate lists — and
+        // therefore the seeded shuffles below — come out identical on every peer.
+        List<Vector2Int> deadEnds = new();
+        List<Vector2Int> passages = new();
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
@@ -4080,7 +4091,210 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 MazeFaceMask openings = grid[x, y].Openings;
                 if (openings == MazeFaceMask.None)
                     continue;
-                if (MazeFaceMaskUtility.CountOpenFaces(openings) != 1)
+
+                int openFaces = MazeFaceMaskUtility.CountOpenFaces(openings);
+                if (openFaces > 2)
+                    continue; // tees and crossroads read as junctions, not roosts
+
+                Vector2Int cell = new(x, y);
+                if (cell == start || cell == exit)
+                    continue;
+                if (jailDeadEndCell.HasValue && cell == jailDeadEndCell.Value)
+                    continue;
+                if (interiorPlan.SkipCells.Contains(cell) || interiorPlan.Anchors.ContainsKey(cell))
+                    continue;
+                if (!cellRoots.ContainsKey(cell))
+                    continue;
+
+                if (openFaces == 1)
+                    deadEnds.Add(cell);
+                else
+                    passages.Add(cell);
+            }
+        }
+
+        if (deadEnds.Count == 0 && passages.Count == 0)
+        {
+            LogMazeWarningOnce(
+                "maze-bats-no-cells",
+                "[Maze] Bat roosts are configured but this layout produced no free dead-end, corridor or corner cells (start, exit, jail and interior-room cells are excluded).",
+                this);
+            return;
+        }
+
+        // Separate seeds so adding or removing a dead end doesn't reshuffle the corridor picks too.
+        ShuffleList(deadEnds, new System.Random(MixSeed(seed, unchecked((int)0x0BA7B00C))));
+        ShuffleList(passages, new System.Random(MixSeed(seed, unchecked((int)0x0BA7C0DE))));
+
+        List<Vector2Int> ordered = BuildBatRoostPreferenceOrder(deadEnds, passages, requestedCount);
+        List<Vector2Int> chosen = SelectSpacedCells(
+            ordered, requestedCount, _config.MazeBatRoostMinCellSeparation);
+
+        Transform roostsRoot = CreateChild(mazeRoot, "GeneratedBatRoosts");
+        Vector3[] directionScratch = new Vector3[4];
+
+        for (int i = 0; i < chosen.Count; i++)
+        {
+            Vector2Int cell = chosen[i];
+            MazeFaceMask openings = grid[cell.x, cell.y].Openings;
+
+            int exitCount = CollectOpeningDirections(openings, directionScratch);
+            Vector3[] exits = new Vector3[exitCount];
+            System.Array.Copy(directionScratch, exits, exitCount);
+
+            Vector3 position = CellToWorld(cell.x, cell.y, cellSize) + Vector3.up * _config.MazeBatRoostHeight;
+            Quaternion rotation = Quaternion.LookRotation(
+                exitCount > 0 ? exits[0] : Vector3.forward, Vector3.up);
+
+            GameObject instance = Instantiate(prefab, position, rotation, roostsRoot);
+            instance.name = $"BatRoost_{cell.x}_{cell.y}";
+
+            if (instance.TryGetComponent(out BatSwarmRoost roost))
+            {
+                roost.ConfigureSwarmSize(_config.MazeBatsPerRoost);
+                roost.ConfigureExitDirections(exits);
+            }
+        }
+
+        if (chosen.Count < requestedCount)
+        {
+            LogMazeWarningOnce(
+                "maze-bats-trimmed",
+                $"[Maze] Requested {requestedCount} bat roosts but only placed {chosen.Count} from "
+                    + $"{deadEnds.Count} dead-end and {passages.Count} corridor/corner candidate(s).",
+                this);
+        }
+    }
+
+    /// <summary>
+    /// Orders candidates so the first <see cref="ProceduralMazeConfig.MazeBatDeadEndShare"/> of the roost
+    /// budget comes from dead ends, then corridors/corners, then any dead ends left over. Selection just
+    /// walks this list front to back, so the reserve is honoured without the dead ends being able to
+    /// starve the corridors (or vice versa) when one pool is short.
+    /// </summary>
+    List<Vector2Int> BuildBatRoostPreferenceOrder(
+        List<Vector2Int> deadEnds,
+        List<Vector2Int> passages,
+        int requestedCount)
+    {
+        List<Vector2Int> ordered = new(deadEnds.Count + passages.Count);
+
+        int quota = Mathf.Clamp(
+            Mathf.RoundToInt(requestedCount * _config.MazeBatDeadEndShare), 0, requestedCount);
+
+        int taken = 0;
+        for (int i = 0; i < deadEnds.Count && taken < quota; i++, taken++)
+            ordered.Add(deadEnds[i]);
+
+        for (int i = 0; i < passages.Count; i++)
+            ordered.Add(passages[i]);
+
+        for (int i = taken; i < deadEnds.Count; i++)
+            ordered.Add(deadEnds[i]);
+
+        return ordered;
+    }
+
+    /// <summary>
+    /// Greedily takes cells in preference order while keeping them <paramref name="minSeparation"/> cells
+    /// apart, relaxing the spacing a step at a time if the layout can't fill the budget at full
+    /// separation. Without the relax pass a tight maze would silently return half the requested count.
+    /// Shared by the bat roosts and the roach colonies.
+    /// </summary>
+    static List<Vector2Int> SelectSpacedCells(List<Vector2Int> ordered, int requestedCount, int minSeparation)
+    {
+        List<Vector2Int> chosen = new(requestedCount);
+
+        for (int separation = minSeparation;
+             separation >= 0 && chosen.Count < requestedCount;
+             separation--)
+        {
+            for (int i = 0; i < ordered.Count && chosen.Count < requestedCount; i++)
+            {
+                Vector2Int candidate = ordered[i];
+                if (chosen.Contains(candidate))
+                    continue;
+                if (!IsCellSeparatedFrom(candidate, chosen, separation))
+                    continue;
+
+                chosen.Add(candidate);
+            }
+        }
+
+        return chosen;
+    }
+
+    /// <summary>Chebyshev cell distance test — diagonal neighbours count as adjacent.</summary>
+    static bool IsCellSeparatedFrom(Vector2Int candidate, List<Vector2Int> placed, int minSeparation)
+    {
+        if (minSeparation <= 0)
+            return true;
+
+        for (int i = 0; i < placed.Count; i++)
+        {
+            int dx = Mathf.Abs(candidate.x - placed[i].x);
+            int dy = Mathf.Abs(candidate.y - placed[i].y);
+            if (Mathf.Max(dx, dy) < minSeparation)
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Writes each open face's world direction into <paramref name="into"/> and returns how many. Grid +x
+    /// is world +X and grid +y is world +Z (see <see cref="CellToWorld"/>), matching <see cref="Steps"/>.
+    /// </summary>
+    static int CollectOpeningDirections(MazeFaceMask openings, Vector3[] into)
+    {
+        int count = 0;
+        if ((openings & MazeFaceMask.North) != 0)
+            into[count++] = Vector3.forward;
+        if ((openings & MazeFaceMask.East) != 0)
+            into[count++] = Vector3.right;
+        if ((openings & MazeFaceMask.South) != 0)
+            into[count++] = Vector3.back;
+        if ((openings & MazeFaceMask.West) != 0)
+            into[count++] = Vector3.left;
+
+        return count;
+    }
+
+    /// <summary>
+    /// Drops decorative cockroach nests into maze-seeded cells. Cosmetic and local-only, same contract as
+    /// <see cref="TrySpawnMazeBatRoosts"/> — no NetworkObject, no IsServer gate, identical cells on every
+    /// peer. Any cell will do here (roaches don't need an escape corridor the way the bats do), so this
+    /// only filters out the start, exit, jail and interior-room cells.
+    ///
+    /// The colony is placed at floor level and works out its own floor and wall surfaces by raycast, so
+    /// nothing here needs to know which décor variant the cell rolled.
+    /// </summary>
+    void TrySpawnMazeRoachColonies(
+        Transform mazeRoot,
+        MazeCell[,] grid,
+        IReadOnlyDictionary<Vector2Int, Transform> cellRoots,
+        Vector2Int start,
+        Vector2Int exit,
+        Vector2Int? jailDeadEndCell,
+        InteriorRoomBuildPlan interiorPlan,
+        int seed,
+        float cellSize)
+    {
+        GameObject prefab = _config.MazeRoachColonyPrefab;
+        int requestedCount = _config.MazeRoachColonyCount;
+        if (prefab == null || requestedCount <= 0)
+            return;
+
+        int width = grid.GetLength(0);
+        int height = grid.GetLength(1);
+
+        // Fixed grid order, as everywhere else here, so the seeded shuffle matches across peers.
+        List<Vector2Int> candidates = new();
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                if (grid[x, y].Openings == MazeFaceMask.None)
                     continue;
 
                 Vector2Int cell = new(x, y);
@@ -4098,58 +4312,36 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         if (candidates.Count == 0)
-        {
-            LogMazeWarningOnce(
-                "maze-bats-no-dead-ends",
-                "[Maze] Bat roosts are configured but this layout produced no free dead-end cells (start, exit, jail and interior-room cells are excluded).",
-                this);
             return;
-        }
 
-        ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0x0BA7B00C))));
+        ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0x0C0C4B0A))));
 
-        Transform roostsRoot = CreateChild(mazeRoot, "GeneratedBatRoosts");
-        int spawnCount = Mathf.Min(requestedCount, candidates.Count);
+        List<Vector2Int> chosen = SelectSpacedCells(
+            candidates, requestedCount, _config.MazeRoachColonyMinCellSeparation);
 
-        for (int i = 0; i < spawnCount; i++)
+        Transform coloniesRoot = CreateChild(mazeRoot, "GeneratedRoachColonies");
+
+        for (int i = 0; i < chosen.Count; i++)
         {
-            Vector2Int cell = candidates[i];
-            Vector3 position = CellToWorld(cell.x, cell.y, cellSize) + Vector3.up * _config.MazeBatRoostHeight;
-            Quaternion rotation = Quaternion.LookRotation(
-                OpeningDirectionToWorld(grid[cell.x, cell.y].Openings), Vector3.up);
+            Vector2Int cell = chosen[i];
+            Vector3 position = CellToWorld(cell.x, cell.y, cellSize)
+                             + Vector3.up * _config.MazeRoachColonyHeight;
 
-            GameObject instance = Instantiate(prefab, position, rotation, roostsRoot);
-            instance.name = $"BatRoost_{cell.x}_{cell.y}";
+            GameObject instance = Instantiate(prefab, position, Quaternion.identity, coloniesRoot);
+            instance.name = $"RoachColony_{cell.x}_{cell.y}";
 
-            if (instance.TryGetComponent(out BatSwarmRoost roost))
-                roost.ConfigureSwarmSize(_config.MazeBatsPerRoost);
+            if (instance.TryGetComponent(out RoachColony colony))
+                colony.ConfigureColony(_config.MazeRoachesPerColony, _config.MazeRoachColonySpread);
         }
 
-        if (spawnCount < requestedCount)
+        if (chosen.Count < requestedCount)
         {
             LogMazeWarningOnce(
-                "maze-bats-trimmed",
-                $"[Maze] Requested {requestedCount} bat roosts but only {spawnCount} free dead-end cell(s) were available.",
+                "maze-roaches-trimmed",
+                $"[Maze] Requested {requestedCount} roach colonies but only placed {chosen.Count} from "
+                    + $"{candidates.Count} candidate cell(s).",
                 this);
         }
-    }
-
-    /// <summary>
-    /// World direction of a single-face opening mask. Grid +x is world +X and grid +y is world +Z
-    /// (see <see cref="CellToWorld"/>), matching the <see cref="Steps"/> table.
-    /// </summary>
-    static Vector3 OpeningDirectionToWorld(MazeFaceMask openings)
-    {
-        if ((openings & MazeFaceMask.North) != 0)
-            return Vector3.forward;
-        if ((openings & MazeFaceMask.East) != 0)
-            return Vector3.right;
-        if ((openings & MazeFaceMask.South) != 0)
-            return Vector3.back;
-        if ((openings & MazeFaceMask.West) != 0)
-            return Vector3.left;
-
-        return Vector3.forward;
     }
 
     static void CollectItemSpawnMarkers(Transform root, List<Transform> into)

@@ -86,6 +86,7 @@ public class BatSwarmRoost : MonoBehaviour
     readonly List<PendingLaunch> _pending = new();
 
     Camera _viewer;
+    Vector3[] _exitDirections;
     Transform _audioEmitter;
     AudioSource _chirpSource;
     AudioSource _wingsSource;
@@ -319,10 +320,7 @@ public class BatSwarmRoost : MonoBehaviour
         _rearmAt = Time.time + rearmSeconds;
 
         Transform viewerTransform = viewer.transform;
-
-        // A dead-end cell has exactly one opening, and the coordinator points our +Z down it — which is
-        // both where the player came from and the only way out for the bats.
-        Vector3 fleeDirection = transform.forward;
+        Vector3 fleeDirection = ResolveFleeDirection(viewerTransform);
 
         float now = Time.time;
         int launched = 0;
@@ -393,6 +391,53 @@ public class BatSwarmRoost : MonoBehaviour
         swarmSize = Mathf.Max(1, size);
     }
 
+    /// <summary>
+    /// World directions of every corridor leading out of this roost's cell, set by
+    /// <see cref="ProceduralMazeCoordinator"/>. A dead end supplies one; a corridor or corner supplies
+    /// two and the choice is deferred to <see cref="ResolveFleeDirection"/> at fire time.
+    /// </summary>
+    public void ConfigureExitDirections(Vector3[] directions)
+    {
+        _exitDirections = directions;
+    }
+
+    /// <summary>
+    /// Picks the opening the swarm escapes through: the one pointing most directly at the player.
+    ///
+    /// That reads backwards until you follow the whole path. The bats burst out <em>at</em> the player
+    /// and keep going past them, so the corridor they need is the one the player is standing in — not the
+    /// one behind the roost. A dead end gives this for free (its only opening faces where the player must
+    /// have come from); a corridor or corner has a second opening leading deeper into the maze, and
+    /// choosing that one would send the swarm away from the player before they ever saw it.
+    /// </summary>
+    Vector3 ResolveFleeDirection(Transform viewer)
+    {
+        if (_exitDirections == null || _exitDirections.Length == 0)
+            return transform.forward; // hand-placed roost: fall back to authored facing
+        if (_exitDirections.Length == 1)
+            return _exitDirections[0];
+
+        Vector3 toViewer = viewer != null ? viewer.position - transform.position : transform.forward;
+        toViewer.y = 0f;
+        if (toViewer.sqrMagnitude < 0.0001f)
+            return _exitDirections[0];
+        toViewer.Normalize();
+
+        Vector3 best = _exitDirections[0];
+        float bestDot = float.NegativeInfinity;
+        for (int i = 0; i < _exitDirections.Length; i++)
+        {
+            float dot = Vector3.Dot(_exitDirections[i], toViewer);
+            if (dot <= bestDot)
+                continue;
+
+            bestDot = dot;
+            best = _exitDirections[i];
+        }
+
+        return best;
+    }
+
     Camera ResolveViewer()
     {
         if (_viewer != null && _viewer.isActiveAndEnabled && _viewer.gameObject.activeInHierarchy)
@@ -427,7 +472,17 @@ public class BatSwarmRoost : MonoBehaviour
     {
         Gizmos.color = new Color(0.8f, 0.5f, 0.15f, 0.5f);
         Gizmos.DrawWireSphere(transform.position, triggerRadius);
+
         Gizmos.color = new Color(0.9f, 0.75f, 0.3f, 0.9f);
-        Gizmos.DrawRay(transform.position, transform.forward * 3f);
+        if (_exitDirections != null && _exitDirections.Length > 0)
+        {
+            // Every corridor out of this cell; which one is used is decided when the swarm fires.
+            for (int i = 0; i < _exitDirections.Length; i++)
+                Gizmos.DrawRay(transform.position, _exitDirections[i] * 3f);
+        }
+        else
+        {
+            Gizmos.DrawRay(transform.position, transform.forward * 3f);
+        }
     }
 }

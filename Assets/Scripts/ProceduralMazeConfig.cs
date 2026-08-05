@@ -207,6 +207,34 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Height above the cell floor where the colony roosts, in metres. Should sit just under this "
         + "level's ceiling so the bats drop out of the dark rather than materialising at head height.")]
     [SerializeField] float mazeBatRoostHeight = 2.4f;
+    [Tooltip("Fraction of roosts reserved for dead-end cells; the rest go in corridors and corners. "
+        + "Straights massively outnumber dead ends in a generated maze, so without a reserve an even draw "
+        + "would almost never pick one — and a dead end is the strongest version of the scare, since the "
+        + "player has walked into a pocket with nowhere to retreat. 1 = dead ends only.")]
+    [Range(0f, 1f)]
+    [SerializeField] float mazeBatDeadEndShare = 0.5f;
+    [Tooltip("Minimum spacing between two roosts, in cells. Dead ends are naturally sparse, but once "
+        + "corridors are eligible two colonies can land in neighbouring cells and fire almost together. "
+        + "Relaxed automatically if the layout can't satisfy it for the requested roost count.")]
+    [SerializeField, Min(0)] int mazeBatRoostMinCellSeparation = 3;
+
+    [Header("Decorative Cockroaches")]
+    [Tooltip("Roach colony prefab (RoachColony), dropped into randomly chosen cells. Cosmetic and NOT a "
+        + "NetworkObject — every peer builds its own from the maze seed. Leave empty to skip roaches.")]
+    [SerializeField] GameObject mazeRoachColonyPrefab;
+    [Tooltip("How many cells get a roach nest. 0 = none even if a prefab is assigned.")]
+    [SerializeField, Min(0)] int mazeRoachColonyCount = 6;
+    [Tooltip("Roaches per nest. Each is a single two-triangle quad, so this is cheap — 10-20 reads as an "
+        + "infestation without turning into noise.")]
+    [SerializeField, Min(1)] int mazeRoachesPerColony = 14;
+    [Tooltip("Height of the walkable floor above the cell root, in metres. The colony is placed here and "
+        + "finds its own floor and wall surfaces by raycast from that point.")]
+    [SerializeField] float mazeRoachColonyHeight = 1f;
+    [Tooltip("Metres out from the colony centre that roaches may be placed. Roughly half a cell.")]
+    [SerializeField] float mazeRoachColonySpread = 2.4f;
+    [Tooltip("Minimum spacing between two roach nests, in cells. Relaxed automatically if the layout "
+        + "can't satisfy it for the requested count.")]
+    [SerializeField, Min(0)] int mazeRoachColonyMinCellSeparation = 2;
 
     [Header("RatBot (Anchor-Based)")]
     [Tooltip("Prefab spawned at child transforms named RatSpawn on generated maze pieces / interior rooms. Use the RatBot NetworkObject prefab. Leave empty to skip.")]
@@ -348,6 +376,14 @@ public class ProceduralMazeConfig : ScriptableObject
     public int MazeBatRoostCount => Mathf.Max(0, mazeBatRoostCount);
     public int MazeBatsPerRoost => Mathf.Max(1, mazeBatsPerRoost);
     public float MazeBatRoostHeight => mazeBatRoostHeight;
+    public float MazeBatDeadEndShare => Mathf.Clamp01(mazeBatDeadEndShare);
+    public int MazeBatRoostMinCellSeparation => Mathf.Max(0, mazeBatRoostMinCellSeparation);
+    public GameObject MazeRoachColonyPrefab => mazeRoachColonyPrefab;
+    public int MazeRoachColonyCount => Mathf.Max(0, mazeRoachColonyCount);
+    public int MazeRoachesPerColony => Mathf.Max(1, mazeRoachesPerColony);
+    public float MazeRoachColonyHeight => mazeRoachColonyHeight;
+    public float MazeRoachColonySpread => Mathf.Max(0.25f, mazeRoachColonySpread);
+    public int MazeRoachColonyMinCellSeparation => Mathf.Max(0, mazeRoachColonyMinCellSeparation);
     public GameObject MazeRatBotPrefab => mazeRatBotPrefab;
     public int MazeRatBotCount => Mathf.Max(0, mazeRatBotCount);
     /// <summary>Per <c>PosterSpawn</c> anchor, probability [0,1] of spawning a poster for this maze build.</summary>
