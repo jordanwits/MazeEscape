@@ -111,7 +111,14 @@ public class HeldItemHandSocketFollow : MonoBehaviour
 
         Transform seat = SeatFor(_heldItem);
 
-        if (forceForwardAim && _heldItem.HeldAimsAlongView && _followTransform != null)
+        if (_heldItem.HeldFollowsHandRotation)
+        {
+            // Swung weapons (sword): rotation comes from the hand bone, so the blade travels through the
+            // swing arc. The forced aim below would pin it to a fixed player-space direction for the whole
+            // animation, which is correct for a flashlight and nonsense for a weapon.
+            _heldItem.ApplyHandSocketHeldPose(seat);
+        }
+        else if (forceForwardAim && _heldItem.HeldAimsAlongView && _followTransform != null)
         {
             // Flashlight: barrel tilts up/down with the view (camera pitch), matching the beam.
             _heldItem.ApplyHandSocketHeldPoseAim(seat, _followTransform.rotation);

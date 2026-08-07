@@ -3369,6 +3369,7 @@ MonoBehaviour:
     m_Bits: 0
   meleeHitDelay: 0.25
   meleeCooldown: 0.8
+  meleeDamageFraction: 0.25
   meleeTrigger: RightHook
   meleeSwooshClip: {fileID: 8300000, guid: a3514c7620787264db2f66773c382e25, type: 3}
   meleeSwooshVolume: 0.05
@@ -3377,6 +3378,14 @@ MonoBehaviour:
   meleeHitPunch3: {fileID: 8300000, guid: fbb08b43cbfdff34dbc315d33be6c1da, type: 3}
   meleeHitPunchVolume: 0.1
   skeletonHitClip: {fileID: 8300000, guid: 010249a35b42f974b992318543550749, type: 3}
+  swordMeleeRange: 3
+  swordMeleeAngle: 80
+  swordDamageFraction: 0.6
+  swordSwingAnimSpeed: 1.6
+  swordCooldown: 0.85
+  swordStaminaCost: 12
+  swordSwooshClip: {fileID: 0}
+  swordHitClip: {fileID: 0}
   zombieHitClip: {fileID: 8300000, guid: 760ebab85d080824fa55f9111cd5c194, type: 3}
   zombieHitVolume: 0.1
   driveAnimator: 1
@@ -3664,6 +3673,12 @@ MonoBehaviour:
   localViewShadowOnlyRenderers:
   - {fileID: 2973642528329549329}
   playerInventory: {fileID: 0}
+  hideOwnBodyWhileCarriedByJailor: 1
+  carriedVisibleRenderers: []
+  carriedVisibleNameFragments:
+  - arm
+  - glove
+  - hand
   flashlightAimPivot: {fileID: 0}
   remoteFlashlightProxyLocalPosition: {x: 0, y: 0, z: 0.08}
 --- !u!114 &640123456789012346
@@ -3878,6 +3893,8 @@ MonoBehaviour:
   upperBodyLayerName: Upper Body
   upperBodyLayerIndexFallback: 2
   meleeStateNameOnUpperLayer: RightHook
+  swordLayerName: Sword Swing
+  swordStateName: SwordSwing
 --- !u!114 &2052164957160562587
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3927,6 +3944,7 @@ MonoBehaviour:
   forwardAimLocal: {x: 0.08, y: -0.12, z: 1}
   viewPitchWristFollow: 1
   maxWristPitchDegrees: 55
+  maxArmPitchDegrees: 70
 --- !u!114 &3112081791543024278
 MonoBehaviour:
   m_ObjectHideFlags: 0

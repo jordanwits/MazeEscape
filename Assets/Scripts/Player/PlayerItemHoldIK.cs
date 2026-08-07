@@ -48,6 +48,9 @@ public class PlayerItemHoldIK : MonoBehaviour
     [SerializeField] string upperBodyLayerName = "Upper Body";
     [SerializeField] int upperBodyLayerIndexFallback = 2;
     [SerializeField] string meleeStateNameOnUpperLayer = "RightHook";
+    [Tooltip("The sword swing lives on its own upper-body-masked layer, so it needs its own gate entry.")]
+    [SerializeField] string swordLayerName = "Sword Swing";
+    [SerializeField] string swordStateName = "SwordSwing";
 
     static readonly int HoldPoseHash = Animator.StringToHash("HoldPose");
     static readonly int SeatedHash = Animator.StringToHash("Seated");
@@ -56,6 +59,7 @@ public class PlayerItemHoldIK : MonoBehaviour
     GrabbableInventoryItem _heldItem;
     int _lastHoldChildCount = -1;
     int _meleeLayerIndexCache = int.MinValue;
+    int _swordLayerIndexCache = int.MinValue;
     float _rightWeight;
     float _leftWeight;
     float _armLength;
@@ -329,23 +333,57 @@ public class PlayerItemHoldIK : MonoBehaviour
         if (animator.GetBool(SeatedHash))
             return true;
 
-        return IsPlayingUpperBodyMeleeState();
+        return IsPlayingUpperBodyMeleeState() || IsPlayingSwordSwingState();
     }
 
     bool IsPlayingUpperBodyMeleeState()
     {
-        int layer = ResolveMeleeLayerIndex();
-        if (layer < 0 || layer >= animator.layerCount || string.IsNullOrEmpty(meleeStateNameOnUpperLayer))
+        return IsPlayingStateOnLayer(ResolveMeleeLayerIndex(), meleeStateNameOnUpperLayer);
+    }
+
+    /// <summary>
+    /// Same gate as the punch, on the sword's own layer. Humanoid IK applies after every layer, so an
+    /// un-gated hold would drag the swinging fist back onto the blade's rest position mid-swing.
+    /// </summary>
+    bool IsPlayingSwordSwingState()
+    {
+        return IsPlayingStateOnLayer(ResolveSwordLayerIndex(), swordStateName);
+    }
+
+    bool IsPlayingStateOnLayer(int layer, string stateName)
+    {
+        if (layer < 0 || layer >= animator.layerCount || string.IsNullOrEmpty(stateName))
             return false;
 
         if (animator.IsInTransition(layer))
         {
             AnimatorStateInfo next = animator.GetNextAnimatorStateInfo(layer);
-            if (next.IsName(meleeStateNameOnUpperLayer))
+            if (next.IsName(stateName))
                 return true;
         }
 
-        return animator.GetCurrentAnimatorStateInfo(layer).IsName(meleeStateNameOnUpperLayer);
+        return animator.GetCurrentAnimatorStateInfo(layer).IsName(stateName);
+    }
+
+    int ResolveSwordLayerIndex()
+    {
+        if (_swordLayerIndexCache != int.MinValue)
+            return _swordLayerIndexCache;
+
+        _swordLayerIndexCache = -1;
+        if (!string.IsNullOrEmpty(swordLayerName))
+        {
+            for (int i = 0; i < animator.layerCount; i++)
+            {
+                if (animator.GetLayerName(i) == swordLayerName)
+                {
+                    _swordLayerIndexCache = i;
+                    break;
+                }
+            }
+        }
+
+        return _swordLayerIndexCache;
     }
 
     int ResolveMeleeLayerIndex()

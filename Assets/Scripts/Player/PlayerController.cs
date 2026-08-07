@@ -138,6 +138,8 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] float meleeHitDelay = 0.25f;
     [Tooltip("Cooldown between melee attacks in seconds.")]
     [SerializeField] float meleeCooldown = 0.8f;
+    [Tooltip("Punch damage as a fraction of the target's max health, so it scales across enemy species.")]
+    [SerializeField, Range(0.05f, 1f)] float meleeDamageFraction = 0.25f;
 
     /// <summary>Exposed so <see cref="NetworkPlayerCombat"/> can enforce the same cooldown server-side.</summary>
     public float MeleeCooldown => meleeCooldown;
@@ -151,6 +153,26 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField, Range(0f, 1f)] float meleeHitPunchVolume = 0.7f;
     [Tooltip("Played instead of the punch impact when the melee connects with a Skeleton.")]
     [SerializeField] AudioClip skeletonHitClip;
+
+    [Header("Sword Melee")]
+    [Tooltip("Reach of a sword swing. Longer than the punch — the blade adds about a metre to the arm.")]
+    [SerializeField] float swordMeleeRange = 3f;
+    [Tooltip("Half-angle of the sword's damage cone. A swing sweeps wider than a straight punch.")]
+    [SerializeField] float swordMeleeAngle = 80f;
+    [Tooltip("Sword damage as a fraction of the target's max health. 0.6 kills a zombie or skeleton in two hits.")]
+    [SerializeField, Range(0.05f, 1f)] float swordDamageFraction = 0.6f;
+    [Tooltip("Playback speed of the swing animation. This is the ONE knob for swing pace: it drives the animator "
+        + "state (through the SwordSwingSpeed parameter) AND the hit-registration delay, which is derived from "
+        + "it, so the two cannot drift apart. The whoosh rides an animation event in the clip, so it follows too.")]
+    [SerializeField, Range(0.5f, 3f)] float swordSwingAnimSpeed = 1.6f;
+    [Tooltip("Cooldown between sword swings. Must cover the committed part of the swing at the speed above.")]
+    [SerializeField] float swordCooldown = 0.85f;
+    [Tooltip("Stamina spent on a sword swing.")]
+    [SerializeField] float swordStaminaCost = 12f;
+    [Tooltip("Optional swing whoosh for the sword. Falls back to the shared melee swoosh when empty.")]
+    [SerializeField] AudioClip swordSwooshClip;
+    [Tooltip("Optional blade impact sound. Falls back to the punch impact clips when empty.")]
+    [SerializeField] AudioClip swordHitClip;
     [Tooltip("Universal 'you got hit' thud played to THIS player on any damage (zombie, skeleton, clown, traps). Name kept for prefab serialization; used by the hurt-feedback partial.")]
     [SerializeField] AudioClip zombieHitClip;
     [SerializeField, Range(0f, 1f)] float zombieHitVolume = 0.75f;
@@ -398,6 +420,10 @@ public partial class PlayerController : MonoBehaviour
             animator = GetComponentInChildren<Animator>();
         if (animator != null)
             animator.applyRootMotion = false;
+
+        // Every peer, not just the owner: this is a constant read off the shared prefab, and a non-owner has
+        // to play the swing at the same pace or its whoosh and the replicated hit stop lining up.
+        PushSwordSwingSpeedToAnimator();
 
         if (facingTransform == null)
         {
@@ -2592,6 +2618,10 @@ public partial class PlayerController : MonoBehaviour
             _throwChargeBarRoot.SetActive(false);
     }
 
+    /// <summary>
+    /// One melee attack. Which weapon it is — bare fists or the selected sword — only changes the numbers
+    /// and the animator trigger; the authority path below is identical either way.
+    /// </summary>
     void TryMelee()
     {
         if (_currentStamina <= 0f)
@@ -2600,30 +2630,41 @@ public partial class PlayerController : MonoBehaviour
         if (Time.time < _nextMeleeTime)
             return;
 
-        _nextMeleeTime = Time.time + meleeCooldown;
-        SpendStamina(punchStaminaCost);
+        _nextMeleeTime = Time.time + ActiveMeleeCooldown;
+        SpendStamina(ActiveMeleeStaminaCost);
 
+        string trigger = ActiveMeleeTrigger;
         if (_networkPlayerAvatar != null)
-            _networkPlayerAvatar.TriggerAnimation(meleeTrigger);
+            _networkPlayerAvatar.TriggerAnimation(trigger);
         else if (animator != null)
-            animator.SetTrigger(meleeTrigger);
+            animator.SetTrigger(trigger);
 
-        PlayMeleeSwooshSfx();
-        StartCoroutine(ApplyMeleeDamageAfterDelay());
+        // The punch's whoosh fires now, at the top of the animation, which is where its short jab lands. The
+        // sword's comes from an animation event partway into the swing instead (see OnSwordSwingWhoosh) —
+        // playing it here would put the sound at the start of the wind-up, a third of a second early.
+        if (!IsSwordSelected)
+            PlayMeleeSwooshSfx();
+
+        StartCoroutine(ApplyMeleeDamageAfterDelay(ActiveMeleeHitDelay));
     }
 
     public void PlayMeleeSwooshSfx()
     {
-        if (meleeSwooshClip == null || footstepAudioSource == null)
+        AudioClip clip = ActiveMeleeSwooshClip;
+        if (clip == null || footstepAudioSource == null)
             return;
 
-        footstepAudioSource.PlayOneShot(meleeSwooshClip, Mathf.Max(0f, meleeSwooshVolume));
+        footstepAudioSource.PlayOneShot(clip, Mathf.Max(0f, meleeSwooshVolume));
     }
 
-    IEnumerator ApplyMeleeDamageAfterDelay()
+    /// <summary>
+    /// Delay is captured at the swing, not read at the end: switching hotbar slots mid-swing must not move
+    /// the hit frame of the attack already in flight.
+    /// </summary>
+    IEnumerator ApplyMeleeDamageAfterDelay(float hitDelay)
     {
-        if (meleeHitDelay > 0f)
-            yield return new WaitForSeconds(meleeHitDelay);
+        if (hitDelay > 0f)
+            yield return new WaitForSeconds(hitDelay);
 
         ApplyMeleeDamage();
     }
@@ -2637,35 +2678,46 @@ public partial class PlayerController : MonoBehaviour
         }
 
         if (ApplyMeleeDamageLocally())
-        {
-            if (_meleeHitSkeletonThisSwing)
-                PlaySkeletonHitSfx();
-            else
-                PlayMeleeHitSfx();
-        }
+            PlayMeleeImpactSfxForThisSwing();
     }
 
     public void ApplyServerAuthoritativeMeleeDamage()
     {
+        bool sword = IsSwordSelected;
         bool hit = ApplyMeleeDamageLocally();
         if (!hit)
             return;
 
         if (_networkPlayerCombat != null && _networkPlayerCombat.IsSpawned)
         {
+            // What was HIT wins over what it was hit with: a blade into a skeleton is the skeleton's rattle,
+            // not a generic weapon thud. Keep this order in step with PlayMeleeImpactSfxForThisSwing.
             if (_meleeHitSkeletonThisSwing)
                 _networkPlayerCombat.NotifyObserversSkeletonHit();
+            else if (sword)
+                _networkPlayerCombat.NotifyObserversSwordHit();
             else
                 _networkPlayerCombat.NotifyObserversMeleeHit(PickRandomMeleeHitClipIndex());
         }
-        else if (_meleeHitSkeletonThisSwing)
-        {
-            PlaySkeletonHitSfx();
-        }
         else
         {
-            PlayMeleeHitSfx();
+            PlayMeleeImpactSfxForThisSwing();
         }
+    }
+
+    /// <summary>
+    /// Impact feedback for the swing that just connected, on whichever peer is playing it locally. The
+    /// target's own sound takes priority over the weapon's — hitting a skeleton rattles bone whether it was a
+    /// fist or a blade. Keep this order in step with <see cref="ApplyServerAuthoritativeMeleeDamage"/>.
+    /// </summary>
+    void PlayMeleeImpactSfxForThisSwing()
+    {
+        if (_meleeHitSkeletonThisSwing)
+            PlaySkeletonHitSfx();
+        else if (IsSwordSelected)
+            PlaySwordHitSfx();
+        else
+            PlayMeleeHitSfx();
     }
 
     bool ApplyMeleeDamageLocally()
@@ -2673,8 +2725,14 @@ public partial class PlayerController : MonoBehaviour
         Vector3 origin = transform.position;
         Vector3 forward = transform.forward;
 
+        // Weapon profile is sampled once per swing so a mid-swing slot change cannot split the test between
+        // a punch's reach and a sword's damage.
+        float range = ActiveMeleeRange;
+        float coneAngle = ActiveMeleeAngle;
+        float damageFraction = ActiveMeleeDamageFraction;
+
         int mask = enemyMask.value == 0 ? Physics.DefaultRaycastLayers : enemyMask.value;
-        int hitCount = Physics.OverlapSphereNonAlloc(origin, meleeRange, _meleeHits, mask, QueryTriggerInteraction.Ignore);
+        int hitCount = Physics.OverlapSphereNonAlloc(origin, range, _meleeHits, mask, QueryTriggerInteraction.Ignore);
 
         bool damagedAny = false;
         _meleeHitZombies.Clear();
@@ -2701,7 +2759,7 @@ public partial class PlayerController : MonoBehaviour
                 Vector3 flatDir = col.transform.position - origin;
                 flatDir.y = 0f;
                 Vector3 flatForward = new Vector3(forward.x, 0f, forward.z);
-                if (flatDir.sqrMagnitude > 0.0001f && Vector3.Angle(flatForward, flatDir) > meleeAngle)
+                if (flatDir.sqrMagnitude > 0.0001f && Vector3.Angle(flatForward, flatDir) > coneAngle)
                     continue;
                 // Topple it away from the punch (fall direction = player -> monkey, else the player's facing).
                 Vector3 knockDir = flatDir.sqrMagnitude > 0.0001f ? flatDir : flatForward;
@@ -2712,7 +2770,7 @@ public partial class PlayerController : MonoBehaviour
 
             Vector3 dirToTarget = (col.transform.position - origin).normalized;
             float angle = Vector3.Angle(forward, dirToTarget);
-            if (angle > meleeAngle)
+            if (angle > coneAngle)
                 continue;
 
             ZombieHealth zombieHealth = col.GetComponentInParent<ZombieHealth>();
@@ -2721,7 +2779,7 @@ public partial class PlayerController : MonoBehaviour
                 if (!_meleeHitZombies.Add(zombieHealth))
                     continue;
 
-                float damage = zombieHealth.MaxHealth * 0.25f;
+                float damage = zombieHealth.MaxHealth * damageFraction;
                 if (zombieHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                     damagedAny = true;
                 continue;
@@ -2733,7 +2791,7 @@ public partial class PlayerController : MonoBehaviour
                 if (!_meleeHitSkeletons.Add(skeletonHealth))
                     continue;
 
-                float damage = skeletonHealth.MaxHealth * 0.25f;
+                float damage = skeletonHealth.MaxHealth * damageFraction;
                 if (skeletonHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                 {
                     damagedAny = true;

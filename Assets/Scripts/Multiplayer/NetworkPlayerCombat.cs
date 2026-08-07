@@ -53,7 +53,9 @@ public class NetworkPlayerCombat : NetworkBehaviour
         float now = Time.time;
         if (now < _serverNextMeleeTime)
             return;
-        float cooldown = playerController != null ? playerController.MeleeCooldown : 0.8f;
+        // Whichever weapon the attacker has selected — the sword's cooldown is longer than the punch's, and
+        // gating a sword swing on the punch value would let it be spammed.
+        float cooldown = playerController != null ? playerController.ActiveMeleeCooldownForServer : 0.8f;
         _serverNextMeleeTime = now + cooldown;
 
         ServerApplyMeleeWithObserverSwoosh();
@@ -65,10 +67,19 @@ public class NetworkPlayerCombat : NetworkBehaviour
         playerController?.ApplyServerAuthoritativeMeleeDamage();
     }
 
-    /// <summary>Owner already plays swoosh in <c>TryMelee</c>; other clients get it from the server.</summary>
+    /// <summary>
+    /// Owner already plays swoosh in <c>TryMelee</c>; other clients get it from the server. Not for the
+    /// sword: this runs when the SERVER adjudicates, which is a hit-delay plus a round trip after the swing
+    /// began, so the sound would arrive well after the observer's own blade had already come down. The sword's
+    /// whoosh is an animation event in SwordSwing.anim, which every peer fires off its own clip in step with
+    /// the animation it is actually showing.
+    /// </summary>
     void PlayMeleeSwooshForNonOwnerClients()
     {
         if (!IsServer)
+            return;
+
+        if (playerController != null && playerController.IsSwordSelected)
             return;
 
         NetworkManager nm = NetworkManager.Singleton;
@@ -127,4 +138,18 @@ public class NetworkPlayerCombat : NetworkBehaviour
         playerController?.PlaySkeletonHitSfx();
     }
 
+    /// <summary>Server-only: blade impact sound on every client, whatever the sword connected with.</summary>
+    public void NotifyObserversSwordHit()
+    {
+        if (!IsServer)
+            return;
+
+        PlaySwordHitObserversClientRpc();
+    }
+
+    [ClientRpc]
+    void PlaySwordHitObserversClientRpc(ClientRpcParams clientRpcParams = default)
+    {
+        playerController?.PlaySwordHitSfx();
+    }
 }

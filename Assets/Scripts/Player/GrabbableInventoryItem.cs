@@ -23,6 +23,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     public const byte TypeIdEnergyDrink = 9;
     public const byte TypeIdFlareGun = 10;
     public const byte TypeIdFlareAmmo = 11;
+    public const byte TypeIdSword = 12;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -61,6 +62,18 @@ public class GrabbableInventoryItem : MonoBehaviour
 
     /// <summary>True when the in-hand visual follows the hand socket instead of the HoldPoint float.</summary>
     public bool HeldAttachToHandSocket => heldAttachToHandSocket;
+
+    /// <summary>Extra local rotation applied while held. See <see cref="SetHeldRotationOffsetEulerForTuning"/>.</summary>
+    public Vector3 HeldRotationOffsetEuler => heldRotationOffsetEuler;
+
+    /// <summary>
+    /// DEV: live-set the held rotation offset so a pose tuner can preview a carry angle in play mode. The
+    /// authored value is the one on the prefab; this only changes the running instance.
+    /// </summary>
+    public void SetHeldRotationOffsetEulerForTuning(Vector3 euler)
+    {
+        heldRotationOffsetEuler = euler;
+    }
 
     /// <summary>
     /// Player-space wrist rotation applied to the right hand while this item is held, so the fist's finger
@@ -110,6 +123,14 @@ public class GrabbableInventoryItem : MonoBehaviour
     /// sit in the hand (key, glowstick). <see cref="FlashlightItem"/> overrides this to true.
     /// </summary>
     public virtual bool HeldAimsAlongView => false;
+
+    /// <summary>
+    /// Take the held rotation straight from the hand bone instead of the fixed player-space aim
+    /// <see cref="HeldItemHandSocketFollow"/> normally forces. Everything carried so far wants the forced
+    /// aim — a flashlight must point forward however the wrist sits — but a swung weapon has to travel with
+    /// the arm, so <see cref="SwordItem"/> overrides this to true.
+    /// </summary>
+    public virtual bool HeldFollowsHandRotation => false;
 
     public bool IsHeld { get; private set; }
     public bool IsStashed { get; private set; }
@@ -163,6 +184,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhEnergyDrink;
     static Sprite s_hudPhFlareGun;
     static Sprite s_hudPhFlareAmmo;
+    static Sprite s_hudPhSword;
 
     /// <summary>Inspector <see cref="_slotIcon"/> if set; otherwise a simple circular runtime glyph (transparent outside the disk).</summary>
     public Sprite GetEffectiveSlotIconForHud()
@@ -195,6 +217,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdFlareGun;
         if (GetComponent<FlareAmmoItem>() != null)
             return TypeIdFlareAmmo;
+        if (GetComponent<SwordItem>() != null)
+            return TypeIdSword;
         if (GetComponent<RingTossItem>() != null)
             return _itemTypeId != TypeIdNone ? _itemTypeId : TypeIdRingBlue;
         if (GetComponent<StarBallItem>() != null)
@@ -217,6 +241,7 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdRingYellow => s_hudPhRingYellow ??= CreatePlaceholderSprite(0.95f, 0.85f, 0.25f),
             TypeIdFlareGun => FlareGunItem.SharedHudSlotIcon ?? (s_hudPhFlareGun ??= CreatePlaceholderSprite(0.95f, 0.32f, 0.12f)),
             TypeIdFlareAmmo => FlareAmmoItem.SharedHudSlotIcon ?? (s_hudPhFlareAmmo ??= CreatePlaceholderSprite(0.9f, 0.6f, 0.18f)),
+            TypeIdSword => SwordItem.SharedHudSlotIcon ?? (s_hudPhSword ??= CreatePlaceholderSprite(0.72f, 0.74f, 0.78f)),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
     }
