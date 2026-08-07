@@ -4038,8 +4038,12 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         if (instance.TryGetComponent(out GrabbableInventoryItem grabbable))
             grabbable.AssignNetworkItemId(ComputeMazeItemPickupId(mazeSeed, cell, markerIndex, prefabIndex));
 
+        // Loot spawns as a stack rather than a single unit, matching MazeChest: a full pack of glowsticks,
+        // or enough flare rounds for one full reload.
         if (instance.TryGetComponent(out GlowstickItem glowstick))
             glowstick.SetStackCount(GlowstickItem.MaxStack);
+        else if (instance.TryGetComponent(out FlareAmmoItem flareAmmo))
+            flareAmmo.SetStackCount(FlareAmmoItem.LootStackSize);
 
         ApplyMazeItemPickupAtRest(instance);
     }

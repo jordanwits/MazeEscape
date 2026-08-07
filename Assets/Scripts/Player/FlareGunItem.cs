@@ -3,8 +3,9 @@ using UnityEngine;
 
 /// <summary>
 /// Break-action flare gun. Holds up to <see cref="MaxRounds"/> flare rounds; firing spawns a
-/// <see cref="FlareProjectile"/> (server-authoritative online, local offline) and reloading consumes a
-/// <see cref="FlareAmmoItem"/> from the hotbar. Round count lives on this instance and is authoritative on
+/// <see cref="FlareProjectile"/> (server-authoritative online, local offline). One reload fills the gun,
+/// drawing as many rounds as it needs from the <see cref="FlareAmmoItem"/> stacks in the hotbar (a single
+/// reload animation covers the whole load). Round count lives on this instance and is authoritative on
 /// the server (mirrors the flashlight battery model — replicated to the owner through the per-slot charge
 /// NetworkVariable, and it survives section switches with the item via the carry-over pen).
 /// The reload visual (barrel tilt open, shell into the chamber, snap shut) is scripted here and timed to
@@ -13,18 +14,42 @@ using UnityEngine;
 public class FlareGunItem : GrabbableInventoryItem
 {
     public const int MaxRounds = 3;
+
+    public static Sprite SharedHudSlotIcon { get; private set; }
+
     /// <summary>Min seconds between shots; shared by the owner-side input gate and the server validation.</summary>
     public const float FireCooldownSeconds = 0.8f;
-    /// <summary>Total reload duration. Matches the FlareGun_Reload player clip (51 frames @ 30fps).</summary>
-    public const float ReloadDurationSeconds = 1.7f;
 
-    // Reload visual timeline (seconds, matching the player clip's key moments).
+    // Reload timeline. One reload loads the whole gun, so the off hand makes one fetch-and-insert trip per
+    // round: a lead-in while the barrel breaks open, then N identical arm cycles, then a settle while it
+    // snaps shut. These MUST match the frame constants in FlareReloadClipBuilder, which splices the
+    // FlareGun_Reload_N player clips out of the authored single-round clip on exactly these boundaries.
+    /// <summary>Barrel breaks open; the off hand is still at rest.</summary>
+    public const float ReloadLeadInSeconds = 16f / 60f;
+    /// <summary>One round: hand drops to the pouch, brings the round up, inserts it, returns.</summary>
+    public const float ReloadCycleSeconds = 76f / 60f;
+    /// <summary>Hand comes to rest and the barrel snaps shut.</summary>
+    public const float ReloadTailSeconds = 10f / 60f;
+
+    /// <summary>
+    /// Total reload duration for a given round count — matches the length of the FlareGun_Reload_N clip the
+    /// animator plays (1.70s / 2.97s / 4.23s). Drives both the owner input gate and the server's busy gate.
+    /// </summary>
+    public static float ReloadDurationForRounds(int rounds)
+    {
+        return ReloadLeadInSeconds
+            + ReloadCycleSeconds * Mathf.Clamp(rounds, 1, MaxRounds)
+            + ReloadTailSeconds;
+    }
+
+    // Gun-side visual timings. The barrel opens once and stays open for the whole reload; the shell beats
+    // repeat every cycle and are given as offsets from the start of the cycle they belong to.
     const float BarrelOpenStart = 0.05f;
     const float BarrelOpenDuration = 0.35f;
-    const float HandShellShowTime = 0.25f;
-    const float ShellInsertStart = 0.90f;
-    const float ShellInsertEnd = 1.15f;
-    const float BarrelCloseStart = 1.35f;
+    const float CycleHandShellShow = 0.25f - ReloadLeadInSeconds;
+    const float CycleShellInsertStart = 0.90f - ReloadLeadInSeconds;
+    const float CycleShellInsertEnd = 1.15f - ReloadLeadInSeconds;
+    const float BarrelCloseLeadSeconds = 0.35f;
     const float BarrelCloseDuration = 0.30f;
 
     [Header("Flare Gun")]
@@ -83,6 +108,9 @@ public class FlareGunItem : GrabbableInventoryItem
         _itemTypeId = TypeIdFlareGun;
         base.Awake();
 
+        if (_slotIcon != null)
+            SharedHudSlotIcon = _slotIcon;
+
         if (muzzleLight != null)
             muzzleLight.enabled = false;
         if (chamberShell != null)
@@ -104,14 +132,18 @@ public class FlareGunItem : GrabbableInventoryItem
         return true;
     }
 
-    /// <summary>Load one round from a consumed ammo item. Call on the authority.</summary>
-    public bool TryAddRound()
-    {
-        if (LoadedRounds >= MaxRounds)
-            return false;
+    /// <summary>Rounds still missing from a full load — how many a reload should draw from carried ammo.</summary>
+    public int MissingRounds => Mathf.Max(0, MaxRounds - LoadedRounds);
 
-        LoadedRounds++;
-        return true;
+    /// <summary>
+    /// Load up to <paramref name="count"/> rounds from consumed ammo; returns how many actually fit. One
+    /// reload fills the gun, so this takes a count rather than loading a single round. Call on the authority.
+    /// </summary>
+    public int TryAddRounds(int count)
+    {
+        int added = Mathf.Min(Mathf.Max(0, count), MissingRounds);
+        LoadedRounds += added;
+        return added;
     }
 
     public void PlayFireEffects()
@@ -155,22 +187,24 @@ public class FlareGunItem : GrabbableInventoryItem
     }
 
     /// <summary>
-    /// Runs the gun-side reload animation (barrel tilts open, a shell rides the holder's left hand in and
-    /// slides into the chamber, barrel snaps shut). Runs identically on every peer; the holder's body
-    /// animation comes from the replicated FlareGun_Reload clip. <paramref name="holderAnimator"/> supplies
-    /// the left hand bone for the hand shell (null just skips that part).
+    /// Runs the gun-side reload animation: the barrel tilts open once, then for each of
+    /// <paramref name="rounds"/> rounds a shell rides the holder's left hand up and slides into the chamber,
+    /// and finally the barrel snaps shut. Runs identically on every peer and is timed against the same phase
+    /// constants as the FlareGun_Reload_N body clip the animator plays, so the shell always reaches the
+    /// breech as the hand does. <paramref name="holderAnimator"/> supplies the left hand bone for the hand
+    /// shell (null just skips that part).
     /// </summary>
-    public void PlayReloadVisual(Animator holderAnimator)
+    public void PlayReloadVisual(Animator holderAnimator, int rounds)
     {
         if (_reloadRoutine != null)
             StopCoroutine(_reloadRoutine);
-        _reloadRoutine = StartCoroutine(ReloadVisualRoutine(holderAnimator));
+        _reloadRoutine = StartCoroutine(ReloadVisualRoutine(holderAnimator, Mathf.Clamp(rounds, 1, MaxRounds)));
 
         if (gunAudioSource != null && reloadClip != null)
             gunAudioSource.PlayOneShot(reloadClip, reloadVolume);
     }
 
-    IEnumerator ReloadVisualRoutine(Animator holderAnimator)
+    IEnumerator ReloadVisualRoutine(Animator holderAnimator, int rounds)
     {
         Transform leftHand = null;
         if (holderAnimator != null && holderAnimator.isHuman)
@@ -181,8 +215,11 @@ public class FlareGunItem : GrabbableInventoryItem
         bool handShellShown = false;
         bool chamberShellShown = false;
 
+        float total = ReloadDurationForRounds(rounds);
+        float barrelCloseStart = total - BarrelCloseLeadSeconds;
+
         float t = 0f;
-        while (t < ReloadDurationSeconds)
+        while (t < total)
         {
             // If the gun leaves the hand mid-reload (drop, death, level switch) end the visual cleanly.
             if (!IsHeld)
@@ -197,16 +234,23 @@ public class FlareGunItem : GrabbableInventoryItem
                     open = 0f;
                 else if (t < BarrelOpenStart + BarrelOpenDuration)
                     open = Mathf.SmoothStep(0f, 1f, (t - BarrelOpenStart) / BarrelOpenDuration);
-                else if (t < BarrelCloseStart)
+                else if (t < barrelCloseStart)
                     open = 1f;
                 else
-                    open = Mathf.SmoothStep(1f, 0f, (t - BarrelCloseStart) / BarrelCloseDuration);
+                    open = Mathf.SmoothStep(1f, 0f, (t - barrelCloseStart) / BarrelCloseDuration);
                 barrelPivot.localRotation = Quaternion.SlerpUnclamped(barrelClosed, barrelOpen, open);
             }
 
+            // Which arm cycle the playhead is in, and how far into it — the shell beats repeat per cycle.
+            int cycle = Mathf.Clamp(Mathf.FloorToInt((t - ReloadLeadInSeconds) / ReloadCycleSeconds), 0, rounds - 1);
+            float cycleStart = ReloadLeadInSeconds + cycle * ReloadCycleSeconds;
+            float insertStart = cycleStart + CycleShellInsertStart;
+            float insertEnd = cycleStart + CycleShellInsertEnd;
+
             if (handShell != null && leftHand != null)
             {
-                bool wantHandShell = t >= HandShellShowTime && t < ShellInsertStart;
+                // Carried in the off hand from the moment it reaches for the round until it feeds the breech.
+                bool wantHandShell = t >= cycleStart + CycleHandShellShow && t < insertStart;
                 if (wantHandShell && !handShellShown)
                 {
                     handShell.transform.SetParent(leftHand, false);
@@ -224,7 +268,7 @@ public class FlareGunItem : GrabbableInventoryItem
 
             if (chamberShell != null)
             {
-                if (t >= ShellInsertStart && t <= ShellInsertEnd)
+                if (t >= insertStart && t <= insertEnd)
                 {
                     if (!chamberShellShown)
                     {
@@ -232,14 +276,19 @@ public class FlareGunItem : GrabbableInventoryItem
                         chamberShellShown = true;
                     }
 
-                    float slide = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(ShellInsertStart, ShellInsertEnd, t));
+                    float slide = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(insertStart, insertEnd, t));
                     chamberShell.transform.localPosition = Vector3.Lerp(shellInsertStartLocalPos, shellSeatedLocalPos, slide);
                 }
-                else if (t > ShellInsertEnd && chamberShellShown && t >= BarrelCloseStart + BarrelCloseDuration)
+                else if (t > insertEnd && chamberShellShown)
                 {
-                    // Seated round disappears into the closed action.
-                    chamberShell.SetActive(false);
-                    chamberShellShown = false;
+                    // Between cycles the round just loaded stays seated in the chamber; it only disappears
+                    // into the action once the barrel has swung shut on the last one.
+                    chamberShell.transform.localPosition = shellSeatedLocalPos;
+                    if (t >= barrelCloseStart + BarrelCloseDuration)
+                    {
+                        chamberShell.SetActive(false);
+                        chamberShellShown = false;
+                    }
                 }
             }
 

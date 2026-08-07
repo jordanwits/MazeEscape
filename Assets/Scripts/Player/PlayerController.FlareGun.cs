@@ -3,14 +3,24 @@ using UnityEngine;
 
 /// <summary>
 /// Flare gun input + presentation on the player. Attack fires the selected flare gun instead of punching;
-/// the use-item binding (same one as flashlight/bandage) reloads it from a <see cref="FlareAmmoItem"/> in
-/// any hotbar slot. Firing and reloading are validated server-side in <see cref="NetworkPlayerInventory"/>;
+/// the use-item binding (same one as flashlight/bandage) reloads it, filling the gun in one press from the
+/// <see cref="FlareAmmoItem"/> stacks in any hotbar slot. One reload animation covers the whole load.
+/// Firing and reloading are validated server-side in <see cref="NetworkPlayerInventory"/>;
 /// this partial only gates input, plays owner-predicted effects, and runs the reload presentation every
 /// peer shares (body animation trigger from the owner + the gun's own barrel/shell visual).
 /// </summary>
 public partial class PlayerController
 {
-    const string FlareReloadTriggerName = "FlareReload";
+    /// <summary>
+    /// One animator trigger per round count ("FlareReload1".."FlareReload3"), each mapped to its own
+    /// FlareGun_Reload_N state. A single trigger fully determines which reload plays, so there is no window
+    /// in which a peer could start the wrong-length reload because a separate round-count parameter had not
+    /// arrived yet.
+    /// </summary>
+    static string FlareReloadTriggerName(int rounds)
+    {
+        return "FlareReload" + Mathf.Clamp(rounds, 1, FlareGunItem.MaxRounds);
+    }
 
     float _nextFlareFireTime;
     float _flareBusyUntil;
@@ -81,7 +91,10 @@ public partial class PlayerController
             Object.Destroy(go);
     }
 
-    /// <summary>Use-item binding with the flare gun selected: reload one round from carried flare ammo.</summary>
+    /// <summary>
+    /// Use-item binding with the flare gun selected: one press fills the gun from the carried flare-ammo
+    /// stacks (or loads as many rounds as the player still has).
+    /// </summary>
     void RequestFlareReloadFromInput()
     {
         if (Time.time < _flareBusyUntil)
@@ -105,42 +118,64 @@ public partial class PlayerController
         if (gun == null)
             return;
 
-        for (int i = 0; i < 3; i++)
+        int needed = gun.MissingRounds;
+        int drawn = 0;
+        for (int i = 0; i < 3 && drawn < needed; i++)
         {
             if (_localInventorySlots[i] is not FlareAmmoItem ammo)
                 continue;
 
-            _localInventorySlots[i] = null;
-            _localSlotStacks[i] = 0;
-            Object.Destroy(ammo.gameObject);
-            gun.TryAddRound();
-            PlayFlareReloadEffects(gun);
-            RefreshLocalInventoryView();
-            return;
+            int inStack = Mathf.Max(1, _localSlotStacks[i]);
+            int take = Mathf.Min(inStack, needed - drawn);
+            drawn += take;
+
+            if (take >= inStack)
+            {
+                _localInventorySlots[i] = null;
+                _localSlotStacks[i] = 0;
+                Object.Destroy(ammo.gameObject);
+            }
+            else
+            {
+                int remaining = inStack - take;
+                ammo.SetStackCount(remaining);
+                _localSlotStacks[i] = remaining;
+            }
         }
+
+        if (drawn <= 0)
+            return;
+
+        gun.TryAddRounds(drawn);
+        PlayFlareReloadEffects(gun, drawn);
+        RefreshLocalInventoryView();
     }
 
     /// <summary>
     /// Reload presentation on every peer (invoked by the inventory's reload ClientRpc, or directly
-    /// offline): the animation owner fires the replicated FlareReload trigger, and the gun runs its
-    /// barrel-tilt + shell-insert visual locally.
+    /// offline): the animation owner fires the replicated per-count FlareReload trigger, and the gun runs
+    /// its barrel-tilt + shell-insert visual locally. <paramref name="rounds"/> is how many rounds this
+    /// reload actually loaded — it picks the body clip and the number of shell cycles, so both sides of the
+    /// presentation show one arm trip per round.
     /// </summary>
-    public void PlayFlareReloadEffects(FlareGunItem gun)
+    public void PlayFlareReloadEffects(FlareGunItem gun, int rounds)
     {
-        _flareBusyUntil = Time.time + FlareGunItem.ReloadDurationSeconds + 0.1f;
+        rounds = Mathf.Clamp(rounds, 1, FlareGunItem.MaxRounds);
+        _flareBusyUntil = Time.time + FlareGunItem.ReloadDurationForRounds(rounds) + 0.1f;
 
         bool networkActive = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
         bool ownsBodyAnimation = !networkActive
             || (_networkPlayerAvatar != null && _networkPlayerAvatar.IsSpawned && _networkPlayerAvatar.IsOwner);
         if (ownsBodyAnimation)
         {
+            string trigger = FlareReloadTriggerName(rounds);
             if (_networkPlayerAvatar != null)
-                _networkPlayerAvatar.TriggerAnimation(FlareReloadTriggerName);
+                _networkPlayerAvatar.TriggerAnimation(trigger);
             else if (animator != null)
-                animator.SetTrigger(FlareReloadTriggerName);
+                animator.SetTrigger(trigger);
         }
 
-        gun?.PlayReloadVisual(animator);
+        gun?.PlayReloadVisual(animator, rounds);
     }
 
     /// <summary>Selected-slot flare gun plus its peer-correct round count (replicated online, local offline).</summary>

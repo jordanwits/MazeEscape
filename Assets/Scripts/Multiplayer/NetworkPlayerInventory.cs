@@ -60,7 +60,10 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
-    /// <summary>0 when slot is empty; 1 for flashlight; 1–<see cref="GlowstickItem.MaxStack"/> for glowstick stacks.</summary>
+    /// <summary>
+    /// 0 when the slot is empty; 1 for a single item; 1–<see cref="GrabbableInventoryItem.MaxStackSize"/> for
+    /// stackable items (glowsticks, flare rounds).
+    /// </summary>
     readonly NetworkVariable<byte> _slot0Stack = new NetworkVariable<byte>(
         0,
         NetworkVariableReadPermission.Everyone,
@@ -337,9 +340,9 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             || item.IsHeld)
             return false;
 
-        if (item is GlowstickItem gs)
+        // Stackable pickups (glowsticks, flare rounds) can also go into a partly-filled slot of the same type.
+        if (item.IsStackable)
         {
-            int w = gs.StackCount;
             if (GetFirstEmptySlot() >= 0)
                 return true;
             for (int i = 0; i < 3; i++)
@@ -347,9 +350,9 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                 if (GetSlotItemId(i) == 0UL)
                     continue;
                 if (!GrabbableInventoryItem.TryGetRegistered(GetSlotItemId(i), out GrabbableInventoryItem g)
-                    || g is not GlowstickItem)
+                    || g == null || g.ItemTypeId != item.ItemTypeId)
                     continue;
-                if (GetSlotStackCount(i) < GlowstickItem.MaxStack && w > 0)
+                if (GetSlotStackCount(i) < g.MaxStackSize)
                     return true;
             }
             return false;
@@ -423,18 +426,20 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             return;
         }
 
-        if (item is GlowstickItem pickup)
+        if (item.IsStackable)
         {
-            int w = pickup.StackCount;
+            // Top up every same-type slot first; whatever is left needs an empty slot of its own.
+            int w = item.StackCount;
             for (int i = 0; i < 3 && w > 0; i++)
             {
                 ulong slotId = GetSlotItemId(i);
                 if (slotId == 0UL)
                     continue;
-                if (!GrabbableInventoryItem.TryGetRegistered(slotId, out GrabbableInventoryItem inSlotG) || inSlotG is not GlowstickItem inSlot)
+                if (!GrabbableInventoryItem.TryGetRegistered(slotId, out GrabbableInventoryItem inSlot)
+                    || inSlot == null || inSlot.ItemTypeId != item.ItemTypeId)
                     continue;
                 int c = GetSlotStackCount(i);
-                int space = GlowstickItem.MaxStack - c;
+                int space = inSlot.MaxStackSize - c;
                 if (space <= 0)
                     continue;
                 int add = Mathf.Min(w, space);
@@ -445,24 +450,24 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             }
             if (w <= 0)
             {
-                ConsumedItemNetworkStore.ServerMarkConsumed(pickup.ItemId);
-                RemoveWorldItemClientRpc(pickup.ItemId);
-                Object.Destroy(pickup.gameObject);
+                ConsumedItemNetworkStore.ServerMarkConsumed(item.ItemId);
+                RemoveWorldItemClientRpc(item.ItemId);
+                Object.Destroy(item.gameObject);
                 return;
             }
             int emptyG = GetFirstEmptySlot();
             if (emptyG < 0)
             {
-                pickup.SetStackCount(w);
+                item.SetStackCount(w);
                 return;
             }
-            pickup.SetStackCount(w);
+            item.SetStackCount(w);
             _selectedSlot.Value = (byte)emptyG;
-            SetSlotItemId(emptyG, pickup.ItemId);
-            SetSlotItemTypeId(emptyG, pickup.ItemTypeId);
+            SetSlotItemId(emptyG, item.ItemId);
+            SetSlotItemTypeId(emptyG, item.ItemTypeId);
             SetSlotStackCount(emptyG, (byte)w);
             _selectedFlashlightLightOn.Value = false;
-            ApplyItemStateWithTypeClientRpc(pickup.ItemId, pickup.ItemTypeId, true, NetworkObjectId, pickup.transform.position, pickup.transform.rotation, default);
+            ApplyItemStateWithTypeClientRpc(item.ItemId, item.ItemTypeId, true, NetworkObjectId, item.transform.position, item.transform.rotation, default);
             return;
         }
 
@@ -518,7 +523,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             return;
         }
 
-        int stackForDrop = item is GlowstickItem ? GetSlotStackCount(sel) : 1;
+        int stackForDrop = item.IsStackable ? GetSlotStackCount(sel) : 1;
 
         Vector3 norm = dropForward;
         if (norm.sqrMagnitude < 0.0001f)
@@ -529,14 +534,15 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         Quaternion finalDropRotation = item.transform.rotation;
         Vector3 throwImpulse = norm * dropThrowImpulse;
 
-        if (item is GlowstickItem glowStack && stackForDrop > 1)
+        // Dropping out of a stack peels off one unit and leaves the rest in the slot.
+        if (item.IsStackable && stackForDrop > 1)
         {
             int next = stackForDrop - 1;
-            glowStack.SetStackCount(next);
+            item.SetStackCount(next);
             SetSlotStackCount(sel, (byte)next);
-            ulong templateId = glowStack.ItemId;
+            ulong templateId = item.ItemId;
             ulong droppedItemId = ComputeRuntimeDroppedItemId(templateId, ++_runtimeDropSequence);
-            SpawnSingleGlowstickDropClientRpc(templateId, droppedItemId, finalDropPosition, finalDropRotation, throwImpulse);
+            SpawnSingleStackedDropClientRpc(templateId, droppedItemId, finalDropPosition, finalDropRotation, throwImpulse);
             return;
         }
 
@@ -558,8 +564,8 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         }
         else
         {
-            if (item is GlowstickItem gsz)
-                gsz.SetStackCount(Mathf.Max(1, stackForDrop));
+            if (item.IsStackable)
+                item.SetStackCount(Mathf.Max(1, stackForDrop));
             item.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, throwImpulse);
             if (item is GlowstickItem gForVis)
                 gForVis.SetWorldDroppedVisual();
@@ -568,16 +574,20 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         }
     }
 
+    /// <summary>
+    /// Every peer clones one unit out of the still-held stack (glowstick, flare round) and drops it in the
+    /// world under a runtime id they all derive identically.
+    /// </summary>
     [ClientRpc]
-    void SpawnSingleGlowstickDropClientRpc(ulong templateGlowstickItemId, ulong droppedItemId, Vector3 worldPosition, Quaternion worldRotation, Vector3 throwImpulse)
+    void SpawnSingleStackedDropClientRpc(ulong templateItemId, ulong droppedItemId, Vector3 worldPosition, Quaternion worldRotation, Vector3 throwImpulse)
     {
-        if (!GrabbableInventoryItem.TryGetRegistered(templateGlowstickItemId, out GrabbableInventoryItem template)
-            || template is not GlowstickItem)
+        if (!GrabbableInventoryItem.TryGetRegistered(templateItemId, out GrabbableInventoryItem template)
+            || template == null || !template.IsStackable)
             return;
 
         GameObject d = Object.Instantiate(template.gameObject, worldPosition, worldRotation);
         d.transform.SetParent(null, true);
-        if (!d.TryGetComponent(out GlowstickItem dropped) || dropped == null)
+        if (!d.TryGetComponent(out GrabbableInventoryItem dropped) || dropped == null)
         {
             Object.Destroy(d);
             return;
@@ -586,7 +596,8 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         dropped.AssignNetworkItemId(droppedItemId);
         dropped.SetStackCount(1);
         dropped.ApplyNetworkWorldState(worldPosition, worldRotation, throwImpulse);
-        dropped.SetWorldDroppedVisual();
+        if (dropped is GlowstickItem droppedGlow)
+            droppedGlow.SetWorldDroppedVisual();
     }
 
     ulong ComputeRuntimeDroppedItemId(ulong templateItemId, uint sequence)
@@ -809,8 +820,8 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             }
             else
             {
-                if (g is GlowstickItem glowstick)
-                    glowstick.SetStackCount(Mathf.Max(1, GetSlotStackCount(i)));
+                if (g.IsStackable)
+                    g.SetStackCount(Mathf.Max(1, GetSlotStackCount(i)));
                 g.ApplyNetworkWorldState(dropPosition, dropRotation, default);
                 if (g is GlowstickItem glowstickVisual)
                     glowstickVisual.SetWorldDroppedVisual();
@@ -898,8 +909,8 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             SetSlotItemTypeId(i, slot.TypeId);
             SetSlotStackCount(i, slot.StackCount);
 
-            if (item is GlowstickItem glowstick)
-                glowstick.SetStackCount(Mathf.Max(1, slot.StackCount));
+            if (item.IsStackable)
+                item.SetStackCount(Mathf.Max(1, slot.StackCount));
 
             if (spawnedReplacement)
             {
@@ -1437,7 +1448,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         return gun != null;
     }
 
-    /// <summary>Owner-side request to load one carried flare round into the selected flare gun.</summary>
+    /// <summary>Owner-side request to fill the selected flare gun from carried flare rounds.</summary>
     public void RequestReloadSelectedFlareGun()
     {
         if (!IsSpawned)
@@ -1478,13 +1489,14 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (!ServerTryResolveSelectedFlareGun(out FlareGunItem gun))
             return;
 
-        if (gun.LoadedRounds >= FlareGunItem.MaxRounds)
+        int needed = gun.MissingRounds;
+        if (needed <= 0)
             return;
 
-        // Consume one FlareAmmo item from any hotbar slot (selection stays on the gun).
-        int ammoSlot = -1;
-        GrabbableInventoryItem ammo = null;
-        for (int i = 0; i < 3; i++)
+        // One reload fills the gun: draw from the FlareAmmo stacks in any hotbar slot until it is full or
+        // the player runs out (selection stays on the gun either way).
+        int drawn = 0;
+        for (int i = 0; i < 3 && drawn < needed; i++)
         {
             ulong id = GetSlotItemId(i);
             bool slotSaysAmmo = GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdFlareAmmo;
@@ -1505,34 +1517,46 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             if (!resolved || g == null)
                 continue;
 
-            ammoSlot = i;
-            ammo = g;
-            break;
+            int inStack = Mathf.Max(1, GetSlotStackCount(i));
+            int take = Mathf.Min(inStack, needed - drawn);
+            drawn += take;
+
+            if (take >= inStack)
+            {
+                // Stack spent: free the slot and destroy the item object on every peer.
+                SetSlotItemId(i, 0UL);
+                SetSlotItemTypeId(i, GrabbableInventoryItem.TypeIdNone);
+                SetSlotStackCount(i, 0);
+                ulong consumeId = g.ItemId;
+                ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
+                ConsumeItemClientRpc(consumeId);
+                Object.Destroy(g.gameObject);
+            }
+            else
+            {
+                int remaining = inStack - take;
+                g.SetStackCount(remaining);
+                SetSlotStackCount(i, (byte)remaining);
+            }
         }
 
-        if (ammoSlot < 0 || ammo == null)
+        if (drawn <= 0)
             return;
 
-        SetSlotItemId(ammoSlot, 0UL);
-        SetSlotItemTypeId(ammoSlot, GrabbableInventoryItem.TypeIdNone);
-        SetSlotStackCount(ammoSlot, 0);
-        ulong consumeId = ammo.ItemId;
-        ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
-        ConsumeItemClientRpc(consumeId);
-        Object.Destroy(ammo.gameObject);
+        gun.TryAddRounds(drawn);
+        _serverFlareBusyUntil = Time.time + FlareGunItem.ReloadDurationForRounds(drawn);
 
-        gun.TryAddRound();
-        _serverFlareBusyUntil = Time.time + FlareGunItem.ReloadDurationSeconds;
-
-        PlayFlareReloadFxClientRpc();
+        PlayFlareReloadFxClientRpc(drawn);
         RaiseChangedAndRefresh();
     }
 
+    /// <summary><paramref name="rounds"/> is how many rounds the server actually loaded, so every peer plays
+    /// the matching reload length (one off-hand trip per round).</summary>
     [ClientRpc]
-    void PlayFlareReloadFxClientRpc()
+    void PlayFlareReloadFxClientRpc(int rounds)
     {
         if (ServerTryResolveSelectedFlareGunLocalView(out FlareGunItem gun))
-            playerController?.PlayFlareReloadEffects(gun);
+            playerController?.PlayFlareReloadEffects(gun, rounds);
     }
 
     public bool ServerTryConsumeKeyItem()

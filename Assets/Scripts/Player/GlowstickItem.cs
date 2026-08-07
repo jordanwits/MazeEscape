@@ -2,32 +2,16 @@ using UnityEngine;
 
 /// <summary>Simple glowstick / pickup: held at the hand point, optional point light in world; light stays on while held in hand, off while stashed in inventory.
 /// </summary>
-public class GlowstickItem : GrabbableInventoryItem
+public class GlowstickItem : StackableInventoryItem
 {
     public const int MaxStack = 5;
 
-    [Tooltip("How many stick units this pickup represents (chests typically spawn 5).")]
-    [SerializeField] int _stackCount = 1;
     [SerializeField] Light[] _pointLights;
     [SerializeField] bool _onWhenSelectedInHand = true;
 
     bool _localLightWanted = true;
 
-    public int StackCount => _stackCount;
-
-    /// <summary>Clamps to <see cref="MaxStack"/>; inventory also tracks stack on the server.</summary>
-    public void SetStackCount(int count)
-    {
-        _stackCount = Mathf.Clamp(count, 1, MaxStack);
-    }
-
-    public int AddToStackClamped(int delta)
-    {
-        int next = Mathf.Clamp(_stackCount + delta, 1, MaxStack);
-        int applied = next - _stackCount;
-        _stackCount = next;
-        return applied;
-    }
+    public override int MaxStackSize => MaxStack;
 
     protected override void Awake()
     {
@@ -35,7 +19,6 @@ public class GlowstickItem : GrabbableInventoryItem
         if (_pointLights == null || _pointLights.Length == 0)
             _pointLights = GetComponentsInChildren<Light>(true);
         _localLightWanted = AnyLightEnabled();
-        _stackCount = Mathf.Clamp(_stackCount, 1, MaxStack);
         base.Awake();
     }
 

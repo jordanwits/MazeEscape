@@ -239,8 +239,12 @@ public class MazeChest : NetworkBehaviour
             instance.transform.SetParent(null, true);
             if (instance.TryGetComponent(out GrabbableInventoryItem grabbable))
                 grabbable.AssignNetworkItemId(ComputeLootItemId(seed, i, idx));
+            // Chest loot spawns as a stack rather than a single unit: a full pack of glowsticks, or enough
+            // flare rounds for one full reload.
             if (instance.TryGetComponent(out GlowstickItem glow))
                 glow.SetStackCount(GlowstickItem.MaxStack);
+            else if (instance.TryGetComponent(out FlareAmmoItem flareAmmo))
+                flareAmmo.SetStackCount(FlareAmmoItem.LootStackSize);
             ApplyChestLootAtRest(instance);
         }
 

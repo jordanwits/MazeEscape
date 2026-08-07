@@ -161,7 +161,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FlareGunItem
   _itemTypeId: 10
-  _slotIcon: {fileID: 0}
+  _slotIcon: {fileID: 21300000, guid: 9dc7defc476a61840846d858df839610, type: 3}
   itemRigidbody: {fileID: 7500065495672919143}
   itemColliders: []
   itemRenderers: []
@@ -184,17 +184,17 @@ MonoBehaviour:
   shellInsertStartLocalPos: {x: -0.075, y: 0.03, z: 0}
   shellSeatedLocalPos: {x: -0.007, y: 0.026, z: 0}
   handShell: {fileID: 5464611508795282750}
-  handShellLocalPos: {x: -0.1052, y: 0.0388, z: 0.0576}
-  handShellLocalEuler: {x: 354, y: 272.7, z: 185.6}
+  handShellLocalPos: {x: -0.1273, y: 0.0952, z: -0.0399}
+  handShellLocalEuler: {x: 324.95, y: 132.57, z: 45.19}
   muzzleFlash: {fileID: 4082670379096215239}
   muzzleLight: {fileID: 133895201646718800}
   gunAudioSource: {fileID: 2135653778117485053}
   fireClip: {fileID: 8300000, guid: 926ea5be5aafbb1429e933c97f4cbbbe, type: 3}
   fireVolume: 0.9
   reloadClip: {fileID: 8300000, guid: 5663694c4a133ba42a2901326c049c59, type: 3}
-  reloadVolume: 0.85
+  reloadVolume: 0.7
   dryFireClip: {fileID: 8300000, guid: 6de307edfeaf6eb48a991184293947cd, type: 3}
-  dryFireVolume: 0.7
+  dryFireVolume: 0.4
 --- !u!1 &1658063860120928991
 GameObject:
   m_ObjectHideFlags: 0

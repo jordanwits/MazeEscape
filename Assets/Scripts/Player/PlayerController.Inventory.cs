@@ -88,11 +88,11 @@ public partial class PlayerController
                     f.ApplyInventoryStashVisual(isStash, _networkPlayerInventory.SelectedFlashlightLightOn);
                 }
 
+                if (g.IsStackable)
+                    g.SetStackCount(_networkPlayerInventory.GetSlotStackCount(i));
+
                 if (g is GlowstickItem gs)
-                {
-                    gs.SetStackCount(_networkPlayerInventory.GetSlotStackCount(i));
                     gs.SetEmissiveInHand(!isStash, true);
-                }
             }
 
             DetachItemsNoLongerInNetworkInventory(holderId);
@@ -248,11 +248,11 @@ public partial class PlayerController
                 f2.ApplyInventoryStashVisual(!inHand, f2.IsLightOn);
             }
 
+            if (g.IsStackable)
+                g.SetStackCount(_localSlotStacks[i]);
+
             if (g is GlowstickItem gs2)
-            {
-                gs2.SetStackCount(_localSlotStacks[i]);
                 gs2.SetEmissiveInHand(inHand, true);
-            }
         }
 
         ApplyHoldPoseAnimatorParameter();
@@ -277,16 +277,17 @@ public partial class PlayerController
         if (item == null || item.IsHeld)
             return false;
 
-        if (item is GlowstickItem gs)
+        // Stackable pickups (glowsticks, flare rounds) can also go into a partly-filled slot of the same type.
+        if (item.IsStackable)
         {
-            int w = gs.StackCount;
             if (GetLocalFirstEmptySlot() >= 0)
                 return true;
             for (int i = 0; i < 3; i++)
             {
-                if (_localInventorySlots[i] is not GlowstickItem)
+                GrabbableInventoryItem inSlot = _localInventorySlots[i];
+                if (inSlot == null || inSlot.ItemTypeId != item.ItemTypeId)
                     continue;
-                if (_localSlotStacks[i] < GlowstickItem.MaxStack && w > 0)
+                if (_localSlotStacks[i] < inSlot.MaxStackSize)
                     return true;
             }
             return false;
@@ -316,15 +317,17 @@ public partial class PlayerController
             return;
         }
 
-        if (g is GlowstickItem pickup)
+        if (g.IsStackable)
         {
-            int w = pickup.StackCount;
+            // Top up every same-type slot first; whatever is left needs an empty slot of its own.
+            int w = g.StackCount;
             for (int i = 0; i < 3 && w > 0; i++)
             {
-                if (_localInventorySlots[i] is not GlowstickItem inSlot)
+                GrabbableInventoryItem inSlot = _localInventorySlots[i];
+                if (inSlot == null || inSlot.ItemTypeId != g.ItemTypeId)
                     continue;
                 int c = _localSlotStacks[i];
-                int space = GlowstickItem.MaxStack - c;
+                int space = inSlot.MaxStackSize - c;
                 if (space <= 0)
                     continue;
                 int add = Mathf.Min(w, space);
@@ -334,7 +337,7 @@ public partial class PlayerController
             }
             if (w <= 0)
             {
-                Destroy(pickup.gameObject);
+                Destroy(g.gameObject);
                 RefreshLocalInventoryView();
                 SetPickupPromptVisible(false);
                 return;
@@ -342,11 +345,11 @@ public partial class PlayerController
             int empty = GetLocalFirstEmptySlot();
             if (empty < 0)
             {
-                pickup.SetStackCount(w);
+                g.SetStackCount(w);
                 return;
             }
-            pickup.SetStackCount(w);
-            _localInventorySlots[empty] = pickup;
+            g.SetStackCount(w);
+            _localInventorySlots[empty] = g;
             _localSlotStacks[empty] = w;
             _localSelectedSlot = empty;
             RefreshLocalInventoryView();
@@ -382,20 +385,22 @@ public partial class PlayerController
         dropPos.y = Mathf.Max(dropPos.y, transform.position.y + 0.1f);
         Quaternion dropRot = flashlightHoldPoint != null ? flashlightHoldPoint.rotation : transform.rotation;
 
-        if (g is GlowstickItem gsInv && _localSlotStacks[slot] > 1)
+        // Dropping out of a stack peels off one unit and leaves the rest in the slot.
+        if (g.IsStackable && _localSlotStacks[slot] > 1)
         {
             int next = _localSlotStacks[slot] - 1;
             _localSlotStacks[slot] = next;
-            gsInv.SetStackCount(next);
+            g.SetStackCount(next);
 
-            GameObject d = Object.Instantiate(gsInv.gameObject, dropPos, dropRot);
+            GameObject d = Object.Instantiate(g.gameObject, dropPos, dropRot);
             d.transform.SetParent(null, true);
-            if (d.TryGetComponent(out GlowstickItem dropped) && dropped != null)
+            if (d.TryGetComponent(out GrabbableInventoryItem dropped) && dropped != null)
             {
                 dropped.SetStackCount(1);
                 dropped.StashOverrideParent = null;
                 dropped.ApplyNetworkWorldState(dropPos, dropRot, imp);
-                dropped.SetWorldDroppedVisual();
+                if (dropped is GlowstickItem droppedGlow)
+                    droppedGlow.SetWorldDroppedVisual();
             }
             else
             {
@@ -406,8 +411,8 @@ public partial class PlayerController
             return;
         }
 
-        if (g is GlowstickItem gs)
-            gs.SetStackCount(Mathf.Max(1, _localSlotStacks[slot]));
+        if (g.IsStackable)
+            g.SetStackCount(Mathf.Max(1, _localSlotStacks[slot]));
 
         _localInventorySlots[slot] = null;
         _localSlotStacks[slot] = 0;
@@ -488,16 +493,16 @@ public partial class PlayerController
                         icon.sprite = g.GetEffectiveSlotIconForHud();
                         icon.color = Color.white;
                         icon.enabled = true;
-                        bool isGlow = g is GlowstickItem;
-                        SetSlotStackText(i, isGlow ? _networkPlayerInventory.GetSlotStackCount(i) : 0, isGlow);
+                        bool showCount = g.IsStackable;
+                        SetSlotStackText(i, showCount ? _networkPlayerInventory.GetSlotStackCount(i) : 0, showCount);
                     }
                     else
                     {
                         icon.sprite = GrabbableInventoryItem.GetPlaceholderSlotIcon(itemType);
                         icon.color = Color.white;
                         icon.enabled = icon.sprite != null;
-                        bool isGlow = itemType == GrabbableInventoryItem.TypeIdGlowstick;
-                        SetSlotStackText(i, isGlow ? _networkPlayerInventory.GetSlotStackCount(i) : 0, isGlow);
+                        bool showCount = GrabbableInventoryItem.IsStackableTypeId(itemType);
+                        SetSlotStackText(i, showCount ? _networkPlayerInventory.GetSlotStackCount(i) : 0, showCount);
                     }
                 }
             }
@@ -515,8 +520,8 @@ public partial class PlayerController
                     icon.sprite = g.GetEffectiveSlotIconForHud();
                     icon.color = Color.white;
                     icon.enabled = true;
-                    bool isGlow = g is GlowstickItem;
-                    SetSlotStackText(i, isGlow ? _localSlotStacks[i] : 0, isGlow);
+                    bool showCount = g.IsStackable;
+                    SetSlotStackText(i, showCount ? _localSlotStacks[i] : 0, showCount);
                 }
             }
 
@@ -530,14 +535,15 @@ public partial class PlayerController
         }
     }
 
-    void SetSlotStackText(int index, int count, bool showForGlowstick)
+    /// <summary>Unit count badge on a hotbar slot; only stackable items (glowsticks, flare rounds) show one.</summary>
+    void SetSlotStackText(int index, int count, bool showCount)
     {
         if (_inventorySlotCountTexts == null || index < 0 || index >= _inventorySlotCountTexts.Length)
             return;
         TMP_Text t = _inventorySlotCountTexts[index];
         if (t == null)
             return;
-        if (!showForGlowstick)
+        if (!showCount)
         {
             t.enabled = false;
             t.text = string.Empty;

@@ -126,6 +126,30 @@ public class GrabbableInventoryItem : MonoBehaviour
     public byte ItemTypeId => _itemTypeId;
     public Sprite SlotIcon => _slotIcon;
 
+    /// <summary>
+    /// How many units of this item fit in one hotbar slot. 1 = not stackable (the default). Stackable
+    /// pickups derive from <see cref="StackableInventoryItem"/> and override this.
+    /// </summary>
+    public virtual int MaxStackSize => 1;
+
+    /// <summary>Units this instance represents. Always 1 on a non-stackable item.</summary>
+    public virtual int StackCount => 1;
+
+    /// <summary>Sets the units this instance represents; a no-op on a non-stackable item.</summary>
+    public virtual void SetStackCount(int count) { }
+
+    public bool IsStackable => MaxStackSize > 1;
+
+    /// <summary>
+    /// Stackability from the replicated type id alone, for the paths where the item object itself is not
+    /// resolvable on this peer yet (e.g. the HUD drawing a slot from its type id before the world copy is
+    /// registered). Keep in sync with which items derive from <see cref="StackableInventoryItem"/>.
+    /// </summary>
+    public static bool IsStackableTypeId(byte typeId)
+    {
+        return typeId == TypeIdGlowstick || typeId == TypeIdFlareAmmo;
+    }
+
     // Renamed to invalidate one-time cached disc sprites if placeholder art changes.
     static Sprite s_hudPhDefault;
     static Sprite s_hudPhFlash;
@@ -191,7 +215,7 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdRingBlue => s_hudPhRingBlue ??= CreatePlaceholderSprite(0.25f, 0.45f, 0.95f),
             TypeIdRingGreen => s_hudPhRingGreen ??= CreatePlaceholderSprite(0.25f, 0.85f, 0.35f),
             TypeIdRingYellow => s_hudPhRingYellow ??= CreatePlaceholderSprite(0.95f, 0.85f, 0.25f),
-            TypeIdFlareGun => s_hudPhFlareGun ??= CreatePlaceholderSprite(0.95f, 0.32f, 0.12f),
+            TypeIdFlareGun => FlareGunItem.SharedHudSlotIcon ?? (s_hudPhFlareGun ??= CreatePlaceholderSprite(0.95f, 0.32f, 0.12f)),
             TypeIdFlareAmmo => FlareAmmoItem.SharedHudSlotIcon ?? (s_hudPhFlareAmmo ??= CreatePlaceholderSprite(0.9f, 0.6f, 0.18f)),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };

@@ -110,7 +110,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::KeyItem
   _itemTypeId: 3
-  _slotIcon: {fileID: 21300000, guid: 803f13083c5f3f64987de356205696dc, type: 3}
+  _slotIcon: {fileID: 21300000, guid: 19c547b5a5c28344eab83610c58b7d63, type: 3}
   itemRigidbody: {fileID: 0}
   itemColliders: []
   itemRenderers: []
@@ -122,6 +122,8 @@ MonoBehaviour:
   heldRotationOffsetEuler: {x: 270, y: 90, z: 0}
   heldAttachToHandSocket: 1
   heldWristEulerOffset: {x: 0, y: 0, z: 0}
+  heldArmViewPitchFollow: 0
+  heldArmViewPitchMaxDegrees: 0
   gripStyle: 1
 --- !u!114 &5511223344880011010
 MonoBehaviour:

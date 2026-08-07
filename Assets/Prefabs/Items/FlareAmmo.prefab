@@ -1,5 +1,36 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!1 &7997533628590479655
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8627365960061127583}
+  m_Layer: 0
+  m_Name: GripPoint_R
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8627365960061127583
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7997533628590479655}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -0.02055788, y: -0.00083176827, z: -0.01025769}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1273622511855554294}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &8486127490677680942
 GameObject:
   m_ObjectHideFlags: 0
@@ -33,7 +64,8 @@ Transform:
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 8627365960061127583}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!33 &7403808414033385252
@@ -156,16 +188,19 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FlareAmmoItem
   _itemTypeId: 11
-  _slotIcon: {fileID: 0}
+  _slotIcon: {fileID: 21300000, guid: 65f8d1e3abde3a648878e5e53c2ddc22, type: 3}
   itemRigidbody: {fileID: 889197213001163742}
   itemColliders: []
   itemRenderers: []
   heldLocalPosition: {x: 0, y: -0.06, z: -0.4}
   heldLocalEulerAngles: {x: 0, y: 0, z: 0}
   alignRotationWithFollow: 1
-  gripPointRight: {fileID: 0}
+  gripPointRight: {fileID: 8627365960061127583}
   gripPointLeft: {fileID: 0}
-  heldRotationOffsetEuler: {x: 0, y: 0, z: 0}
+  heldRotationOffsetEuler: {x: 6.882882, y: -90.1073, z: 6.870037}
   heldAttachToHandSocket: 1
   heldWristEulerOffset: {x: 0, y: 0, z: 0}
+  heldArmViewPitchFollow: 0
+  heldArmViewPitchMaxDegrees: 0
   gripStyle: 0
+  _stackCount: 1
