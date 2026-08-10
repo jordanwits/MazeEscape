@@ -67,6 +67,9 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] string doorOpenPromptMessage = "Press E to open";
     [SerializeField] string teleportOrbPromptMessage = "Hold E to teleport";
     [SerializeField] string skeletonRpsPromptMessage = "Press E to challenge the skeleton";
+    [SerializeField] string elevatorCallPromptMessage = "Press E to call the elevator";
+    [Tooltip("Shown on the cab's inside pad only when there is no occupancy gate to report (a detached dev-scene cab); the real finish elevator shows the N/M aboard count instead.")]
+    [SerializeField] string elevatorCloseDoorsPromptMessage = "Press E to close the doors";
     [Tooltip("Optional mask for interactable items. If empty, Unity default raycast layers are used.")]
     [SerializeField] LayerMask interactMask;
     [NonSerialized] RaycastHit[] _interactCastHitBuffer = new RaycastHit[32];
@@ -2002,6 +2005,24 @@ public partial class PlayerController : MonoBehaviour
             }
         }
 
+        // Sliding-door elevator pads: the outside one calls the cab, the inside one shows who is still missing.
+        if (cam != null
+            && TryFindInteractableElevatorButton(cam, out ElevatorCallButton elevatorButton)
+            && elevatorButton.CanPress(transform.position))
+        {
+            if (elevatorButton.Action == ElevatorCallButton.ElevatorButtonAction.CloseDoors)
+            {
+                if (elevatorButton.TryGetOccupancyPrompt(transform.position, out int inside, out int required))
+                    SetElevatorClosePromptVisible(true, inside, required);
+                else
+                    SetPickupPromptVisible(true, elevatorCloseDoorsPromptMessage);
+                return;
+            }
+
+            SetPickupPromptVisible(true, elevatorCallPromptMessage);
+            return;
+        }
+
         if (cam != null && TryFindInteractableSkeletonRps(cam, out _))
         {
             SetPickupPromptVisible(true, skeletonRpsPromptMessage);
@@ -2105,6 +2126,34 @@ public partial class PlayerController : MonoBehaviour
             if (found != null && !found.IsConsumed && found.IsInInteractRange(cam.position))
             {
                 orb = found;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool TryFindInteractableElevatorButton(Transform cam, out ElevatorCallButton button)
+    {
+        button = null;
+
+        if (cam == null)
+            return false;
+
+        int mask = interactMask.value == 0 ? Physics.DefaultRaycastLayers : interactMask.value;
+        int count = TryInteractCastNonAlloc(cam, mask);
+        if (count <= 0)
+            return false;
+
+        SortInteractHitsByDistance(count);
+
+        for (int i = 0; i < count; i++)
+        {
+            RaycastHit h = _interactCastHitBuffer[i];
+            ElevatorCallButton found = h.collider.GetComponentInParent<ElevatorCallButton>();
+            if (found != null && found.IsInInteractRange(cam.position))
+            {
+                button = found;
                 return true;
             }
         }

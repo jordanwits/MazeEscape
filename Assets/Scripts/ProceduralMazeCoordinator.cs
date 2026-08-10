@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using Unity.AI.Navigation;
@@ -149,6 +149,9 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     // Prefab actually placed at each built cell this build, so BuildCell can steer a cell away from
     // repeating an orthogonal neighbor's piece (see AvoidAdjacentDuplicatePieces). Cleared per build.
     readonly Dictionary<Vector2Int, GameObject> _placedCellPrefabs = new();
+    // Every cell the multi-cell exit hall claimed this build (see TryAttachExitHall). The hall IS the
+    // finish, so nothing else — enemies especially — gets to spawn inside the approach. Cleared per build.
+    readonly HashSet<Vector2Int> _exitHallCells = new();
     string _lastServerMazeBuildSceneName;
     int _lastServerMazeBuildSeed = int.MinValue;
     Dictionary<string, ProceduralMazeConfig> _sectionConfigsByTargetScene;
@@ -492,6 +495,7 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         _loggedMazeWarnings.Clear();
         _placedCellPrefabs.Clear();
+        _exitHallCells.Clear();
         ValidateConfiguredPieceSetup();
 
         ServerDespawnAllLevelNetworkObjects();
@@ -534,8 +538,22 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                 multiStartFootprint = Vector2Int.one;
         }
 
+        // Exit hall: a multi-cell finish piece stamped over a straight run of cells that contains the
+        // exit, so the run ends in a long approach corridor. Runs before interior rooms so they can be
+        // told to keep clear of it; falls back to the single-cell Special piece when nothing fits.
+        Dictionary<Vector2Int, InteriorRoomPlacementEntry> exitHallAnchors = new();
+        HashSet<Vector2Int> exitHallSkips = new();
+        HashSet<Vector2Int> reservedCells = reservedForForcedStart;
+        if (TryAttachExitHall(
+                exitHallAnchors, exitHallSkips, grid, start, exit, width, height, seed, reservedCells))
+        {
+            reservedCells ??= new HashSet<Vector2Int>();
+            foreach (Vector2Int cell in _exitHallCells)
+                reservedCells.Add(cell);
+        }
+
         InteriorRoomBuildPlan interiorPlan = SelectInteriorRoomPlacements(
-            grid, start, exit, seed, width, height, reservedForForcedStart);
+            grid, start, exit, seed, width, height, reservedCells);
         if (startAttached)
         {
             foreach (KeyValuePair<Vector2Int, InteriorRoomPlacementEntry> a in forcedStartAnchors)
@@ -543,6 +561,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             foreach (Vector2Int skip in forcedStartSkips)
                 interiorPlan.SkipCells.Add(skip);
         }
+
+        foreach (KeyValuePair<Vector2Int, InteriorRoomPlacementEntry> a in exitHallAnchors)
+            interiorPlan.Anchors[a.Key] = a.Value;
+        foreach (Vector2Int skip in exitHallSkips)
+            interiorPlan.SkipCells.Add(skip);
 
         Vector2Int? jailDeadEndCell = SelectJailDeadEndCell(
             _config.JailDeadEndPrefab, grid, start, exit, interiorPlan, width, height, seed);
@@ -825,6 +848,208 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         plan.Anchors[start] = entry;
         return true;
+    }
+
+    /// <summary>
+    /// Stamps <see cref="ProceduralMazeConfig.ExitHallPiecePrefab"/> — a 1×N straight finish piece —
+    /// over a run of cells containing the exit cell, so the maze ends in a long approach hallway rather
+    /// than a single 6m room. The prefab is authored running +Z with its mouth (its one open face) on
+    /// the −Z end and its pivot at the centre of the footprint rect, exactly like an interior room.
+    ///
+    /// Every anchor offset along both axes and both mouth ends is tried; the candidate that orphans the
+    /// fewest maze cells wins, with a seeded shuffle breaking ties so a level does not always favour the
+    /// same orientation. Returns false (and leaves the grid untouched) when the prefab is unset,
+    /// mis-authored, or no run fits — the exit cell then builds from the normal Special pool.
+    /// </summary>
+    bool TryAttachExitHall(
+        Dictionary<Vector2Int, InteriorRoomPlacementEntry> anchors,
+        HashSet<Vector2Int> skipCells,
+        MazeCell[,] grid,
+        Vector2Int start,
+        Vector2Int exit,
+        int width,
+        int height,
+        int seed,
+        HashSet<Vector2Int> reservedCells)
+    {
+        GameObject prefab = _config != null ? _config.ExitHallPiecePrefab : null;
+        if (prefab == null)
+            return false;
+
+        if (!MazePieceDefinition.TryGetDefinitionForResolution(prefab, out MazePieceDefinition definition))
+        {
+            LogMazeWarningOnce(
+                "exit-hall-no-definition",
+                $"[Maze] Exit Hall Piece Prefab \"{prefab.name}\" has no MazePieceDefinition; using the single-cell finish piece.",
+                this);
+            return false;
+        }
+
+        Vector2Int authored = definition.ResolveInteriorGridFootprint(_config.InteriorRoomGridFootprint);
+        int length = Mathf.Max(authored.x, authored.y);
+        if (Mathf.Min(authored.x, authored.y) != 1 || length < 2)
+        {
+            LogMazeWarningOnce(
+                "exit-hall-footprint",
+                $"[Maze] Exit Hall Piece Prefab \"{prefab.name}\" needs an Interior Grid Footprint of 1×N or N×1 "
+                + $"(it is {authored.x}×{authored.y}); using the single-cell finish piece.",
+                this);
+            return false;
+        }
+
+        // One entry per (orientation, offset-of-the-exit-cell-along-the-hall). quarterTurns follows the
+        // same clockwise convention as MazeFaceMaskUtility.Rotate, so 1 turn sends the +Z hall to +X.
+        List<ExitHallCandidate> candidates = new(4 * length);
+        for (int offset = 0; offset < length; offset++)
+        {
+            Vector2Int alongZ = new(exit.x, exit.y - offset);
+            Vector2Int alongX = new(exit.x - offset, exit.y);
+            candidates.Add(new ExitHallCandidate(0, alongZ, new Vector2Int(1, length), new Vector2Int(0, 0), MazeFaceMask.South));
+            candidates.Add(new ExitHallCandidate(2, alongZ, new Vector2Int(1, length), new Vector2Int(0, length - 1), MazeFaceMask.North));
+            candidates.Add(new ExitHallCandidate(1, alongX, new Vector2Int(length, 1), new Vector2Int(0, 0), MazeFaceMask.West));
+            candidates.Add(new ExitHallCandidate(3, alongX, new Vector2Int(length, 1), new Vector2Int(length - 1, 0), MazeFaceMask.East));
+        }
+
+        ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0xEE817A11))));
+
+        ExitHallCandidate best = default;
+        Dictionary<Vector2Int, MazeFaceMask> bestChanges = null;
+        MazeFaceMask bestExteriorMask = MazeFaceMask.None;
+        int bestOrphans = int.MaxValue;
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            ExitHallCandidate candidate = candidates[i];
+            if (!IsExitHallRectUsable(candidate, start, width, height, reservedCells))
+                continue;
+
+            HashSet<InteriorDoorwaySpec> doorways = new()
+            {
+                new InteriorDoorwaySpec(candidate.MouthCell, candidate.MouthDirection),
+            };
+
+            if (!TryComputeStampPlan(
+                    grid,
+                    start,
+                    exit,
+                    candidate.Anchor,
+                    candidate.Footprint,
+                    doorways,
+                    width,
+                    height,
+                    out Dictionary<Vector2Int, MazeFaceMask> proposed,
+                    out MazeFaceMask exteriorMask,
+                    out int orphans))
+            {
+                continue;
+            }
+
+            if (orphans >= bestOrphans)
+                continue;
+
+            best = candidate;
+            bestChanges = proposed;
+            bestExteriorMask = exteriorMask;
+            bestOrphans = orphans;
+
+            if (bestOrphans == 0)
+                break;
+        }
+
+        if (bestChanges == null)
+        {
+            LogMazeWarningOnce(
+                "exit-hall-no-placement",
+                $"[Maze] No straight run of {length} cells through the exit cell could host \"{prefab.name}\" "
+                + "(out of bounds, over the start cell, or it would have cut the maze). Using the single-cell finish piece.",
+                this);
+            return false;
+        }
+
+        foreach (KeyValuePair<Vector2Int, MazeFaceMask> change in bestChanges)
+            grid[change.Key.x, change.Key.y].Openings = change.Value;
+
+        for (int ly = 0; ly < best.Footprint.y; ly++)
+        {
+            for (int lx = 0; lx < best.Footprint.x; lx++)
+            {
+                Vector2Int cell = new(best.Anchor.x + lx, best.Anchor.y + ly);
+                _exitHallCells.Add(cell);
+                if (lx != 0 || ly != 0)
+                    skipCells.Add(cell);
+            }
+        }
+
+        Quaternion rotation = Quaternion.Euler(0f, best.QuarterTurns * 90f + definition.YawOffset, 0f);
+        anchors[best.Anchor] = new InteriorRoomPlacementEntry(
+            new MazePieceMatch(prefab, definition, rotation, bestExteriorMask, definition.UseClosedFaceCaps),
+            best.Footprint);
+
+        if (bestOrphans > 0)
+        {
+            Debug.Log(
+                $"[Maze] Exit hall \"{prefab.name}\" placed at ({best.Anchor.x}, {best.Anchor.y}) "
+                + $"{best.Footprint.x}×{best.Footprint.y}; {bestOrphans} maze cell(s) it cut off were pruned.",
+                this);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Bounds/overlap test for an exit-hall rect. Unlike <see cref="IsRectangleStampable"/> this one
+    /// WANTS to cover the exit cell — the hall replaces it — but still refuses the start cell and any
+    /// cell already reserved by the forced start room.
+    /// </summary>
+    static bool IsExitHallRectUsable(
+        ExitHallCandidate candidate,
+        Vector2Int start,
+        int width,
+        int height,
+        HashSet<Vector2Int> reservedCells)
+    {
+        Vector2Int anchor = candidate.Anchor;
+        Vector2Int footprint = candidate.Footprint;
+        if (anchor.x < 0 || anchor.y < 0 || anchor.x + footprint.x > width || anchor.y + footprint.y > height)
+            return false;
+
+        for (int ly = 0; ly < footprint.y; ly++)
+        {
+            for (int lx = 0; lx < footprint.x; lx++)
+            {
+                Vector2Int cell = new(anchor.x + lx, anchor.y + ly);
+                if (cell == start)
+                    return false;
+                if (reservedCells != null && reservedCells.Contains(cell))
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    readonly struct ExitHallCandidate
+    {
+        public ExitHallCandidate(
+            int quarterTurns,
+            Vector2Int anchor,
+            Vector2Int footprint,
+            Vector2Int mouthCell,
+            MazeFaceMask mouthDirection)
+        {
+            QuarterTurns = quarterTurns;
+            Anchor = anchor;
+            Footprint = footprint;
+            MouthCell = mouthCell;
+            MouthDirection = mouthDirection;
+        }
+
+        public int QuarterTurns { get; }
+        public Vector2Int Anchor { get; }
+        public Vector2Int Footprint { get; }
+        /// <summary>Footprint-local cell that holds the hall's one open face.</summary>
+        public Vector2Int MouthCell { get; }
+        public MazeFaceMask MouthDirection { get; }
     }
 
     bool IsDuplicateServerMazeBuild(Scene scene, int seed)
@@ -3002,6 +3227,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                     continue;
 
                 if (_config.MazeEnemyExcludeExitCell && x == exit.x && y == exit.y)
+                    continue;
+
+                // The exit hall is one long finish piece; its anchor cell is a normal built cell, so
+                // without this an enemy could spawn in the approach — or inside the elevator alcove.
+                if (_exitHallCells.Contains(cellKey))
                     continue;
 
                 int? d = distances[x, y];

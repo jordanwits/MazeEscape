@@ -90,6 +90,13 @@ public class ProceduralMazeConfig : ScriptableObject
         + "places exactly one of prefab 0, then up to two of prefab 1).")]
     [SerializeField] int[] interiorRoomPrefabCounts;
 
+    [Header("Exit Hall")]
+    [Tooltip("Optional multi-cell finish piece (MazePieceDefinition with an Interior Grid Footprint of 1×N or N×1, "
+        + "Exit Only, one open face at the mouth end). Stamped over a straight run of cells containing the exit cell, "
+        + "so the run ends in a long approach hallway instead of a single 6m cell. "
+        + "Falls back to the normal single-cell Special piece when no run fits. Leave empty to skip.")]
+    [SerializeField] GameObject exitHallPiecePrefab;
+
     [Header("Start Cell")]
     [Tooltip("When set, the maze start cell always uses this prefab. For a one-opening (end-cap) piece, enable Force Start Cell Single Opening too, or use open faces that cover every start pattern (e.g. a cross).")]
     [SerializeField] GameObject forcedStartPiecePrefab;
@@ -306,6 +313,7 @@ public class ProceduralMazeConfig : ScriptableObject
 
         return Mathf.Max(0, caps[poolIndex]);
     }
+    public GameObject ExitHallPiecePrefab => exitHallPiecePrefab;
     public GameObject ForcedStartPiecePrefab => forcedStartPiecePrefab;
     public bool ForceStartCellSingleOpening => forceStartCellSingleOpening;
     public GameObject CrossPrefab => crossPrefab;

@@ -60,6 +60,7 @@ MonoBehaviour:
   interiorRoomCount: 2
   interiorRoomMinChebyshevSeparation: 3
   interiorRoomPrefabCounts: 
+  exitHallPiecePrefab: {fileID: 8399538026123714017, guid: ab88c64e475a4ce4291489b75030073f, type: 3}
   forcedStartPiecePrefab: {fileID: 7963473589751181286, guid: 7810e4aa659d1d54bb2d0f10dde7eaf1, type: 3}
   forceStartCellSingleOpening: 1
   crossPrefab: {fileID: 7531800331161147241, guid: fe44a429f8225694e889c8d636331553, type: 3}
@@ -113,6 +114,18 @@ MonoBehaviour:
   mazeItemSpawnChance: 1
   mazeTeleportOrbPrefab: {fileID: 0}
   mazeTeleportOrbCount: 3
+  mazeBatRoostPrefab: {fileID: 0}
+  mazeBatRoostCount: 3
+  mazeBatsPerRoost: 8
+  mazeBatRoostHeight: 2.4
+  mazeBatDeadEndShare: 0.5
+  mazeBatRoostMinCellSeparation: 3
+  mazeRoachColonyPrefab: {fileID: 0}
+  mazeRoachColonyCount: 6
+  mazeRoachesPerColony: 14
+  mazeRoachColonyHeight: 1
+  mazeRoachColonySpread: 2.4
+  mazeRoachColonyMinCellSeparation: 2
   mazeRatBotPrefab: {fileID: 0}
   mazeRatBotCount: 1
   mazePosterSpawnChance: 0.25

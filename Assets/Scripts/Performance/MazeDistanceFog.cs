@@ -69,6 +69,19 @@ public class MazeDistanceFog : MonoBehaviour
     bool _cameraOverridden;
     float _nextCameraCheck;
 
+    // Zone override (see SetZoneOverride): a room can ask for its own fog while the local player is
+    // inside it. Everything still goes through this component so there is exactly one writer of
+    // RenderSettings.fog* and of the camera background.
+    Component _zoneOwner;
+    Color _zoneColor;
+    float _zoneStart;
+    float _zoneEnd;
+    float _blendPerSecond = 1f;
+    Color _currentColor;
+    float _currentStart;
+    float _currentEnd;
+    bool _hasCurrent;
+
     void OnEnable()
     {
         ApplyFog();
@@ -78,13 +91,20 @@ public class MazeDistanceFog : MonoBehaviour
     void OnDisable()
     {
         RestoreCamera();
+        _zoneOwner = null;
+        _hasCurrent = false;
         // We own the fog toggle for this scene, so leave it off when we go away.
         RenderSettings.fog = false;
     }
 
     void LateUpdate()
     {
-        if (!enableFog || !overrideCameraBackground)
+        if (!enableFog)
+            return;
+
+        BlendTowardTarget();
+
+        if (!overrideCameraBackground)
             return;
 
         float now = Time.unscaledTime;
@@ -95,6 +115,35 @@ public class MazeDistanceFog : MonoBehaviour
         EnsureCameraOverride();
     }
 
+    /// <summary>
+    /// Hands the fog to a zone (a room whose look needs different fog from the level's — e.g. the dark
+    /// Level03 exit hall, which the level's bright haze would otherwise wash out). The change eases in
+    /// over <paramref name="blendSeconds"/>. Only one zone owns the fog at a time; a second caller
+    /// simply takes over. Pass the same <paramref name="owner"/> to <see cref="ClearZoneOverride"/>.
+    /// </summary>
+    public void SetZoneOverride(Component owner, Color color, float startDistance, float endDistance, float blendSeconds)
+    {
+        _zoneOwner = owner;
+        _zoneColor = color;
+        _zoneStart = Mathf.Max(0f, startDistance);
+        _zoneEnd = Mathf.Max(_zoneStart + 0.01f, endDistance);
+        _blendPerSecond = 1f / Mathf.Max(0.01f, blendSeconds);
+    }
+
+    /// <summary>
+    /// Releases a zone override and eases back to the level's own fog. Ignored when another zone has
+    /// since taken over, so a player crossing straight from one zone into another never gets a flash
+    /// of level fog from the zone they just left.
+    /// </summary>
+    public void ClearZoneOverride(Component owner, float blendSeconds)
+    {
+        if (_zoneOwner != owner)
+            return;
+
+        _zoneOwner = null;
+        _blendPerSecond = 1f / Mathf.Max(0.01f, blendSeconds);
+    }
+
     /// <summary>Pushes the current settings into <see cref="RenderSettings"/>. Safe to call at runtime after tuning.</summary>
     public void ApplyFog()
     {
@@ -102,20 +151,70 @@ public class MazeDistanceFog : MonoBehaviour
         {
             RenderSettings.fog = false;
             RestoreCamera();
+            _hasCurrent = false;
             return;
         }
 
-        ResolveDistances(out float start, out float end);
+        // Snap rather than blend: this is the level's own fog being (re)applied, not a zone transition.
+        ResolveTarget(out _currentColor, out _currentStart, out _currentEnd);
+        _hasCurrent = true;
+        PushFogToRenderSettings();
+    }
 
+    /// <summary>The fog the level currently wants: a zone's if one owns it, otherwise the serialized level fog.</summary>
+    void ResolveTarget(out Color color, out float start, out float end)
+    {
+        if (_zoneOwner != null)
+        {
+            color = _zoneColor;
+            start = _zoneStart;
+            end = _zoneEnd;
+            return;
+        }
+
+        color = fogColor;
+        ResolveDistances(out start, out end);
+    }
+
+    void BlendTowardTarget()
+    {
+        ResolveTarget(out Color target, out float targetStart, out float targetEnd);
+
+        if (!_hasCurrent)
+        {
+            _currentColor = target;
+            _currentStart = targetStart;
+            _currentEnd = targetEnd;
+            _hasCurrent = true;
+            PushFogToRenderSettings();
+            return;
+        }
+
+        float step = _blendPerSecond * Time.unscaledDeltaTime;
+        bool settled = Mathf.Abs(_currentStart - targetStart) < 0.01f
+            && Mathf.Abs(_currentEnd - targetEnd) < 0.01f
+            && Mathf.Abs(_currentColor.r - target.r) + Mathf.Abs(_currentColor.g - target.g) + Mathf.Abs(_currentColor.b - target.b) < 0.002f;
+        if (settled)
+            return;
+
+        _currentColor = Color.Lerp(_currentColor, target, Mathf.Clamp01(step));
+        _currentStart = Mathf.Lerp(_currentStart, targetStart, Mathf.Clamp01(step));
+        _currentEnd = Mathf.Lerp(_currentEnd, targetEnd, Mathf.Clamp01(step));
+        PushFogToRenderSettings();
+    }
+
+    void PushFogToRenderSettings()
+    {
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Linear;
-        RenderSettings.fogColor = fogColor;
-        RenderSettings.fogStartDistance = start;
-        RenderSettings.fogEndDistance = end;
+        RenderSettings.fogColor = _currentColor;
+        RenderSettings.fogStartDistance = _currentStart;
+        RenderSettings.fogEndDistance = _currentEnd;
 
-        // Re-apply the fog colour to any camera we've already taken over (e.g. colour tweaked at runtime).
+        // Keep the camera clear colour welded to the fog colour, or the culled gap at the end of a
+        // hall would show the previous colour while the fog blends.
         if (_cameraOverridden && _camera != null)
-            _camera.backgroundColor = fogColor;
+            _camera.backgroundColor = _currentColor;
     }
 
     void ResolveDistances(out float start, out float end)
@@ -151,7 +250,7 @@ public class MazeDistanceFog : MonoBehaviour
             if (cam != null && _cameraOverridden && cam.clearFlags != CameraClearFlags.SolidColor)
             {
                 cam.clearFlags = CameraClearFlags.SolidColor;
-                cam.backgroundColor = fogColor;
+                cam.backgroundColor = _currentColor;
             }
             return;
         }
@@ -166,7 +265,7 @@ public class MazeDistanceFog : MonoBehaviour
         _savedClearFlags = _camera.clearFlags;
         _savedBackground = _camera.backgroundColor;
         _camera.clearFlags = CameraClearFlags.SolidColor;
-        _camera.backgroundColor = fogColor;
+        _camera.backgroundColor = _hasCurrent ? _currentColor : fogColor;
         _cameraOverridden = true;
     }
 

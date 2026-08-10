@@ -634,6 +634,14 @@ public partial class PlayerController
             return;
         }
 
+        if (cam != null
+            && TryFindInteractableElevatorButton(cam, out ElevatorCallButton elevatorButton)
+            && elevatorButton.CanPress(transform.position))
+        {
+            elevatorButton.Press(transform.position);
+            return;
+        }
+
         if (cam != null && TryFindInteractableSkeletonRps(cam, out SkeletonRpsChallenge rpsChallenge) && rpsChallenge != null)
         {
             rpsChallenge.RequestChallengeInteract(this);

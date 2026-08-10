@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -6,6 +7,8 @@ using UnityEngine.SceneManagement;
 /// <summary>
 /// Server-spawned sync object for the maze exit elevator: occupancy counts, close gating, synchronized advance to the next maze scene when doors finish closing,
 /// or return to menu when there is no configured next section (e.g. last level).
+/// Handles both cab styles — the dungeon's pair of <see cref="HingeInteractDoor"/> leaves, and the Severance cab's
+/// <see cref="ElevatorSlidingDoors"/> driven from its two <see cref="ElevatorCallButton"/> pads.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
@@ -14,6 +17,10 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
     [SerializeField] BoxCollider interiorVolume;
     [Tooltip("Optional: rigidbody added when volume needs trigger events; if null, occupancy uses bounds checks only.")]
     [SerializeField] bool addKinematicRigidbodyToVolume = true;
+    [Tooltip(
+        "Last section of the run: closing the doors ends the game and returns everyone to the main menu instead of "
+        + "loading the next maze scene. Leave off for sections that advance.")]
+    [SerializeField] bool endRunInsteadOfAdvancing;
 
     readonly NetworkVariable<int> _livingInside = new(
         0,
@@ -25,12 +32,45 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
+    /// <summary>Replicated state of the sliding cab doors. The leaves themselves are local maze-piece geometry on every peer.</summary>
+    readonly NetworkVariable<bool> _doorsOpen = new(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
     HingeInteractDoor _doorA;
     HingeInteractDoor _doorB;
+    ElevatorSlidingDoors _slidingDoors;
     bool _pendingSceneAfterDoorsIdle;
+    /// <summary>Set once a close has been authorized: the run is committed and the pads stop answering.</summary>
+    bool _runCommitted;
+    bool _boundToFinishPiece;
+    Coroutine _bindRoutine;
 
     public int LivingInsideDisplay => IsSpawned ? _livingInside.Value : 0;
     public int LivingRequiredDisplay => IsSpawned ? _livingRequired.Value : 0;
+
+    /// <summary>No session at all (single-player play mode): this instance drives the elevator locally.</summary>
+    static bool IsOfflineSession
+    {
+        get
+        {
+            NetworkManager nm = NetworkManager.Singleton;
+            return nm == null || !nm.IsListening;
+        }
+    }
+
+    /// <summary>Only the server decides, except with no session at all, where the local peer is all there is.</summary>
+    bool HasElevatorAuthority => IsSpawned ? IsServer : IsOfflineSession;
+
+    /// <summary>Whether this instance is the one the cab pads should be talking to.</summary>
+    public bool ElevatorButtonsResponsive => _slidingDoors != null && (IsSpawned || IsOfflineSession);
+
+    bool DoorsOpenState => IsSpawned ? _doorsOpen.Value : _slidingDoors != null && _slidingDoors.IsOpen;
+
+    public bool CanRequestDoorsOpen => ElevatorButtonsResponsive && !_runCommitted && !DoorsOpenState;
+
+    public bool CanRequestDoorsClose => ElevatorButtonsResponsive && !_runCommitted && DoorsOpenState;
 
     void Awake()
     {
@@ -50,39 +90,163 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         }
     }
 
+    void Start()
+    {
+        // With no session this in-piece copy is the elevator's brain. In a session it must stay inert: the client's
+        // maze build makes its own copy of this object alongside the replicated one, and only the replicated one may
+        // bind the pads (see ElevatorCallButton.AssignController).
+        if (IsOfflineSession)
+            BeginBindingToFinishPiece();
+    }
+
     public override void OnNetworkSpawn()
     {
         // Bind doors on clients too so localized prompts can resolve this controller (counts replicate via Netvars).
-        if (!TryGetDoorsNearMarker(out HingeInteractDoor[] doors))
-            return;
+        BeginBindingToFinishPiece();
 
-        foreach (HingeInteractDoor d in doors)
-        {
-            if (d != null)
-                d.AssignRuntimeCloseValidator(this);
-        }
-
-        if (IsServer)
-            ServerCacheDoorPairsForIdleCheck(doors);
+        _doorsOpen.OnValueChanged += OnDoorsOpenChanged;
+        if (_slidingDoors != null)
+            _slidingDoors.SetOpen(_doorsOpen.Value, immediate: true);
     }
 
-    bool TryGetDoorsNearMarker(out HingeInteractDoor[] doors)
+    public override void OnNetworkDespawn()
     {
-        doors = System.Array.Empty<HingeInteractDoor>();
-        ElevatorFinishSpawnMarker marker = TryResolveSpawnMarkerForThisSync();
-        if (marker == null)
+        _doorsOpen.OnValueChanged -= OnDoorsOpenChanged;
+    }
+
+    void OnDoorsOpenChanged(bool previous, bool current)
+    {
+        if (_slidingDoors == null || previous == current)
+            return;
+
+        _slidingDoors.SetOpen(current, immediate: false);
+    }
+
+    /// <summary>
+    /// Binds hinge leaves, sliding doors and call pads from the finish piece. A client can receive this spawn before
+    /// its own maze build has placed the piece, so the lookup retries until the marker shows up instead of leaving the
+    /// cab dead on that peer.
+    /// </summary>
+    void BeginBindingToFinishPiece()
+    {
+        if (_boundToFinishPiece || _bindRoutine != null)
+            return;
+
+        if (TryBindToFinishPiece())
+            return;
+
+        _bindRoutine = StartCoroutine(CoBindToFinishPiece());
+    }
+
+    IEnumerator CoBindToFinishPiece()
+    {
+        const float retryInterval = 0.5f;
+        const float giveUpAfterSeconds = 60f;
+
+        float waited = 0f;
+        while (waited < giveUpAfterSeconds)
         {
-            Debug.LogWarning(
-                "[ElevatorFinish] ElevatorFinishSpawnMarker not found (parent chain or nearest in scene); door gating will not work.",
-                this);
-            return false;
+            yield return new WaitForSecondsRealtime(retryInterval);
+            waited += retryInterval;
+
+            if (TryBindToFinishPiece())
+            {
+                _bindRoutine = null;
+                yield break;
+            }
         }
 
-        doors = marker.GetComponentsInChildren<HingeInteractDoor>(true);
+        _bindRoutine = null;
+        Debug.LogWarning(
+            "[ElevatorFinish] ElevatorFinishSpawnMarker not found (parent chain or nearest in scene); door gating will not work.",
+            this);
+    }
+
+    bool TryBindToFinishPiece()
+    {
+        ElevatorFinishSpawnMarker marker = TryResolveSpawnMarkerForThisSync();
+        if (marker == null)
+            return false;
+
+        HingeInteractDoor[] doors = CollectCabHingeDoors(marker);
+        foreach (HingeInteractDoor d in doors)
+            d.AssignRuntimeCloseValidator(this);
+
+        if (HasElevatorAuthority)
+            CacheDoorPairsForIdleCheck(doors);
+
+        AdoptInteriorVolumeFromPieceCopy(marker);
+
+        _slidingDoors = marker.GetComponentInChildren<ElevatorSlidingDoors>(true);
+
+        ElevatorCallButton[] buttons = marker.GetComponentsInChildren<ElevatorCallButton>(true);
+        for (int i = 0; i < buttons.Length; i++)
+        {
+            if (buttons[i] != null)
+                buttons[i].AssignController(this);
+        }
+
+        // A peer that binds late (maze built after this spawn arrived) has to adopt the state as it stands now.
+        if (_slidingDoors != null && IsSpawned)
+            _slidingDoors.SetOpen(_doorsOpen.Value, immediate: true);
+
+        _boundToFinishPiece = true;
         return true;
     }
 
-    void ServerCacheDoorPairsForIdleCheck(HingeInteractDoor[] doors)
+    /// <summary>
+    /// The cab's own hinge leaves, and only those. Closing an elevator leaf ends the run, so every door this
+    /// returns gets gated on "everyone aboard" — which is wrong for any other door that happens to live in the
+    /// same finish piece. Level03's exit hall has an ordinary entry door 33m up the corridor; gating that one
+    /// left a player unable to close it and staring at the elevator's occupancy count instead of a door prompt.
+    /// A cab's leaves hang off the cab itself (3.5m out on the dungeon/carnival cabs), so proximity to this
+    /// sync object separates them cleanly without needing anything authored on the doors.
+    /// </summary>
+    HingeInteractDoor[] CollectCabHingeDoors(ElevatorFinishSpawnMarker marker)
+    {
+        const float cabLeafRadius = 8f;
+
+        HingeInteractDoor[] all = marker.GetComponentsInChildren<HingeInteractDoor>(true);
+        List<HingeInteractDoor> cabDoors = new(all.Length);
+        for (int i = 0; i < all.Length; i++)
+        {
+            HingeInteractDoor door = all[i];
+            if (door == null)
+                continue;
+            if (Vector3.Distance(door.transform.position, transform.position) > cabLeafRadius)
+                continue;
+
+            cabDoors.Add(door);
+        }
+
+        return cabDoors.ToArray();
+    }
+
+    /// <summary>
+    /// A client's replica is instantiated from the registered ElevatorFinishSync prefab, so it carries that prefab's
+    /// default cab volume rather than the per-piece override the server is counting occupants with. The piece the
+    /// client just built holds an inert copy with the authored volume — take the size from it so "am I aboard" means
+    /// the same thing on every peer.
+    /// </summary>
+    void AdoptInteriorVolumeFromPieceCopy(ElevatorFinishSpawnMarker marker)
+    {
+        if (interiorVolume == null)
+            return;
+
+        ElevatorFinishController[] copies = marker.GetComponentsInChildren<ElevatorFinishController>(true);
+        for (int i = 0; i < copies.Length; i++)
+        {
+            ElevatorFinishController copy = copies[i];
+            if (copy == null || copy == this || copy.IsSpawned || copy.interiorVolume == null)
+                continue;
+
+            interiorVolume.size = copy.interiorVolume.size;
+            interiorVolume.center = copy.interiorVolume.center;
+            return;
+        }
+    }
+
+    void CacheDoorPairsForIdleCheck(HingeInteractDoor[] doors)
     {
         if (doors.Length >= 2)
         {
@@ -179,6 +343,133 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         return b.Contains(sample);
     }
 
+    /// <summary>True when a player standing at <paramref name="feetPosition"/> counts as aboard the cab.</summary>
+    public bool IsPositionInsideInterior(Vector3 feetPosition) =>
+        interiorVolume != null && ServerIsPlayerPositionInsideVolume(interiorVolume.bounds, feetPosition);
+
+    /// <summary>
+    /// Occupancy for the local "close the doors" prompt. With no session there is only the local player, so the
+    /// replicated counters are not running and the caller's own position is the whole answer.
+    /// </summary>
+    public void GetOccupancyForPrompt(Vector3 localPlayerFeetPosition, out int inside, out int required)
+    {
+        if (IsSpawned)
+        {
+            inside = _livingInside.Value;
+            required = _livingRequired.Value;
+            return;
+        }
+
+        required = 1;
+        inside = IsPositionInsideInterior(localPlayerFeetPosition) ? 1 : 0;
+    }
+
+    // ---- sliding cab: call pads ----
+
+    /// <summary>Outside pad: call the elevator. Server (or the local peer offline) decides.</summary>
+    public void RequestDoorsOpenFromButton(Vector3 interactorPosition)
+    {
+        if (_slidingDoors == null)
+            return;
+
+        if (!IsSpawned)
+        {
+            if (!IsOfflineSession)
+                return;
+            if (_runCommitted || _slidingDoors.IsOpen)
+                return;
+
+            _slidingDoors.SetOpen(true, immediate: false);
+            return;
+        }
+
+        RequestDoorsOpenRpc();
+    }
+
+    /// <summary>Inside pad: send the elevator away. Only lands with every living player aboard.</summary>
+    public void RequestDoorsCloseFromButton(Vector3 interactorPosition)
+    {
+        if (_slidingDoors == null)
+            return;
+
+        if (!IsSpawned)
+        {
+            if (!IsOfflineSession)
+                return;
+            if (_runCommitted || !_slidingDoors.IsOpen)
+                return;
+            if (!IsPositionInsideInterior(interactorPosition))
+                return;
+
+            AuthorizeDoorsClose();
+            return;
+        }
+
+        RequestDoorsCloseRpc();
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    void RequestDoorsOpenRpc(RpcParams rpcParams = default)
+    {
+        if (_slidingDoors == null || _runCommitted || _doorsOpen.Value)
+            return;
+
+        if (!ServerTryGetSenderFeetPosition(rpcParams.Receive.SenderClientId, out Vector3 feet))
+            return;
+        if (interiorVolume == null || interiorVolume.bounds.SqrDistance(feet) > 36f)
+            return;
+
+        _doorsOpen.Value = true;
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    void RequestDoorsCloseRpc(RpcParams rpcParams = default)
+    {
+        if (_slidingDoors == null || _runCommitted || !_doorsOpen.Value)
+            return;
+
+        if (!ServerTryGetSenderFeetPosition(rpcParams.Receive.SenderClientId, out Vector3 feet))
+            return;
+        if (!IsPositionInsideInterior(feet))
+            return;
+        // Nobody gets left behind: every living player has to be aboard.
+        if (_livingRequired.Value <= 0 || _livingInside.Value != _livingRequired.Value)
+            return;
+
+        AuthorizeDoorsClose();
+    }
+
+    void AuthorizeDoorsClose()
+    {
+        if (_runCommitted)
+            return;
+
+        _runCommitted = true;
+        _pendingSceneAfterDoorsIdle = true;
+
+        if (IsSpawned)
+            _doorsOpen.Value = false;
+        else
+            _slidingDoors.SetOpen(false, immediate: false);
+    }
+
+    bool ServerTryGetSenderFeetPosition(ulong senderClientId, out Vector3 feetPosition)
+    {
+        feetPosition = Vector3.zero;
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null
+            || !nm.ConnectedClients.TryGetValue(senderClientId, out NetworkClient client)
+            || client.PlayerObject == null)
+        {
+            return false;
+        }
+
+        feetPosition = client.PlayerObject.transform.position;
+        return true;
+    }
+
+    // ---- hinge cab (dungeon / carnival) ----
+
     /// <inheritdoc />
     public bool ServerValidateClose(HingeInteractDoor door, ulong senderClientId)
     {
@@ -202,22 +493,35 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
 
     void Update()
     {
-        if (!IsServer || !_pendingSceneAfterDoorsIdle)
+        if (!_pendingSceneAfterDoorsIdle || !HasElevatorAuthority)
             return;
 
-        if (!ServerTryBothDoorsClosedAndIdle())
+        if (!TryAllElevatorDoorsClosedAndIdle())
             return;
 
         _pendingSceneAfterDoorsIdle = false;
-        ServerCompleteElevatorSequenceAfterDoorsIdle();
+        CompleteElevatorSequenceAfterDoorsIdle();
     }
 
-    void ServerCompleteElevatorSequenceAfterDoorsIdle()
+    void CompleteElevatorSequenceAfterDoorsIdle()
     {
         Scene activeScene = SceneManager.GetActiveScene();
         string currentName = activeScene.IsValid() ? activeScene.name : string.Empty;
+        string nextScene = null;
+        bool hasNextSection =
+            !endRunInsteadOfAdvancing && MultiplayerSceneFlow.TryGetNextMazeSectionScene(currentName, out nextScene);
 
-        if (MultiplayerSceneFlow.TryGetNextMazeSectionScene(currentName, out string nextScene))
+        if (!IsSpawned)
+        {
+            // No session: this is a play-mode run of a single section.
+            if (hasNextSection)
+                SceneManager.LoadScene(nextScene, LoadSceneMode.Single);
+            else
+                RequestReturnToMainMenuLocal();
+            return;
+        }
+
+        if (hasNextSection)
         {
             NetworkManager nm = NetworkManager.Singleton;
             if (nm != null && nm.SceneManager != null)
@@ -313,8 +617,11 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         SceneManager.LoadScene(MultiplayerSceneFlow.MenuSceneName, LoadSceneMode.Single);
     }
 
-    bool ServerTryBothDoorsClosedAndIdle()
+    bool TryAllElevatorDoorsClosedAndIdle()
     {
+        if (_slidingDoors != null)
+            return _slidingDoors.IsClosedAndIdle;
+
         if (_doorA != null && (_doorA.IsOpen || _doorA.IsBusy))
             return false;
         if (_doorB != null && (_doorB.IsOpen || _doorB.IsBusy))
