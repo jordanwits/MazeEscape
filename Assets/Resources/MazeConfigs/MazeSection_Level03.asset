@@ -81,7 +81,7 @@ MonoBehaviour:
   spawnSpacing: 1.5
   spawnPointCount: 0
   enemy1:
-    enemyPrefab: {fileID: 8324813916893631794, guid: bb8ce64463a351b44b8282256b5ae913, type: 3}
+    enemyPrefab: {fileID: 0}
     enemyCount: 8
   enemy2:
     enemyPrefab: {fileID: 6070574438659531992, guid: 53b3863f4a4c02c4ca634926b903ad93, type: 3}
@@ -104,12 +104,12 @@ MonoBehaviour:
   jailorCarryDestinationYOffset: 0.05
   jailorCarryDestinationNavMeshSearchRadius: 4
   jailorCarryDestinationMarkerName: JailorCarryDestination
-  mazeTrapPrefab: {fileID: 2022349335078714508, guid: 47af102dd8e7835409b736ab41efc253, type: 3}
+  mazeTrapPrefab: {fileID: 0}
   mazeTrapCount: 5
   mazeTrapMinCellsFromStart: 2
   mazeTrapExcludeExitCell: 1
   mazeTrapMinSeparation: 1
-  mazeChestPrefab: {fileID: 7786454923030501191, guid: e621573098a2cb04a8ec9019443befb6, type: 3}
+  mazeChestPrefab: {fileID: 0}
   mazeItemSpawnPrefabs: []
   mazeItemSpawnChance: 1
   mazeTeleportOrbPrefab: {fileID: 0}
