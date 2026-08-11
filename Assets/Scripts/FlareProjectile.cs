@@ -5,7 +5,7 @@ using UnityEngine;
 /// The burning flare round fired by <see cref="FlareGunItem"/>. Spawned and simulated by the server
 /// (a registered network prefab — clients see it through its NetworkTransform); offline it simulates
 /// locally. Flies a shallow ballistic arc, passes through players, and on the first world/enemy hit:
-/// applies impact damage to <see cref="ZombieHealth"/>/<see cref="SkeletonHealth"/>, plants a
+/// applies impact damage to <see cref="ZombieHealth"/>/<see cref="SkeletonHealth"/>/<see cref="SecurityGuardHealth"/>, plants a
 /// <see cref="FlareBurnEffect"/> (attached to a damaged enemy for the burn DoT, or resting in the world),
 /// plays an impact flash on every peer, and despawns.
 /// </summary>
@@ -152,16 +152,22 @@ public class FlareProjectile : NetworkBehaviour
 
         ZombieHealth zombie = hit.collider.GetComponentInParent<ZombieHealth>();
         SkeletonHealth skeleton = hit.collider.GetComponentInParent<SkeletonHealth>();
+        SecurityGuardHealth guard = hit.collider.GetComponentInParent<SecurityGuardHealth>();
 
         if (zombie != null && !zombie.IsDead)
         {
             zombie.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
-            FlareBurnEffect.SpawnAttached(burnEffectPrefab, zombie.transform, zombie, null, _shooterRoot, _shooterHealth);
+            FlareBurnEffect.SpawnAttached(burnEffectPrefab, zombie.transform, zombie, null, null, _shooterRoot, _shooterHealth);
         }
         else if (skeleton != null && !skeleton.IsDead)
         {
             skeleton.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
-            FlareBurnEffect.SpawnAttached(burnEffectPrefab, skeleton.transform, null, skeleton, _shooterRoot, _shooterHealth);
+            FlareBurnEffect.SpawnAttached(burnEffectPrefab, skeleton.transform, null, skeleton, null, _shooterRoot, _shooterHealth);
+        }
+        else if (guard != null && !guard.IsDead)
+        {
+            guard.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
+            FlareBurnEffect.SpawnAttached(burnEffectPrefab, guard.transform, null, null, guard, _shooterRoot, _shooterHealth);
         }
         else
         {

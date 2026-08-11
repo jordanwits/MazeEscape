@@ -342,6 +342,7 @@ GameObject:
   - component: {fileID: 3630055004447196528}
   - component: {fileID: 400262453202970581}
   - component: {fileID: 3070919825809000105}
+  - component: {fileID: 2824689695267602895}
   m_Layer: 6
   m_Name: SecurityGuard2
   m_TagString: Untagged
@@ -598,6 +599,8 @@ MonoBehaviour:
   attackCrossfadeDuration: 0.12
   attackExitCrossfadeDuration: 0.18
   staggerStateName: Stagger
+  deathStateName: Death
+  deathCrossfadeDuration: 0.1
   upperBodyLayerIndex: 1
   upperBodyBlendSeconds: 0.12
   attackDriveRunThreshold: 2.8
@@ -622,6 +625,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   guardAnimator: {fileID: 5394543814991538815}
   guardAI: {fileID: 3630055004447196528}
+  guardHealth: {fileID: 2824689695267602895}
   navMeshAgent: {fileID: 3235134919760290278}
   characterController: {fileID: 4409838046163591810}
 --- !u!114 &3070919825809000105
@@ -670,6 +674,23 @@ MonoBehaviour:
   SwitchTransformSpaceWhenParented: 0
   Interpolate: 1
   SlerpPosition: 0
+--- !u!114 &2824689695267602895
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1064645158457067873}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 28308c47db384334b98335c0e23ddcbc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SecurityGuardHealth
+  maxHealth: 300
+  meleeDamageScale: 0.5
+  guardAI: {fileID: 3630055004447196528}
+  disableColliderDelay: 3
+  destroyDelay: 60
 --- !u!1 &1257782105041633169
 GameObject:
   m_ObjectHideFlags: 0

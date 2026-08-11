@@ -31,6 +31,7 @@ public class FlareBurnEffect : NetworkBehaviour
     Transform _followRoot;
     ZombieHealth _zombie;
     SkeletonHealth _skeleton;
+    SecurityGuardHealth _guard;
     Transform _attacker;
     PlayerHealth _attackerHealth;
     float _baseLightIntensity;
@@ -41,7 +42,7 @@ public class FlareBurnEffect : NetworkBehaviour
     /// <summary>Spawns a burn attached to a damaged enemy. Call on the server (or offline). Returns null without a prefab.</summary>
     public static FlareBurnEffect SpawnAttached(
         GameObject prefab, Transform enemyRoot, ZombieHealth zombie, SkeletonHealth skeleton,
-        Transform attacker, PlayerHealth attackerHealth)
+        SecurityGuardHealth guard, Transform attacker, PlayerHealth attackerHealth)
     {
         FlareBurnEffect fx = SpawnCommon(prefab, enemyRoot != null ? enemyRoot.position + Vector3.up * 1.15f : Vector3.zero);
         if (fx == null)
@@ -50,6 +51,7 @@ public class FlareBurnEffect : NetworkBehaviour
         fx._followRoot = enemyRoot;
         fx._zombie = zombie;
         fx._skeleton = skeleton;
+        fx._guard = guard;
         fx._attacker = attacker;
         fx._attackerHealth = attackerHealth;
         fx.BeginAuthorityLife();
@@ -165,6 +167,12 @@ public class FlareBurnEffect : NetworkBehaviour
         }
 
         if (_skeleton != null && !_skeleton.IsDead)
+        {
             _skeleton.TakeDamage(damagePerTick, fromPlayerMelee: false, attacker: _attacker, attackerHealth: _attackerHealth);
+            return;
+        }
+
+        if (_guard != null && !_guard.IsDead)
+            _guard.TakeDamage(damagePerTick, fromPlayerMelee: false, attacker: _attacker, attackerHealth: _attackerHealth);
     }
 }

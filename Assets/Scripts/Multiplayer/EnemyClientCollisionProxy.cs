@@ -79,4 +79,19 @@ public static class EnemyClientCollisionProxy
 
         proxy.SetActive(true);
     }
+
+    /// <summary>
+    /// Drops the proxy on an observer client. Call when the server has disabled the real
+    /// CharacterController for good (a corpse that should stop blocking) — otherwise the body would keep
+    /// blocking on clients only, while the host walks through it.
+    /// </summary>
+    public static void Deactivate(CharacterController characterController)
+    {
+        if (characterController == null)
+            return;
+
+        Transform existing = characterController.transform.Find(ProxyChildName);
+        if (existing != null)
+            existing.gameObject.SetActive(false);
+    }
 }

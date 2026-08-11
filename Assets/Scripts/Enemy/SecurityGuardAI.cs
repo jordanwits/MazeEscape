@@ -8,8 +8,9 @@ using UnityEngine.AI;
 /// The Severance security guard — Level03's hunter (fills the Jailor/Clown "Enemy 2" slot).
 /// A silent, suited martial artist: patrols the porcelain halls at a calm walk, sprints when he spots a
 /// player, and fights with a four-move kit (jab, quad-punch flurry, shoving MMA kick, and a ragdolling
-/// hurricane-kick gap-closer). He cannot be killed; punching him chips a poise meter — breaking it buys a
-/// short stagger escape window, at the risk of an instant counter-kick.
+/// hurricane-kick gap-closer). He is a heavy damage sponge — see <see cref="SecurityGuardHealth"/> — and
+/// every hit also chips a poise meter: breaking it buys a short stagger escape window, at the risk of an
+/// instant counter-kick.
 ///
 /// (An all-fours "running crawl" escalation was prototyped and removed — the guard now escalates
 /// purely through his attack pressure, not a movement mode.)
@@ -32,7 +33,8 @@ public class SecurityGuardAI : MonoBehaviour
         Investigate,
         Chase,
         Attack,
-        Stagger
+        Stagger,
+        Dead
     }
 
     enum GuardAttack
@@ -206,8 +208,8 @@ public class SecurityGuardAI : MonoBehaviour
     [Tooltip("The capsule temporarily widens to this radius during the spin so the body can't hug a wall while kicking.")]
     [SerializeField] float hurricaneCapsuleRadius = 0.45f;
 
-    [Header("Poise (unkillable, but punchable)")]
-    [Tooltip("Player punches never damage him — they chip this meter. Breaking it earns the one full-body stagger (your escape window).")]
+    [Header("Poise (stagger meter — the health pool lives on SecurityGuardHealth)")]
+    [Tooltip("Separate from health: every melee hit both damages him AND chips this meter. Breaking it earns the one full-body stagger (your escape window).")]
     [SerializeField, Min(1f)] float maxPoise = 100f;
     [Tooltip("40 = three quick punches break poise, with margin for the regen that trickles back between hits.")]
     [SerializeField, Min(0f)] float punchPoiseDamage = 40f;
@@ -239,6 +241,10 @@ public class SecurityGuardAI : MonoBehaviour
     [SerializeField] float attackCrossfadeDuration = 0.12f;
     [SerializeField] float attackExitCrossfadeDuration = 0.18f;
     [SerializeField] string staggerStateName = "Stagger";
+    [Tooltip("Full-body one-shot on the base layer with no exit transition — the corpse holds the clip's " +
+             "last frame until SecurityGuardHealth despawns it.")]
+    [SerializeField] string deathStateName = "Death";
+    [SerializeField] float deathCrossfadeDuration = 0.1f;
     [Tooltip("Masked layer carrying the punches (torso/head/arms only) so the legs keep walking or " +
              "running underneath them instead of freezing while the attack drive slides him forward. " +
              "The kicks and the stagger stay full-body on the base layer — they need the legs.")]
@@ -329,6 +335,14 @@ public class SecurityGuardAI : MonoBehaviour
         ? (_engagedWalk ? pressureAdvanceSpeed : chaseSpeed)
         : patrolSpeed;
 
+    /// <summary>Mirrors <see cref="SecurityGuardHealth.IsDead"/> once <see cref="HandleDeath"/> has run on this peer.</summary>
+    public bool IsDead => _state == GuardState.Dead;
+
+    bool IsNetworkClient => _networkObject != null
+        && NetworkManager.Singleton != null
+        && NetworkManager.Singleton.IsListening
+        && !NetworkManager.Singleton.IsServer;
+
     void Awake()
     {
         _networkObject = GetComponent<NetworkObject>();
@@ -364,10 +378,12 @@ public class SecurityGuardAI : MonoBehaviour
 
     void Update()
     {
-        bool isNetworkClient = _networkObject != null
-            && NetworkManager.Singleton != null
-            && NetworkManager.Singleton.IsListening
-            && !NetworkManager.Singleton.IsServer;
+        // A corpse does nothing: no senses, no movement, no audio watchers. The Death state holds its
+        // last frame on the base layer until SecurityGuardHealth despawns the body.
+        if (_state == GuardState.Dead)
+            return;
+
+        bool isNetworkClient = IsNetworkClient;
 
         // Attack whooshes key off the animator state so they play identically on server and clients.
         UpdateAttackWhooshWatcher();
@@ -418,10 +434,12 @@ public class SecurityGuardAI : MonoBehaviour
     void LateUpdate()
     {
         // After the animator has posed the rig this frame, so the toes read their true positions.
-        UpdateFootstepsFromAnimation();
+        // A corpse has no footsteps, but its pose still needs the wall clamp below.
+        if (_state != GuardState.Dead)
+            UpdateFootstepsFromAnimation();
 
-        // Clamp poses that throw the body past the capsule (the stagger lean and the extended
-        // kicks) so the mesh can't pass through a wall. Runs on every peer — keyed off the
+        // Clamp poses that throw the body past the capsule (the stagger lean, the extended kicks, and
+        // the death collapse) so the mesh can't pass through a wall. Runs on every peer — keyed off the
         // replicated animator state, not the server-only AI state.
         if (!clampStaggerToWalls || animator == null || _hipsBone == null)
             return;
@@ -429,6 +447,7 @@ public class SecurityGuardAI : MonoBehaviour
         bool inHurricane = IsAnimatorInState(0, "HurricaneKick");
         bool clampPose = inHurricane
             || IsAnimatorInState(0, staggerStateName)
+            || IsAnimatorInState(0, deathStateName)
             || IsAnimatorInState(0, "MmaKick");
         if (!clampPose)
             return;
@@ -565,7 +584,7 @@ public class SecurityGuardAI : MonoBehaviour
         // A whiff streak describes ONE fight — how well this player has been slipping his reach. Switching
         // prey (getting punched from behind mid-chase, say) starts that read from scratch, or the new
         // target would be met with a hurricane lunge earned entirely by someone else. Guarded on an actual
-        // change because TakeMeleeHit re-targets on every single punch.
+        // change because OnDamageTaken re-targets on every single hit.
         if (targetHealth != _targetHealth)
             _consecutiveWhiffs = 0;
 
@@ -1529,22 +1548,20 @@ public class SecurityGuardAI : MonoBehaviour
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Player melee entry point (called from <c>PlayerController.ApplyMeleeDamageLocally</c>, which runs on the
-    /// server in online sessions). Punches never damage him — they chip poise and roll for a counter:
+    /// Damage REACTION, called by <see cref="SecurityGuardHealth.TakeDamage"/> after the hit has already been
+    /// deducted (server-only, matching <c>ZombieAI.OnDamageTaken</c>/<c>SkeletonAI.OnDamageTaken</c>). The health
+    /// pool decides whether he dies; this decides only how he answers:
     ///   • mid-attack — hyper-armor: poise chips but the committed move keeps coming,
     ///   • poise break — the ONE full-body stagger (your escape window), then a stagger-immunity window,
     ///   • otherwise — a per-hit chance he answers instantly with a kick.
-    /// Returns true when the hit registered (drives the puncher's impact SFX + camera kick).
+    /// Only melee chips poise — a flare at range should not stagger him.
     /// </summary>
-    public bool TakeMeleeHit(Transform attacker, PlayerHealth attackerHealth)
+    public void OnDamageTaken(bool fromPlayerMelee, Transform attacker, PlayerHealth attackerHealth)
     {
-        if (_networkObject != null
-            && NetworkManager.Singleton != null
-            && NetworkManager.Singleton.IsListening
-            && !NetworkManager.Singleton.IsServer)
-            return false;
+        if (_state == GuardState.Dead)
+            return;
 
-        // Getting punched always gets his attention (even from behind, even mid-patrol).
+        // Getting hit always gets his attention (even from behind, even mid-patrol).
         if (attackerHealth != null && !attackerHealth.IsDead && !IsPlayerCarriedByJailor(attackerHealth))
         {
             SetTarget(attackerHealth);
@@ -1552,17 +1569,20 @@ public class SecurityGuardAI : MonoBehaviour
                 EnterChase();
         }
 
+        if (!fromPlayerMelee)
+            return;
+
         _poiseRegenBlockedUntil = Time.time + poiseRegenDelay;
 
         // Hyper-armor: a committed attack cannot be interrupted; poise floors at 1 so the break can't fire mid-move.
         if (_attackRoutine != null)
         {
             _poise = Mathf.Max(1f, _poise - punchPoiseDamage);
-            return true;
+            return;
         }
 
         if (_state == GuardState.Stagger)
-            return true; // already down — free hits, but no re-stagger while he's recovering
+            return; // already down — free hits, but no re-stagger while he's recovering
 
         bool staggerImmune = Time.time < _staggerImmuneUntil;
         if (!staggerImmune)
@@ -1571,12 +1591,77 @@ public class SecurityGuardAI : MonoBehaviour
             if (_poise <= 0f)
             {
                 BeginPoiseBreakStagger();
-                return true;
+                return;
             }
         }
 
         TryStartCounterAttack(staggerImmune);
-        return true;
+    }
+
+    /// <summary>
+    /// Puts him down for good. Called by <see cref="SecurityGuardHealth.Die"/> on the server and, through the
+    /// replicated dead flag on <see cref="NetworkSecurityGuardAvatar"/>, on every client — so the cleanup below
+    /// runs on all peers. Only the server cross-fades the Death state; the ServerNetworkAnimator replicates that
+    /// transition, exactly as it does the attack and stagger cross-fades.
+    /// </summary>
+    public void HandleDeath()
+    {
+        if (_state == GuardState.Dead)
+            return;
+
+        _state = GuardState.Dead;
+
+        if (_attackRoutine != null)
+        {
+            StopCoroutine(_attackRoutine);
+            _attackRoutine = null;
+        }
+
+        EndAttackDrive();
+        EndHurricaneCapsule();
+        ClearTarget();
+
+        if (navMeshAgent != null && navMeshAgent.enabled)
+        {
+            if (navMeshAgent.isOnNavMesh)
+            {
+                navMeshAgent.isStopped = true;
+                navMeshAgent.ResetPath();
+            }
+
+            // Off the mesh entirely: a corpse must not keep a local-avoidance footprint that shoves
+            // living enemies around a body they should just walk past.
+            navMeshAgent.enabled = false;
+        }
+
+        _horizontalVelocity = Vector3.zero;
+        _verticalVelocity = Vector3.zero;
+        _intendedMoveSpeed = 0f;
+        _engagedWalk = false;
+
+        if (animator != null)
+        {
+            // The collapse is full-body: drop whatever the masked punch layer was driving, or the arms
+            // keep throwing hooks over the fall.
+            if (upperBodyLayerIndex > 0 && upperBodyLayerIndex < animator.layerCount)
+            {
+                animator.Play("Empty", upperBodyLayerIndex, 0f);
+                animator.SetLayerWeight(upperBodyLayerIndex, 0f);
+            }
+
+            animator.SetFloat(speedParameter, 0f);
+            animator.SetBool(runningParameter, false);
+
+            if (!IsNetworkClient)
+                animator.CrossFadeInFixedTime(deathStateName, deathCrossfadeDuration, 0, 0f);
+        }
+        _currentAttackIsMasked = false;
+
+        if (footstepAudioSource != null)
+            footstepAudioSource.Stop();
+
+        if (fxAudioSource != null)
+            fxAudioSource.Stop();
     }
 
     void BeginPoiseBreakStagger()

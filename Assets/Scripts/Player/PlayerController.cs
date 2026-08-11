@@ -297,7 +297,7 @@ public partial class PlayerController : MonoBehaviour
     readonly Collider[] _meleeHits = new Collider[16];
     readonly HashSet<ZombieHealth> _meleeHitZombies = new();
     readonly HashSet<SkeletonHealth> _meleeHitSkeletons = new();
-    readonly HashSet<SecurityGuardAI> _meleeHitGuards = new();
+    readonly HashSet<SecurityGuardHealth> _meleeHitGuards = new();
     bool _meleeHitSkeletonThisSwing;
     const string EnemyLayerName = "Enemy";
     NetworkPlayerCombat _networkPlayerCombat;
@@ -2849,15 +2849,17 @@ public partial class PlayerController : MonoBehaviour
                 continue;
             }
 
-            // Security guard (Level03 hunter): unkillable — the hit chips his poise meter and can trigger
-            // his stagger or an instant counter-kick. Registers as a regular punch impact for feedback.
-            SecurityGuardAI guardAI = col.GetComponentInParent<SecurityGuardAI>();
-            if (guardAI != null)
+            // Security guard (Level03 hunter). Same fraction-of-max-health dispatch as the other species —
+            // SecurityGuardHealth then halves it, which is what makes him the heavy he is (8 punches / 4 sword
+            // swings). The hit also chips his poise meter and can draw a stagger or an instant counter-kick.
+            SecurityGuardHealth guardHealth = col.GetComponentInParent<SecurityGuardHealth>();
+            if (guardHealth != null && !guardHealth.IsDead)
             {
-                if (!_meleeHitGuards.Add(guardAI))
+                if (!_meleeHitGuards.Add(guardHealth))
                     continue;
 
-                if (guardAI.TakeMeleeHit(transform, _playerHealth))
+                float damage = guardHealth.MaxHealth * damageFraction;
+                if (guardHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                     damagedAny = true;
                 continue;
             }

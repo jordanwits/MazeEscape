@@ -1,3 +1,4 @@
+using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
@@ -5,8 +6,9 @@ using UnityEngine.AI;
 /// <summary>
 /// Network glue for the Severance security guard. Mirrors <see cref="NetworkZombieAvatar"/>: the server
 /// simulates AI/movement, clients keep <see cref="SecurityGuardAI"/> enabled purely for cosmetic audio, and a
-/// <c>ServerNetworkAnimator</c> replicates the animator (locomotion params + attack/stagger cross-fades).
-/// There is no death state — the guard is unkillable.
+/// <c>ServerNetworkAnimator</c> replicates the animator (locomotion params + attack/stagger/death cross-fades).
+/// Death replicates as a plain bool NetworkVariable, exactly like <see cref="NetworkZombieAvatar"/>'s: the
+/// visible collapse rides the replicated animator, this flag drives the per-peer cleanup.
 ///
 /// Also relays the MMA kick's non-ragdoll shove to the hit player's owner (their CharacterController is
 /// owner-authoritative), since <see cref="SecurityGuardAI"/> is a plain MonoBehaviour and cannot send RPCs —
@@ -15,14 +17,17 @@ using UnityEngine.AI;
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
 [RequireComponent(typeof(SecurityGuardAI))]
+[RequireComponent(typeof(SecurityGuardHealth))]
 public class NetworkSecurityGuardAvatar : NetworkBehaviour
 {
     [SerializeField] Animator guardAnimator;
     [SerializeField] SecurityGuardAI guardAI;
+    [SerializeField] SecurityGuardHealth guardHealth;
     [SerializeField] NavMeshAgent navMeshAgent;
     [SerializeField] CharacterController characterController;
 
     ServerNetworkAnimator _serverNetworkAnimator;
+    readonly NetworkVariable<bool> _isDead = new(false);
 
     void Awake()
     {
@@ -30,6 +35,8 @@ public class NetworkSecurityGuardAvatar : NetworkBehaviour
             guardAnimator = GetComponent<Animator>();
         if (guardAI == null)
             guardAI = GetComponent<SecurityGuardAI>();
+        if (guardHealth == null)
+            guardHealth = GetComponent<SecurityGuardHealth>();
         if (navMeshAgent == null)
             navMeshAgent = GetComponent<NavMeshAgent>();
         if (characterController == null)
@@ -40,7 +47,52 @@ public class NetworkSecurityGuardAvatar : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        _isDead.OnValueChanged += HandleDeadStateChanged;
         ApplyAuthorityState();
+        ApplyDeadState(_isDead.Value); // late joiners inherit an already-dead body
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        _isDead.OnValueChanged -= HandleDeadStateChanged;
+    }
+
+    void Update()
+    {
+        if (!IsServer || guardHealth == null)
+            return;
+
+        if (_isDead.Value != guardHealth.IsDead)
+            _isDead.Value = guardHealth.IsDead;
+    }
+
+    void HandleDeadStateChanged(bool previousValue, bool currentValue)
+    {
+        ApplyDeadState(currentValue);
+    }
+
+    void ApplyDeadState(bool isDead)
+    {
+        if (!isDead)
+            return;
+
+        if (guardAI != null)
+            guardAI.HandleDeath();
+
+        // The server disables the corpse's CharacterController once the fall has finished; observers mirror
+        // that on the SAME delay by dropping the kinematic stand-in, or the body would keep blocking a
+        // corridor on clients only, while the host walked straight through it.
+        if (characterController != null && !IsServer)
+            StartCoroutine(DropCollisionProxyRoutine());
+    }
+
+    IEnumerator DropCollisionProxyRoutine()
+    {
+        float delay = guardHealth != null ? guardHealth.DisableColliderDelay : 0f;
+        if (delay > 0f)
+            yield return new WaitForSeconds(delay);
+
+        EnemyClientCollisionProxy.Deactivate(characterController);
     }
 
     void ApplyAuthorityState()
