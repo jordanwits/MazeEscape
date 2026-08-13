@@ -29,6 +29,12 @@ public class MazeItemSpawnPoint : MonoBehaviour
         + "pivot. Turn off to spawn at the marker's exact position and rotation.")]
     [SerializeField] bool standUprightOnMarker = true;
 
+    [Tooltip(
+        "Extra rotation (euler, degrees) applied on top of the prefab's authored pose while standing the "
+        + "item up — for prefabs authored lying down (the bandage roll rests on its side, so -90 on X "
+        + "stands it on end). Leave at zero when the prefab is already authored upright.")]
+    [SerializeField] Vector3 uprightRotationOffset;
+
     /// <summary>Prefab this marker spawns, or null to fall back to the level config's pool.</summary>
     public GameObject ItemPrefab => itemPrefab;
 
@@ -37,4 +43,7 @@ public class MazeItemSpawnPoint : MonoBehaviour
 
     /// <summary>Whether the pickup is stood upright with its base on the marker instead of adopting the marker's pose.</summary>
     public bool StandUprightOnMarker => standUprightOnMarker;
+
+    /// <summary>Extra rotation layered onto the prefab's authored pose when standing the item up; identity by default.</summary>
+    public Quaternion UprightRotationOffset => Quaternion.Euler(uprightRotationOffset);
 }

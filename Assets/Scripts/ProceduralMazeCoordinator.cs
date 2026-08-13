@@ -4226,7 +4226,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
                     cell,
                     a,
                     prefabIndex,
-                    isOverride && spawnPoint.StandUprightOnMarker);
+                    isOverride && spawnPoint.StandUprightOnMarker,
+                    isOverride ? spawnPoint.UprightRotationOffset : Quaternion.identity);
             }
         }
     }
@@ -4259,11 +4260,12 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         Vector2Int cell,
         int markerIndex,
         int prefabIndex,
-        bool standUprightOnMarker)
+        bool standUprightOnMarker,
+        Quaternion uprightRotationOffset)
     {
         GameObject instance = Instantiate(prefab, marker.position, marker.rotation, itemsRoot);
         if (standUprightOnMarker)
-            StandPickupOnMarker(instance, prefab, marker);
+            StandPickupOnMarker(instance, prefab, marker, uprightRotationOffset);
 
         if (instance.TryGetComponent(out GrabbableInventoryItem grabbable))
             grabbable.AssignNetworkItemId(ComputeMazeItemPickupId(mazeSeed, cell, markerIndex, prefabIndex));
@@ -4289,12 +4291,13 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     ///
     /// Both steps read only the prefab and the marker, so every peer lands on the same pose.
     /// </summary>
-    static void StandPickupOnMarker(GameObject instance, GameObject prefab, Transform marker)
+    static void StandPickupOnMarker(
+        GameObject instance, GameObject prefab, Transform marker, Quaternion uprightRotationOffset)
     {
         Transform instanceRoot = instance.transform;
         instanceRoot.SetPositionAndRotation(
             marker.position,
-            Quaternion.Euler(0f, marker.eulerAngles.y, 0f) * prefab.transform.rotation);
+            Quaternion.Euler(0f, marker.eulerAngles.y, 0f) * prefab.transform.rotation * uprightRotationOffset);
 
         Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(true);
         bool hasBounds = false;
