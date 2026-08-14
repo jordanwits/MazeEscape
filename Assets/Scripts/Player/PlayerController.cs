@@ -636,15 +636,17 @@ public partial class PlayerController : MonoBehaviour
             return;
 
         if (PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive
-            || SkeletonRpsOverlayController.IsInteractive)
+            || SkeletonRpsOverlayController.IsInteractive || CarnivalStoreOverlayController.IsInteractive)
         {
             CancelThrowCharge();
             _moveInput = Vector2.zero;
             _horizontalVelocity = Vector3.zero;
             SetPickupPromptVisible(false);
-            // While seated at blackjack (or facing the jail skeleton) the game keeps running (time isn't
-            // paused), so the locomotion animator would otherwise loop the last walk pose. Force idle.
-            if ((BlackjackOverlayController.IsInteractive || SkeletonRpsOverlayController.IsInteractive)
+            // While seated at blackjack (or facing the jail skeleton / browsing the prize counter) the game keeps
+            // running (time isn't paused), so the locomotion animator would otherwise loop the last walk pose.
+            // Force idle.
+            if ((BlackjackOverlayController.IsInteractive || SkeletonRpsOverlayController.IsInteractive
+                    || CarnivalStoreOverlayController.IsInteractive)
                 && driveAnimator && animator != null)
             {
                 animator.SetFloat(speedParameter, 0f);
@@ -1328,7 +1330,7 @@ public partial class PlayerController : MonoBehaviour
     void ApplyCursorLock()
     {
         if (!firstPersonLook || !lockCursor || PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive
-            || SkeletonRpsOverlayController.IsInteractive)
+            || SkeletonRpsOverlayController.IsInteractive || CarnivalStoreOverlayController.IsInteractive)
             return;
 
         Cursor.lockState = CursorLockMode.Locked;

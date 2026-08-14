@@ -53,7 +53,8 @@ public partial class PlayerController
         bool canZoom = _hasLocalControl
             && !PauseMenuController.BlocksGameplayInput
             && !BlackjackOverlayController.IsInteractive
-            && !SkeletonRpsOverlayController.IsInteractive;
+            && !SkeletonRpsOverlayController.IsInteractive
+            && !CarnivalStoreOverlayController.IsInteractive;
 
         if (canZoom && moving)
         {
