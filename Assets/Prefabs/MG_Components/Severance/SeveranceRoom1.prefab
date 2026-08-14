@@ -9229,7 +9229,7 @@ Transform:
   m_GameObject: {fileID: 5668651250196320703}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -5.5942, y: 1.5642, z: 7.6546}
+  m_LocalPosition: {x: -5.5942, y: 1.5481, z: 7.6546}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -15364,16 +15364,47 @@ PrefabInstance:
       propertyPath: m_Name
       value: Shelves3
       objectReference: {fileID: 0}
-    m_RemovedComponents: []
+    m_RemovedComponents:
+    - {fileID: 68404478069288842, guid: 8e15c5034705d9543a140826bea2e9e1, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 52582621703357683, guid: 8e15c5034705d9543a140826bea2e9e1, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 9136054442613205989}
   m_SourcePrefab: {fileID: 100100000, guid: 8e15c5034705d9543a140826bea2e9e1, type: 3}
 --- !u!4 &5786710944482503808 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 3951610516651236209, guid: 8e15c5034705d9543a140826bea2e9e1, type: 3}
   m_PrefabInstance: {fileID: 7392788693239429105}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &7359648943148610306 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 52582621703357683, guid: 8e15c5034705d9543a140826bea2e9e1, type: 3}
+  m_PrefabInstance: {fileID: 7392788693239429105}
+  m_PrefabAsset: {fileID: 0}
+--- !u!64 &9136054442613205989
+MeshCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7359648943148610306}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 5
+  m_Convex: 0
+  m_CookingOptions: 30
+  m_Mesh: {fileID: -8842271269779761818, guid: 4a83103d843ef4d43abfd3b25ad47b44, type: 3}
 --- !u!1001 &7592898020299138074
 PrefabInstance:
   m_ObjectHideFlags: 0

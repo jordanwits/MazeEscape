@@ -265,6 +265,7 @@ GameObject:
   - component: {fileID: 5871732867846903746}
   - component: {fileID: 6184729301827463521}
   - component: {fileID: 8192837460011223344}
+  - component: {fileID: 8883995519965662008}
   m_Layer: 0
   m_Name: Flashlight
   m_TagString: Untagged
@@ -396,10 +397,16 @@ MonoBehaviour:
   gripPointLeft: {fileID: 0}
   heldRotationOffsetEuler: {x: 0, y: 0, z: 0}
   heldAttachToHandSocket: 1
+  heldWristEulerOffset: {x: 0, y: 0, z: 0}
+  heldArmViewPitchFollow: 0
+  heldArmViewPitchMaxDegrees: 0
+  gripStyle: 0
   flashlightLight: {fileID: 8291094232997298271}
   lensGlowRenderers:
   - {fileID: 2898514983395639065}
   alignHeldRotationToLight: 0
+  lowBatteryFlickerFraction: 0.15
+  flickerMinIntensityScale: 0.08
   maxBatterySeconds: 85
   minBatteryToOperate: 0.001
 --- !u!54 &5538197934289644156
@@ -490,3 +497,15 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GrabbableMazeClientPhysics
   ShowTopMostFoldoutHeaderGroup: 1
+--- !u!114 &8883995519965662008
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7328506109978203443}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 47a4a9aa2690a864bbf11f3801ce3d37, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MazeLightCullIgnore

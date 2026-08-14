@@ -4308,14 +4308,25 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             if (renderer == null)
                 continue;
 
+            // Only solid geometry defines where the item's bottom is. A particle system with no live
+            // particles (the flare gun's muzzle flash) reports a zero-size bounds at the world origin, and
+            // so does any renderer on an inactive child (the gun's stowed shell meshes) — either one drags
+            // the fit down to y=0 and lifts the item by the marker's entire world height.
+            if (renderer is ParticleSystemRenderer)
+                continue;
+
+            Bounds rendererBounds = renderer.bounds;
+            if (rendererBounds.size == Vector3.zero)
+                continue;
+
             if (!hasBounds)
             {
-                bounds = renderer.bounds;
+                bounds = rendererBounds;
                 hasBounds = true;
             }
             else
             {
-                bounds.Encapsulate(renderer.bounds);
+                bounds.Encapsulate(rendererBounds);
             }
         }
 
@@ -4359,6 +4370,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             rb.useGravity = false;
             rb.isKinematic = true;
         }
+
+        // Freezing once is not enough for an item that is never touched — see MazeItemPickupRest, which
+        // holds the pose until a player actually picks the item up.
+        if (bodies.Length > 0 && root.GetComponent<MazeItemPickupRest>() == null)
+            root.AddComponent<MazeItemPickupRest>();
     }
 
     /// <summary>
