@@ -21,7 +21,6 @@ public class MultiplayerSceneFlow : MonoBehaviour
         "Level01",
         "Level02",
         "Level03",
-        "Level04",
     };
 
     public static bool IsMazeGameplayScene(string sceneName)

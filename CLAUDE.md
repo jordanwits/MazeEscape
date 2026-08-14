@@ -1,9 +1,10 @@
 # Maze Escape
 
 Co-op first-person horror escape game: up to 4 players spawn into a procedurally generated maze,
-scavenge keys/items, avoid enemies, and reach the exit elevator across four themed sections
+scavenge keys/items, avoid enemies, and reach the exit elevator across three themed sections
 (Level01 dungeon-maze with zombies/Jailor/skeletons, Level02 carnival with a Clown and ticket
-minigames, Level03/04 further maze sections). Unity **6000.4.1f1**, URP 17.4.0, new Input System.
+minigames, Level03 Severance-style offices with the security guard — the run ends there).
+Unity **6000.4.1f1**, URP 17.4.0, new Input System.
 Multiplayer is Netcode for GameObjects 2.11.0 — Steam lobbies (Steamworks.NET + community
 SteamNetworkingSockets transport) or direct IP/LAN (UnityTransport fallback).
 
@@ -24,7 +25,7 @@ SteamNetworkingSockets transport) or direct IP/LAN (UnityTransport fallback).
 
 ## Project layout
 
-- `Assets/Scenes/` — `Menu.unity` (entry: lobby, character select, level select), `Level01–04`
+- `Assets/Scenes/` — `Menu.unity` (entry: lobby, character select, level select), `Level01–03`
   (in build). `Staging.unity`, `Dev_IKTest.unity` are dev scenes, not in the build.
 - `Assets/Scripts/` — all game code, global namespace. Subfolders by system: `Player/`, `Enemy/`,
   `Multiplayer/`, `Maze/` (carnival minigames incl. `Blackjack/`), `Performance/`, `UI/` +
@@ -36,7 +37,7 @@ SteamNetworkingSockets transport) or direct IP/LAN (UnityTransport fallback).
 - `Assets/Resources/` — `DefaultNetworkPrefabs.asset` (**the live NGO prefab list** — loaded by
   `MultiplayerBootstrap`),
   `MultiplayerProjectSettings.asset` (lobby character roster), `MazeConfigs/` (per-level configs
-  `MazeSection_Level01–04` + legacy fallback `ProceduralMazeConfig.asset`).
+  `MazeSection_Level01–03` + legacy fallback `ProceduralMazeConfig.asset`).
 - Most other top-level `Assets/` folders are imported asset-store packs (AllSkyFree, Decrepit
   Dungeon LITE, Survivalist, Bridge Playing Cards, ...) with their own demo scenes.
 - `Docs/Performance-Optimization.md` — perf notes.
@@ -58,8 +59,9 @@ SteamNetworkingSockets transport) or direct IP/LAN (UnityTransport fallback).
   `MazePieceResolver`/`MazePieceDefinition`, and bakes NavMesh at runtime (Unity.AI.Navigation).
   Per-level tuning lives in the `ProceduralMazeConfig` assets under `Resources/MazeConfigs/`.
 - **Enemy slots are generic.** Configs expose four `MazeEnemySpawn` slots (`enemy1..enemy4`,
-  prefab + count); each level fills them differently (Enemy 2 = Jailor on L01/03/04, Clown on
-  L02). Code accessors keep role names (`MazeHunterPrefab`, `MazeSkeletonPrefab`, ...).
+  prefab + count); each level fills them differently (Enemy 2 = Jailor on L01, Clown on L02,
+  SecurityGuard1 on L03). Code accessors keep role names (`MazeHunterPrefab`,
+  `MazeSkeletonPrefab`, ...).
 - **Door state replication.** Because procedural doors aren't spawned NetworkObjects, their
   open/locked state replicates via `Multiplayer/DoorNetworkStateStore.cs` — a `NetworkList`
   keyed by `HingeInteractDoor.DoorId` on the server-spawned `DoorStateStore.prefab` (which also

@@ -4,16 +4,18 @@ using UnityEngine;
 /// A room-sized box that takes over the level's environment lighting and distance fog while THIS
 /// peer's player is inside it.
 ///
-/// The Severance level is lit "sourceless": no realtime lights in the pieces, just a very bright
-/// Trilight ambient (sky is pure white) plus a white haze fog. That is what makes the porcelain
-/// corridors glow — and it is also what makes a "dark" room impossible by material alone: a wall
-/// painted 7% grey still renders at 7% of a full-strength white sky, and the floor, facing straight
-/// up into the sky colour, reads as mid-grey. Darkening the albedo further is a trap, because it dims
-/// the room's own lights by exactly the same factor.
+/// Written when the Severance level was lit "sourceless" — no realtime lights at all, just a very
+/// bright Trilight ambient plus a white haze fog — which made a dark room impossible by material
+/// alone: a wall painted 7% grey still renders at 7% of a full-strength white sky. Darkening the
+/// albedo was a trap, because it dimmed the room's own lights by exactly the same factor. So this
+/// zone turns the ambient itself down while you are inside it, and puts the fog back to near-black
+/// so the far end doesn't bleach out.
 ///
-/// So the dark exit hall turns the ambient itself down while you are inside it, and puts the fog back
-/// to near-black so the far end doesn't bleach out. What is left to light the hall is what the piece
-/// carries: the alarm beacons and the lamp over the elevator.
+/// Level03 was relit on real ceiling fixtures (2026-08-14, see <see cref="SeveranceCeilingLight"/>)
+/// and its ambient is now near-black everywhere, so this zone has far less left to subtract — it is
+/// close to a no-op on that level today. It stays because the mechanism is still correct and still
+/// applies to any level lit by ambient, and because the exit hall's own red beacons are what should
+/// be reading there regardless.
 ///
 /// Client-side visual only — RenderSettings and the camera are per-peer, so each peer runs this
 /// against its own local player and nothing is networked. The containment test is a plain point-in-box

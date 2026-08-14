@@ -103,6 +103,30 @@ public class RopeLightFlicker : MonoBehaviour
         StopAudio();
     }
 
+    /// <summary>
+    /// Assign the buzz clip after this component has been added at runtime. <see cref="SetupAudio"/>
+    /// normally runs in Awake, which for an AddComponent'd flicker has already happened before the caller
+    /// gets a reference — with no clip, so no AudioSource was built. This redoes that step and picks up
+    /// the mixer routing itself if Start has already gone by.
+    /// </summary>
+    public void SetFlickerAudio(AudioClip clip, float volume = -1f, float minDistance = -1f, float maxDistance = -1f)
+    {
+        flickerLoopClip = clip;
+        if (volume >= 0f) audioVolume = Mathf.Clamp01(volume);
+        if (maxDistance > 0f) audioMaxDistance = maxDistance;
+        if (minDistance >= 0f) audioMinDistance = Mathf.Min(minDistance, audioMaxDistance);
+
+        SetupAudio();
+
+        // Start() does the routing on the normal path. If it already ran, do it here instead.
+        if (_started && _audio != null)
+        {
+            GameAudioManager.RouteSfxSource(_audio);
+            if (isActiveAndEnabled)
+                StartAudio();
+        }
+    }
+
     void GatherLights()
     {
         _lights.Clear();
