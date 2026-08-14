@@ -365,6 +365,18 @@ public class JailorAI : MonoBehaviour
         EnsurePatrolPathScratch();
         _grabStateHash = Animator.StringToHash(grabStateName);
         _chaseWallIgnoreLayers = BuildActorLayerMask();
+
+        // Registered from Awake/OnDestroy, NOT OnEnable/OnDisable: observers run this component DISABLED
+        // (NetworkJailorAvatar.ApplyAuthorityState), and OnEnable/OnDisable registration meant the Jailor
+        // registered on spawn and immediately unregistered again on every client — leaving the registry
+        // empty there, so the player's proximity screen shake only ever fired for the host. Awake runs on a
+        // component that is disabled later; OnDestroy runs whether or not it was ever enabled.
+        JailorAIRegistry.Register(this);
+    }
+
+    void OnDestroy()
+    {
+        JailorAIRegistry.Unregister(this);
     }
 
     /// <summary>Layers the corridor-centering probe must ignore — players and other enemies are not "walls".</summary>
@@ -524,8 +536,10 @@ public class JailorAI : MonoBehaviour
 
     void OnEnable()
     {
+        // Voice notifications stay keyed to the ENABLED component on purpose: they drive server-side AI
+        // reactions, and an observer's disabled AI must not react to anything. Only the shake registry
+        // (Awake/OnDestroy) has to outlive being disabled.
         ServerProximityVoiceNotifications.Register(this);
-        JailorAIRegistry.Register(this);
         TrySnapToNavMesh();
     }
 
@@ -551,7 +565,12 @@ public class JailorAI : MonoBehaviour
     void OnDisable()
     {
         ServerProximityVoiceNotifications.Unregister(this);
-        JailorAIRegistry.Unregister(this);
+
+        // A deactivated GameObject really is gone from the world, so drop it from the shake registry too.
+        // Merely disabling the COMPONENT (what observers do) must not — see the note in Awake.
+        if (!gameObject.activeInHierarchy)
+            JailorAIRegistry.Unregister(this);
+
         ReleaseCarriedPlayerIfNeeded();
     }
 

@@ -25,7 +25,8 @@ public class ClownAI : MonoBehaviour
         Patrol,
         Investigating,
         Chase,
-        Attacking
+        Attacking,
+        Dead
     }
 
     [Header("References")]
@@ -192,6 +193,17 @@ public class ClownAI : MonoBehaviour
     [Tooltip("Seconds between patrol laughs (alternating ClownLaugh2/ClownLaugh3) while not chasing.")]
     [SerializeField, Min(0.1f)] float patrolLaughInterval = 4f;
 
+    [Header("Death")]
+    [Tooltip("Name of the full-body collapse state on the animator's base layer. It has no exit transition — "
+        + "the corpse holds its last frame until ClownHealth despawns it.")]
+    [SerializeField] string deathStateName = "Death";
+    [SerializeField, Min(0f)] float deathCrossfadeDuration = 0.12f;
+    [Tooltip("Index of the hammer-carry layer, force-cleared on death so the arms stop holding the hammer "
+        + "pose over the collapse. -1 disables the clear.")]
+    [SerializeField] int hammerCarryLayerIndex = 1;
+    [Tooltip("Optional; disabled on death so the corpse stops growing/hunching toward its last target.")]
+    [SerializeField] ClownDynamicScale dynamicScale;
+
     [Header("Hammer swing attack")]
     [Tooltip("Animator Trigger that starts the Hammer Swing state.")]
     [SerializeField] string swingTriggerParameter = "Swing";
@@ -353,6 +365,18 @@ public class ClownAI : MonoBehaviour
         ApplyAgentSettings();
         EnsurePatrolPathScratch();
         _wallSlideIgnoreLayers = BuildActorLayerMask();
+
+        // Registered from Awake/OnDestroy, NOT OnEnable/OnDisable: observers run this component DISABLED
+        // (NetworkClownAvatar.ApplyAuthorityState), and OnEnable/OnDisable registration meant the Clown
+        // registered on spawn and immediately unregistered again on every client — leaving the registry
+        // empty there, so the player's proximity screen shake only ever fired for the host. Awake runs on a
+        // component that is disabled later; OnDestroy runs whether or not it was ever enabled.
+        ClownAIRegistry.Register(this);
+    }
+
+    void OnDestroy()
+    {
+        ClownAIRegistry.Unregister(this);
     }
 
     /// <summary>Layers the wall-slide must ignore — players and other enemies are not "walls" to slide along.</summary>
@@ -400,15 +424,21 @@ public class ClownAI : MonoBehaviour
 
     void OnEnable()
     {
+        // Voice notifications stay keyed to the ENABLED component on purpose: they drive server-side AI
+        // reactions, and an observer's disabled AI must not react to anything. Only the shake registry
+        // (Awake/OnDestroy) has to outlive being disabled.
         ServerProximityVoiceNotifications.Register(this);
-        ClownAIRegistry.Register(this);
         TrySnapToNavMesh();
     }
 
     void OnDisable()
     {
         ServerProximityVoiceNotifications.Unregister(this);
-        ClownAIRegistry.Unregister(this);
+
+        // A deactivated GameObject really is gone from the world, so drop it from the shake registry too.
+        // Merely disabling the COMPONENT (what observers do) must not — see the note in Awake.
+        if (!gameObject.activeInHierarchy)
+            ClownAIRegistry.Unregister(this);
 
         // The hammer swing never pins the player (it's a one-shot knockback), so there is nothing to release
         // if the Clown is disabled/despawned mid-swing — the player was never attached to it.
@@ -608,16 +638,22 @@ public class ClownAI : MonoBehaviour
 
     bool ShouldRunSimulation()
     {
-        if (_networkObject != null
-            && NetworkManager.Singleton != null
-            && NetworkManager.Singleton.IsListening
-            && !NetworkManager.Singleton.IsServer)
-            return false;
-        return true;
+        return !IsNetworkClient;
     }
+
+    /// <summary>True on an observer peer — the server owns simulation, this machine only renders the result.</summary>
+    bool IsNetworkClient => _networkObject != null
+        && NetworkManager.Singleton != null
+        && NetworkManager.Singleton.IsListening
+        && !NetworkManager.Singleton.IsServer;
 
     void Update()
     {
+        // A corpse does nothing: no senses, no movement, no laughing. The Death state holds its last frame
+        // on the base layer until ClownHealth despawns the body.
+        if (_state == ClownState.Dead)
+            return;
+
         if (!ShouldRunSimulation())
             return;
 
@@ -1812,6 +1848,104 @@ public class ClownAI : MonoBehaviour
         _hasInvestigationPoint = false;
         _investigationSpeedOverride = 0f;
         _state = ClownState.Chase;
+    }
+
+    // ---- Damage & death ------------------------------------------------------------------------------
+
+    /// <summary>Mirrors <see cref="ClownHealth.IsDead"/> once <see cref="HandleDeath"/> has run on this peer.</summary>
+    public bool IsDead => _state == ClownState.Dead;
+
+    /// <summary>
+    /// Called by <see cref="ClownHealth.TakeDamage"/> on the authority for every hit that does NOT kill him.
+    /// The pool decides whether he dies; this decides only how he answers — and the Clown's answer is simply
+    /// that he turns on whoever hit him. He has no poise/stagger meter (that is the Severance guard's system):
+    /// hitting him never interrupts a swing, it just guarantees you have his attention.
+    /// </summary>
+    public void OnDamageTaken(bool fromPlayerMelee, Transform attacker, PlayerHealth attackerHealth)
+    {
+        if (_state == ClownState.Dead)
+            return;
+
+        if (attackerHealth == null || attackerHealth.IsDead || ShouldIgnorePlayer(attackerHealth))
+            return;
+
+        // Getting hit always gets his attention (even from behind, even mid-patrol) — but never yanks him
+        // out of a committed swing; Attacking runs its own state machine to completion.
+        AssignTarget(attackerHealth);
+        if (_state == ClownState.Idle || _state == ClownState.Patrol || _state == ClownState.Investigating)
+            EnterChase();
+    }
+
+    /// <summary>
+    /// Puts him down for good. Called by <see cref="ClownHealth.Die"/> on the server and, through the
+    /// replicated dead flag on <see cref="NetworkClownAvatar"/>, on every client — so the cleanup below runs
+    /// on all peers. Only the server cross-fades the Death state; ServerNetworkAnimator replicates that
+    /// transition the same way it carries the swing.
+    ///
+    /// Safe to call on a disabled component: clients run <see cref="ClownAI"/> disabled (see
+    /// <see cref="NetworkClownAvatar.ApplyAuthorityState"/>), so nothing here may start a coroutine.
+    /// </summary>
+    public void HandleDeath()
+    {
+        if (_state == ClownState.Dead)
+            return;
+
+        _state = ClownState.Dead;
+
+        // Leave the live-Clown registries the moment he dies rather than waiting for OnDisable — the corpse
+        // lingers a full minute before despawning, and everything that reads those registries wants a threat,
+        // not a body: the player's proximity screen shake would keep trembling next to it (PlayerController
+        // .ScreenShake only null-checks), and a wind-up monkey would keep clapping a corpse toward itself.
+        // Both registries no-op on a double Unregister, so OnDisable can still run unchanged.
+        ClownAIRegistry.Unregister(this);
+        ServerProximityVoiceNotifications.Unregister(this);
+
+        ClearTarget();
+        _hasInvestigationPoint = false;
+        _hasPatrolDestination = false;
+
+        if (navMeshAgent != null && navMeshAgent.enabled)
+        {
+            if (navMeshAgent.isOnNavMesh)
+            {
+                navMeshAgent.isStopped = true;
+                navMeshAgent.ResetPath();
+            }
+
+            // Off the mesh entirely: a corpse must not keep a local-avoidance footprint that shoves living
+            // enemies around a body they should just walk past.
+            navMeshAgent.enabled = false;
+        }
+
+        _horizontalVelocity = Vector3.zero;
+        _verticalVelocity = Vector3.zero;
+
+        // Stop resizing the body — otherwise the corpse keeps swelling/shrinking toward wherever its last
+        // target went, and the capsule caps fight the collider teardown below.
+        if (dynamicScale == null)
+            dynamicScale = GetComponent<ClownDynamicScale>();
+        if (dynamicScale != null)
+            dynamicScale.enabled = false;
+
+        if (animator != null)
+        {
+            // The collapse is full-body: drop the masked hammer-carry layer or the arms keep holding the
+            // hammer up through the fall.
+            if (hammerCarryLayerIndex > 0 && hammerCarryLayerIndex < animator.layerCount)
+                animator.SetLayerWeight(hammerCarryLayerIndex, 0f);
+
+            if (_hasSpeedParameter)
+                animator.SetFloat(speedParameter, 0f);
+
+            if (!IsNetworkClient)
+                animator.CrossFadeInFixedTime(deathStateName, deathCrossfadeDuration, 0, 0f);
+        }
+
+        if (clownFootstepAudioSource != null)
+            clownFootstepAudioSource.Stop();
+
+        if (clownVoiceAudioSource != null)
+            clownVoiceAudioSource.Stop();
     }
 
     // ---- Hammer swing attack -------------------------------------------------------------------------

@@ -915,6 +915,58 @@ public class HingeInteractDoor : NetworkBehaviour
         return ServerToggleOpenStateFromPlayer(senderClientId);
     }
 
+    /// <summary>
+    /// Server / offline: an AI (see <see cref="SecurityGuardAI"/>) shoulders an UNLOCKED door open so it can keep
+    /// walking. Opens only — it never unlocks and never closes, so a locked door is still a real wall to an enemy
+    /// and shutting doors stays the players' tool, not the AI's. Ignores interact range: the caller decides reach.
+    /// Replicates on the same paths as a player open (spawned leaf → NetworkVariable, procedural leaf →
+    /// <see cref="DoorNetworkStateStore"/>), so every client sees the same swing.
+    /// </summary>
+    /// <returns>True when the open swing was started.</returns>
+    public bool ServerAiOpenIfUnlocked()
+    {
+        if (hinge == null || IsOpen || IsBusy || IsLocked)
+            return false;
+        if (useKeyToUnlock && Time.unscaledTime < _mayOpenUnlockedTime)
+            return false;
+
+        // Never the exit elevator's cab leaves: those answer the call pads and the run-commit gate, not an AI.
+        // (Only leaves within the cab radius carry that validator — an ordinary door elsewhere in a finish
+        // piece, like Level03's exit-hall entry door, is fair game.)
+        if (TryGetElevatorFinishController(out _))
+            return false;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm != null && nm.IsListening && !nm.IsServer)
+            return false;
+
+        if (IsSpawned)
+        {
+            _isOpen.Value = true;
+            _showOpenInteractionPrompt.Value = false;
+
+            if (pairedLeaf != null)
+            {
+                if (pairedLeaf.IsSpawned)
+                    pairedLeaf.ServerApplyOpenFromPairedLeaf(true);
+                else if (pairedLeaf.ServerApplyProceduralOpenFromPairedLeaf(true, NetworkManager.ServerClientId))
+                    NetworkPlayerInventory.ServerBroadcastProceduralDoorOpenStateIfNeeded(pairedLeaf, true);
+            }
+
+            NetworkPlayerInventory.ServerBroadcastProceduralDoorOpenStateIfNeeded(this, true);
+            return true;
+        }
+
+        // Procedural leaf (built locally from the seed, never Netcode-spawned): drive it here and publish the
+        // authoritative state, exactly as the server-side player interact path does.
+        ApplyProceduralRemoteOpenState(true);
+        if (!_isOpenOffline)
+            return false;
+
+        DoorNetworkStateStore.ServerPublish(this);
+        return true;
+    }
+
     bool ServerToggleOpenStateFromPlayer(ulong senderId)
     {
         if (!IsServer || IsBusy || IsLocked)
@@ -1341,6 +1393,48 @@ public class HingeInteractDoor : NetworkBehaviour
 
         return null;
     }
+
+    /// <summary>
+    /// Hinge pivot and the radius of the disc this leaf sweeps as it swings, measured from the leaf's own solid
+    /// colliders. AI uses it to stand clear before pulling a door open — an inward-opening leaf that sweeps
+    /// through an enemy wedges it between the door and the wall behind (it cannot push the leaf back).
+    /// </summary>
+    public bool TryGetSwingSweep(out Vector3 hingeWorldPosition, out float sweepRadius)
+    {
+        hingeWorldPosition = transform.position;
+        sweepRadius = 0f;
+        if (hinge == null)
+            return false;
+
+        hingeWorldPosition = hinge.position;
+
+        s_swingSweepColliders.Clear();
+        AppendSolidDoorColliders(s_swingSweepColliders, includePairedLeaf: false);
+        for (int i = 0; i < s_swingSweepColliders.Count; i++)
+        {
+            Collider c = s_swingSweepColliders[i];
+            if (c == null)
+                continue;
+
+            // Horizontal distance to the far corners of the leaf's bounds ≈ its length from the pivot.
+            // Slightly generous when the leaf sits at an angle, which is the safe direction to err.
+            Bounds b = c.bounds;
+            for (int xi = 0; xi < 2; xi++)
+            {
+                for (int zi = 0; zi < 2; zi++)
+                {
+                    float dx = (xi == 0 ? b.min.x : b.max.x) - hingeWorldPosition.x;
+                    float dz = (zi == 0 ? b.min.z : b.max.z) - hingeWorldPosition.z;
+                    sweepRadius = Mathf.Max(sweepRadius, Mathf.Sqrt(dx * dx + dz * dz));
+                }
+            }
+        }
+
+        s_swingSweepColliders.Clear();
+        return sweepRadius > 0.05f;
+    }
+
+    static readonly List<Collider> s_swingSweepColliders = new();
 
     /// <summary>
     /// Non-trigger colliders under this leaf's hinge (and optionally the paired double-door leaf). Used for Jailor stuck-in-cell bypass vs the closed door.

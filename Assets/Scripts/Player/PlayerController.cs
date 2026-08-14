@@ -298,6 +298,7 @@ public partial class PlayerController : MonoBehaviour
     readonly HashSet<ZombieHealth> _meleeHitZombies = new();
     readonly HashSet<SkeletonHealth> _meleeHitSkeletons = new();
     readonly HashSet<SecurityGuardHealth> _meleeHitGuards = new();
+    readonly HashSet<ClownHealth> _meleeHitClowns = new();
     bool _meleeHitSkeletonThisSwing;
     const string EnemyLayerName = "Enemy";
     NetworkPlayerCombat _networkPlayerCombat;
@@ -636,15 +637,17 @@ public partial class PlayerController : MonoBehaviour
             return;
 
         if (PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive
-            || SkeletonRpsOverlayController.IsInteractive)
+            || SkeletonRpsOverlayController.IsInteractive || CarnivalStoreOverlayController.IsInteractive)
         {
             CancelThrowCharge();
             _moveInput = Vector2.zero;
             _horizontalVelocity = Vector3.zero;
             SetPickupPromptVisible(false);
-            // While seated at blackjack (or facing the jail skeleton) the game keeps running (time isn't
-            // paused), so the locomotion animator would otherwise loop the last walk pose. Force idle.
-            if ((BlackjackOverlayController.IsInteractive || SkeletonRpsOverlayController.IsInteractive)
+            // While seated at blackjack (or facing the jail skeleton / browsing the prize counter) the game keeps
+            // running (time isn't paused), so the locomotion animator would otherwise loop the last walk pose.
+            // Force idle.
+            if ((BlackjackOverlayController.IsInteractive || SkeletonRpsOverlayController.IsInteractive
+                    || CarnivalStoreOverlayController.IsInteractive)
                 && driveAnimator && animator != null)
             {
                 animator.SetFloat(speedParameter, 0f);
@@ -1328,7 +1331,7 @@ public partial class PlayerController : MonoBehaviour
     void ApplyCursorLock()
     {
         if (!firstPersonLook || !lockCursor || PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive
-            || SkeletonRpsOverlayController.IsInteractive)
+            || SkeletonRpsOverlayController.IsInteractive || CarnivalStoreOverlayController.IsInteractive)
             return;
 
         Cursor.lockState = CursorLockMode.Locked;
@@ -2787,6 +2790,7 @@ public partial class PlayerController : MonoBehaviour
         _meleeHitZombies.Clear();
         _meleeHitSkeletons.Clear();
         _meleeHitGuards.Clear();
+        _meleeHitClowns.Clear();
         _meleeHitSkeletonThisSwing = false;
         for (int i = 0; i < hitCount; i++)
         {
@@ -2860,6 +2864,20 @@ public partial class PlayerController : MonoBehaviour
 
                 float damage = guardHealth.MaxHealth * damageFraction;
                 if (guardHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
+                    damagedAny = true;
+                continue;
+            }
+
+            // Clown (Level02 hunter). Heaviest of the lot: ClownHealth scales melee to 0.4, so a fist takes a
+            // tenth of him — 10 punches or 5 sword swings. Hitting him has no stagger, it just turns him on you.
+            ClownHealth clownHealth = col.GetComponentInParent<ClownHealth>();
+            if (clownHealth != null && !clownHealth.IsDead)
+            {
+                if (!_meleeHitClowns.Add(clownHealth))
+                    continue;
+
+                float damage = clownHealth.MaxHealth * damageFraction;
+                if (clownHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                     damagedAny = true;
                 continue;
             }

@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using Unity.Netcode;
 using Unity.Netcode.Components;
@@ -9,6 +10,7 @@ using UnityEngine.AI;
 [RequireComponent(typeof(NetworkTransform))]
 [RequireComponent(typeof(Animator))]
 [RequireComponent(typeof(ClownAI))]
+[RequireComponent(typeof(ClownHealth))]
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(CharacterController))]
 public class NetworkClownAvatar : NetworkBehaviour
@@ -18,6 +20,7 @@ public class NetworkClownAvatar : NetworkBehaviour
 
     [SerializeField] Animator clownAnimator;
     [SerializeField] ClownAI clownAI;
+    [SerializeField] ClownHealth clownHealth;
     [SerializeField] NavMeshAgent navMeshAgent;
     [SerializeField] CharacterController characterController;
     [Header("Audio Networking")]
@@ -54,12 +57,16 @@ public class NetworkClownAvatar : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
+    readonly NetworkVariable<bool> _isDead = new(false);
+
     void Awake()
     {
         if (clownAnimator == null)
             clownAnimator = GetComponent<Animator>();
         if (clownAI == null)
             clownAI = GetComponent<ClownAI>();
+        if (clownHealth == null)
+            clownHealth = GetComponent<ClownHealth>();
         if (navMeshAgent == null)
             navMeshAgent = GetComponent<NavMeshAgent>();
         if (characterController == null)
@@ -70,13 +77,60 @@ public class NetworkClownAvatar : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        _isDead.OnValueChanged += HandleDeadStateChanged;
         ApplyAuthorityState();
+        ApplyDeadState(_isDead.Value); // late joiners inherit an already-dead body
 
         // Spawn-time state rule: rebuild the swing animation from the replicated snapshot for clients that
         // joined mid-swing. The server is authoritative and the swing was started here, so it doesn't need
         // to reconstruct from itself.
         if (!IsServer && _attackAnimation.Value.Active != 0)
             ReconstructAttackAnimationFromSnapshot(_attackAnimation.Value);
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        _isDead.OnValueChanged -= HandleDeadStateChanged;
+    }
+
+    void Update()
+    {
+        if (!IsServer || clownHealth == null)
+            return;
+
+        if (_isDead.Value != clownHealth.IsDead)
+            _isDead.Value = clownHealth.IsDead;
+    }
+
+    void HandleDeadStateChanged(bool previousValue, bool currentValue)
+    {
+        ApplyDeadState(currentValue);
+    }
+
+    void ApplyDeadState(bool isDead)
+    {
+        if (!isDead)
+            return;
+
+        // ClownAI is DISABLED on observers (see ApplyAuthorityState), so this direct call is the only thing
+        // that runs the client-side cleanup — dropping the hammer-carry layer and silencing the laugh.
+        if (clownAI != null)
+            clownAI.HandleDeath();
+
+        // The server disables the corpse's CharacterController once the fall has finished; observers mirror
+        // that on the SAME delay by dropping the kinematic stand-in, or the body would keep blocking a
+        // corridor on clients only, while the host walked straight through it.
+        if (characterController != null && !IsServer)
+            StartCoroutine(DropCollisionProxyRoutine());
+    }
+
+    IEnumerator DropCollisionProxyRoutine()
+    {
+        float delay = clownHealth != null ? clownHealth.DisableColliderDelay : 0f;
+        if (delay > 0f)
+            yield return new WaitForSeconds(delay);
+
+        EnemyClientCollisionProxy.Deactivate(characterController);
     }
 
     void ReconstructAttackAnimationFromSnapshot(AttackAnimationState state)

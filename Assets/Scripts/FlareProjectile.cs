@@ -153,21 +153,27 @@ public class FlareProjectile : NetworkBehaviour
         ZombieHealth zombie = hit.collider.GetComponentInParent<ZombieHealth>();
         SkeletonHealth skeleton = hit.collider.GetComponentInParent<SkeletonHealth>();
         SecurityGuardHealth guard = hit.collider.GetComponentInParent<SecurityGuardHealth>();
+        ClownHealth clown = hit.collider.GetComponentInParent<ClownHealth>();
 
         if (zombie != null && !zombie.IsDead)
         {
             zombie.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
-            FlareBurnEffect.SpawnAttached(burnEffectPrefab, zombie.transform, zombie, null, null, _shooterRoot, _shooterHealth);
+            FlareBurnEffect.SpawnAttached(burnEffectPrefab, zombie.transform, zombie, null, null, null, _shooterRoot, _shooterHealth);
         }
         else if (skeleton != null && !skeleton.IsDead)
         {
             skeleton.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
-            FlareBurnEffect.SpawnAttached(burnEffectPrefab, skeleton.transform, null, skeleton, null, _shooterRoot, _shooterHealth);
+            FlareBurnEffect.SpawnAttached(burnEffectPrefab, skeleton.transform, null, skeleton, null, null, _shooterRoot, _shooterHealth);
         }
         else if (guard != null && !guard.IsDead)
         {
             guard.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
-            FlareBurnEffect.SpawnAttached(burnEffectPrefab, guard.transform, null, null, guard, _shooterRoot, _shooterHealth);
+            FlareBurnEffect.SpawnAttached(burnEffectPrefab, guard.transform, null, null, guard, null, _shooterRoot, _shooterHealth);
+        }
+        else if (clown != null && !clown.IsDead)
+        {
+            clown.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
+            FlareBurnEffect.SpawnAttached(burnEffectPrefab, clown.transform, null, null, null, clown, _shooterRoot, _shooterHealth);
         }
         else
         {

@@ -253,6 +253,32 @@ public class SecurityGuardAI : MonoBehaviour
     [Tooltip("Attack-drive speed at or above which the legs use the run cycle instead of the walk during a masked punch.")]
     [SerializeField] float attackDriveRunThreshold = 2.8f;
 
+    [Header("Doors")]
+    [Tooltip("He works here — an unlocked door is a handle, not a wall. Shutting one in his face buys the " +
+             "swing time, never an escape, and he no longer grinds against a closed leaf when his patrol " +
+             "point is on the other side. Locked doors still stop him cold; he never closes one behind him.")]
+    [SerializeField] bool canOpenDoors = true;
+    [Tooltip("Minimum reach of the door probe ahead of him. Grows with his current speed (Door Look Ahead " +
+             "Seconds) so a sprint reaches the handle before the capsule reaches the leaf.")]
+    [SerializeField, Min(0.2f)] float doorProbeDistance = 1.5f;
+    [SerializeField, Min(0f)] float doorLookAheadSeconds = 0.55f;
+    [Tooltip("Radius of the probe sweep — wide enough to catch a leaf he is closing on at an angle.")]
+    [SerializeField, Min(0.05f)] float doorProbeRadius = 0.35f;
+    [Tooltip("Seconds between probes. The swing itself is what costs him time, not this.")]
+    [SerializeField, Min(0f)] float doorProbeInterval = 0.25f;
+    [Tooltip("Leave empty for the default raycast layers (players and enemies are always excluded).")]
+    [SerializeField] LayerMask doorProbeMask;
+    [Tooltip("A door that opens toward him sweeps its leaf through where he stands and wedges him against " +
+             "the wall behind — he cannot push it back. So he steps out of the swing arc first, pulls it " +
+             "open from there, and holds clear until the leaf settles. This is the extra standoff added to " +
+             "the arc on top of his own capsule radius.")]
+    [SerializeField, Min(0f)] float doorSwingClearance = 0.25f;
+    [Tooltip("Speed of the step back out of a swing arc.")]
+    [SerializeField, Min(0.1f)] float doorBackOffSpeed = 2f;
+    [Tooltip("How long he will try to clear a swing arc before shoving the door open regardless. Being " +
+             "swept by a leaf is survivable; standing in a doorway forever is not.")]
+    [SerializeField, Min(0f)] float doorBackOffMaxSeconds = 1.25f;
+
     [Header("Stagger wall clamp")]
     [Tooltip("The borrowed stagger clip leans the mesh past the capsule; clamp the hips so it can't lean through a wall behind him.")]
     [SerializeField] bool clampStaggerToWalls = true;
@@ -264,6 +290,7 @@ public class SecurityGuardAI : MonoBehaviour
 
     readonly Collider[] _detectionHits = new Collider[16];
     readonly RaycastHit[] _lineOfSightHits = new RaycastHit[16];
+    readonly RaycastHit[] _doorProbeHits = new RaycastHit[8];
 
     GuardState _state = GuardState.Patrol;
     Transform _target;
@@ -314,6 +341,16 @@ public class SecurityGuardAI : MonoBehaviour
     float _staggerImmuneUntil;
     float _staggerEndTime;
     float _nextCounterRollTime;
+
+    // Doors
+    float _nextDoorProbeTime;
+    HingeInteractDoor _swingWaitDoor;
+    float _swingWaitUntil;
+    HingeInteractDoor _backOffDoor;
+    float _backOffDeadline;
+    Vector3 _swingCenter;
+    float _swingRadius;
+    bool _suppressMovementFacing;
 
     // Movement
     Vector3 _horizontalVelocity;
@@ -426,6 +463,12 @@ public class SecurityGuardAI : MonoBehaviour
                 UpdateStagger();
                 break;
         }
+
+        // Doors are handled as part of moving rather than as a state of their own: whatever he was doing,
+        // a closed leaf between him and where he is heading gets opened and he carries on through it.
+        _suppressMovementFacing = false;
+        if (_state == GuardState.Patrol || _state == GuardState.Investigate || _state == GuardState.Chase)
+            UpdateDoorHandling(ref desiredHorizontalVelocity);
 
         ApplyMovement(desiredHorizontalVelocity);
         UpdateAnimatorParameters();
@@ -1760,6 +1803,167 @@ public class SecurityGuardAI : MonoBehaviour
     }
 
     // ------------------------------------------------------------------
+    // Doors
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Server-only: push open an unlocked door standing in his way. The sweep follows the direction he is
+    /// actually trying to move (the agent's desired velocity, so it tracks the path round a corner rather than
+    /// wherever the body happens to be facing) out to a speed-scaled reach, and hands any closed, unlocked
+    /// <see cref="HingeInteractDoor"/> it finds to that door's own server open path — so the swing, the sound and
+    /// the state all replicate exactly as a player's interact would.
+    ///
+    /// Only opening: he never shuts a door behind him (closing is the players' tool, not his) and never touches a
+    /// locked one — the key doors stay real barriers. Doors are not baked into the runtime NavMesh, so the agent
+    /// always paths straight through a doorway; before this, a closed leaf meant the capsule ground against it
+    /// while the legs kept walking.
+    /// </summary>
+    void UpdateDoorHandling(ref Vector3 desiredHorizontalVelocity)
+    {
+        if (!canOpenDoors)
+            return;
+
+        // A leaf he just pushed is still swinging: hold clear of its arc until it settles, or it sweeps
+        // into him and pins him between the door and the wall behind (he cannot push a leaf back).
+        if (_swingWaitDoor != null)
+        {
+            if (_swingWaitDoor.IsBusy && Time.time < _swingWaitUntil)
+            {
+                desiredHorizontalVelocity = TryGetSwingEscapeVelocity(out Vector3 escape)
+                    ? escape
+                    : Vector3.zero; // already clear — just let it swing past
+                _intendedMoveSpeed = desiredHorizontalVelocity.magnitude;
+                _suppressMovementFacing = true;
+                return;
+            }
+
+            _swingWaitDoor = null;
+        }
+
+        if (Time.time < _nextDoorProbeTime)
+            return;
+        _nextDoorProbeTime = Time.time + doorProbeInterval;
+
+        HingeInteractDoor door = FindClosedDoorAhead(desiredHorizontalVelocity);
+        if (door == null)
+        {
+            _backOffDoor = null;
+            return;
+        }
+
+        bool hasSweep = door.TryGetSwingSweep(out _swingCenter, out _swingRadius);
+        if (hasSweep && IsInsideSwingArc())
+        {
+            if (_backOffDoor != door)
+            {
+                _backOffDoor = door;
+                _backOffDeadline = Time.time + doorBackOffMaxSeconds;
+            }
+
+            // Step out of the arc and pull it open from there. If his back is to a wall and he cannot
+            // clear it in time, he shoves it open anyway rather than stand in the doorway forever.
+            if (Time.time < _backOffDeadline && TryGetSwingEscapeVelocity(out Vector3 escape))
+            {
+                desiredHorizontalVelocity = escape;
+                _intendedMoveSpeed = escape.magnitude;
+                _suppressMovementFacing = true;
+                _nextDoorProbeTime = Time.time + Mathf.Min(doorProbeInterval, 0.1f);
+                return;
+            }
+        }
+
+        _backOffDoor = null;
+        if (!door.ServerAiOpenIfUnlocked())
+            return;
+
+        if (!hasSweep)
+            return;
+
+        _swingWaitDoor = door;
+        _swingWaitUntil = Time.time + 3f; // watchdog: never wait on a leaf that stops mid-swing
+    }
+
+    /// <summary>The closed, unlocked, idle door his path runs into, or null. See <see cref="UpdateDoorHandling"/>.</summary>
+    HingeInteractDoor FindClosedDoorAhead(Vector3 desiredHorizontalVelocity)
+    {
+        Vector3 direction = desiredHorizontalVelocity;
+        direction.y = 0f;
+        if (direction.sqrMagnitude < 0.01f)
+        {
+            // No path velocity to follow: only a chase justifies reaching for a handle anyway (target parked
+            // just behind a shut door). Standing still on patrol or mid-investigate scan, he leaves doors alone
+            // instead of swinging every leaf he happens to pivot toward.
+            if (_state != GuardState.Chase)
+                return null;
+
+            direction = transform.forward;
+            direction.y = 0f;
+            if (direction.sqrMagnitude < 1e-4f)
+                return null;
+        }
+
+        direction.Normalize();
+
+        int mask = MaskExcludingActors(doorProbeMask);
+        if (mask == 0)
+            return null;
+
+        float reach = Mathf.Max(doorProbeDistance, _horizontalVelocity.magnitude * doorLookAheadSeconds);
+        Vector3 origin = transform.position + Vector3.up * 1f; // chest height, like the wall probes above
+        int hitCount = Physics.SphereCastNonAlloc(
+            origin, doorProbeRadius, direction, _doorProbeHits, reach, mask, QueryTriggerInteraction.Ignore);
+
+        HingeInteractDoor found = null;
+        for (int i = 0; i < hitCount; i++)
+        {
+            Collider hit = _doorProbeHits[i].collider;
+            _doorProbeHits[i] = default;
+            if (hit == null || found != null)
+                continue;
+
+            HingeInteractDoor door = hit.GetComponentInParent<HingeInteractDoor>();
+            if (door == null || door.IsOpen || door.IsLocked || door.IsBusy)
+                continue;
+
+            found = door;
+        }
+
+        return found;
+    }
+
+    bool IsInsideSwingArc()
+    {
+        float radius = _swingRadius
+            + (characterController != null ? characterController.radius : 0.3f)
+            + doorSwingClearance;
+
+        Vector3 offset = transform.position - _swingCenter;
+        offset.y = 0f;
+        return offset.sqrMagnitude < radius * radius;
+    }
+
+    /// <summary>Straight out of the leaf's swept disc — the shortest way clear of a door opening into him.</summary>
+    bool TryGetSwingEscapeVelocity(out Vector3 velocity)
+    {
+        velocity = Vector3.zero;
+        if (!IsInsideSwingArc())
+            return false;
+
+        Vector3 away = transform.position - _swingCenter;
+        away.y = 0f;
+        if (away.sqrMagnitude < 1e-4f)
+        {
+            away = -transform.forward;
+            away.y = 0f;
+            if (away.sqrMagnitude < 1e-4f)
+                return false;
+        }
+
+        velocity = away.normalized * doorBackOffSpeed;
+        return true;
+    }
+
+    // ------------------------------------------------------------------
     // Movement / animator plumbing (mirrors ZombieAI)
     // ------------------------------------------------------------------
 
@@ -1782,6 +1986,14 @@ public class SecurityGuardAI : MonoBehaviour
 
         if (navMeshAgent != null && navMeshAgent.enabled)
             navMeshAgent.nextPosition = transform.position;
+
+        // Backing out of a door's swing arc, he keeps his eyes on the door instead of spinning to face
+        // the direction of a two-step retreat.
+        if (_suppressMovementFacing)
+        {
+            RotateTowards(_swingCenter, rotationSpeed);
+            return;
+        }
 
         Vector3 horizontalDirection = _horizontalVelocity;
         horizontalDirection.y = 0f;

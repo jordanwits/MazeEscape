@@ -1093,10 +1093,12 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         DoorNetworkStateStore.ServerClear();
-        // ConsumedItemNetworkStore and CarnivalRadioNetworkStore ride the same infrastructure NetworkObject as the
-        // door store, so they are already spawned by the block above; just scope their per-level state to this level.
+        // ConsumedItemNetworkStore, CarnivalRadioNetworkStore and CarnivalStoreNetworkStore ride the same
+        // infrastructure NetworkObject as the door store, so they are already spawned by the block above; just
+        // scope their per-level state to this level.
         ConsumedItemNetworkStore.ServerClear();
         CarnivalRadioNetworkStore.ServerClear();
+        CarnivalStoreNetworkStore.ServerClear();
     }
 
     GameObject FindRegisteredNetworkPrefabWithComponent<T>() where T : Component
@@ -3027,7 +3029,97 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         ConfigureCeilingExclusionVolume(mazeRoot.transform);
 
         LogUnreadableNavMeshSourceMeshesOnce(mazeRoot.transform);
-        surface.BuildNavMesh();
+
+        // Doors are authored (and instantiated) CLOSED, so their leaf colliders bake as walls and the
+        // doorway becomes a hole in the mesh. That is how Level03's exit hall ended up an unreachable
+        // island: its entry leaf sealed the only mouth, so no agent could ever path down the hallway.
+        // An UNLOCKED door is not a wall — players open it and SecurityGuardAI pushes it open — so its
+        // leaf is left out of the bake and the doorway bakes open; the leaf still blocks physically while
+        // closed. KEYED doors stay in the bake: an enemy that cannot unlock one should route around it
+        // rather than crowd against it forever.
+        List<Collider> suppressedDoorColliders = CollectOpenableDoorLeafColliders(mazeRoot.transform);
+        for (int i = 0; i < suppressedDoorColliders.Count; i++)
+            suppressedDoorColliders[i].enabled = false;
+
+        try
+        {
+            surface.BuildNavMesh();
+        }
+        finally
+        {
+            for (int i = 0; i < suppressedDoorColliders.Count; i++)
+            {
+                if (suppressedDoorColliders[i] != null)
+                    suppressedDoorColliders[i].enabled = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Currently-enabled solid colliders of every door leaf that has no key requirement, so
+    /// <see cref="TryRebuildRuntimeNavMesh"/> can bake the doorway open. A double door counts as keyed when
+    /// ANY leaf in its pair chain is keyed — a "purely keyed mate" carries no Use Key flag of its own, and
+    /// dropping just that half would bake a walkable gap through a locked double door.
+    /// </summary>
+    static List<Collider> CollectOpenableDoorLeafColliders(Transform mazeRoot)
+    {
+        List<Collider> result = new();
+        if (mazeRoot == null)
+            return result;
+
+        List<Collider> leafBuffer = new();
+        foreach (HingeInteractDoor door in mazeRoot.GetComponentsInChildren<HingeInteractDoor>(true))
+        {
+            if (door == null || IsKeyedDoorCluster(door) || IsElevatorCabLeaf(door))
+                continue;
+
+            leafBuffer.Clear();
+            door.AppendSolidDoorColliders(leafBuffer, includePairedLeaf: false);
+            for (int i = 0; i < leafBuffer.Count; i++)
+            {
+                Collider c = leafBuffer[i];
+                if (c != null && c.enabled)
+                    result.Add(c);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The exit elevator's own cab leaves (dungeon/carnival cabs) stay in the bake: the cab is a finish
+    /// device, not a route, and nothing should path inside it. Mirrors the cab-radius rule in
+    /// <see cref="ElevatorFinishController"/> — an ordinary door elsewhere in a finish piece (Level03's exit
+    /// hall entry door, 33m up the corridor) is far outside it and is baked open like any other.
+    /// </summary>
+    static bool IsElevatorCabLeaf(HingeInteractDoor door)
+    {
+        const float cabLeafRadius = 8f;
+
+        ElevatorFinishSpawnMarker marker = door.GetComponentInParent<ElevatorFinishSpawnMarker>();
+        if (marker == null)
+            return false;
+
+        foreach (ElevatorFinishController cab in marker.GetComponentsInChildren<ElevatorFinishController>(true))
+        {
+            if (cab != null && Vector3.Distance(cab.transform.position, door.transform.position) <= cabLeafRadius)
+                return true;
+        }
+
+        return false;
+    }
+
+    static bool IsKeyedDoorCluster(HingeInteractDoor door)
+    {
+        // Pairs link both ways, so walk the chain with a visit guard instead of trusting it to terminate.
+        HashSet<HingeInteractDoor> visited = new();
+        for (HingeInteractDoor step = door; step != null && visited.Add(step); step = step.PairedLeaf)
+        {
+            if (step.UseKeyToUnlock)
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>

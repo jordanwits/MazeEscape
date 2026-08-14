@@ -245,6 +245,42 @@ public partial class PlayerController
         return false;
     }
 
+    /// <summary>
+    /// The prize counter is a wide booth, so the aim cast alone would offer the shop from across the room —
+    /// <see cref="CarnivalStore.CanOfferShop"/> gates it on the counter's own interact radius.
+    /// </summary>
+    bool TryFindInteractableCarnivalStore(Transform cam, out CarnivalStore store)
+    {
+        store = null;
+        if (cam == null)
+            return false;
+
+        // Purchases are dispensed ONTO this counter, and the booth's collider sits right behind/under them, so
+        // an aimed item would always lose: the hit walk below skips the item (no CarnivalStore on it) and lands
+        // on the counter regardless of which is nearer. While anything is actually pickable, the counter steps
+        // aside — the same rule an opened chest uses for its own loot (see InteractHitBelongsToOpenedChest).
+        if (TryFindInteractableGrabbable(out _))
+            return false;
+
+        int mask = interactMask.value == 0 ? Physics.DefaultRaycastLayers : interactMask.value;
+        int count = TryInteractCastNonAlloc(cam, mask);
+        if (count <= 0)
+            return false;
+
+        SortInteractHitsByDistance(count);
+        for (int i = 0; i < count; i++)
+        {
+            RaycastHit h = _interactCastHitBuffer[i];
+            CarnivalStore found = h.collider.GetComponentInParent<CarnivalStore>();
+            if (found != null && found.CanOfferShop(transform.position))
+            {
+                store = found;
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool TryFindInteractableTicketBundle(Transform cam, out CarnivalTicketBundle bundle)
     {
         bundle = null;
@@ -307,6 +343,12 @@ public partial class PlayerController
             return true;
         }
 
+        if (TryFindInteractableCarnivalStore(cam, out CarnivalStore store) && store != null)
+        {
+            store.RequestShopInteract(this);
+            return true;
+        }
+
         return false;
     }
 
@@ -339,6 +381,12 @@ public partial class PlayerController
         if (TryFindInteractableRadio(cam, out CarnivalRadio radio) && radio != null)
         {
             message = radio.InteractPromptMessage;
+            return true;
+        }
+
+        if (TryFindInteractableCarnivalStore(cam, out CarnivalStore store) && store != null)
+        {
+            message = store.InteractPromptMessage;
             return true;
         }
 

@@ -1555,6 +1555,7 @@ GameObject:
   - component: {fileID: 4451224814036979753}
   - component: {fileID: 8799013584732335025}
   - component: {fileID: 229505518538271492}
+  - component: {fileID: 3126750321510063781}
   m_Layer: 10
   m_Name: Clown
   m_TagString: Untagged
@@ -1674,6 +1675,7 @@ MonoBehaviour:
   voiceHearRadius: 22
   zombieNoiseHearRadius: 22
   targetNavMeshSampleRadius: 3
+  detectionFovHalfAngleDegrees: 100
   requireDetectionLineOfSight: 1
   detectionLineOfSightMask:
     serializedVersion: 2
@@ -1757,6 +1759,10 @@ MonoBehaviour:
   clownVoiceVolume: 0.58
   clownVoiceAudioSource: {fileID: 149746414673848062}
   patrolLaughInterval: 4
+  deathStateName: Death
+  deathCrossfadeDuration: 0.12
+  hammerCarryLayerIndex: 1
+  dynamicScale: {fileID: 229505518538271492}
   swingTriggerParameter: Swing
   swingStateName: Hammer Swing
   swingClipDurationFallback: 3.9
@@ -1867,6 +1873,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   clownAnimator: {fileID: 5248420488664443651}
   clownAI: {fileID: 5039438277813972725}
+  clownHealth: {fileID: 3126750321510063781}
   navMeshAgent: {fileID: 7829522732594108920}
   characterController: {fileID: 3180934254569780653}
   maxFootstepObserverDistance: 26
@@ -1932,6 +1939,23 @@ MonoBehaviour:
   headLookEyeHeight: 1.5
   headFaceAxisLocal: {x: 0.041, y: 0.16, z: 0.986}
   clientLerpSpeed: 14
+--- !u!114 &3126750321510063781
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7732810895938106884}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e7dfb2e10bc278345b986315cae22dbf, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ClownHealth
+  maxHealth: 400
+  meleeDamageScale: 0.4
+  clownAI: {fileID: 5039438277813972725}
+  disableColliderDelay: 3
+  destroyDelay: 60
 --- !u!1 &7744325167141155605
 GameObject:
   m_ObjectHideFlags: 0
