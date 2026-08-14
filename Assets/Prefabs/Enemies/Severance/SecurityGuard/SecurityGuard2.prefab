@@ -604,6 +604,17 @@ MonoBehaviour:
   upperBodyLayerIndex: 1
   upperBodyBlendSeconds: 0.12
   attackDriveRunThreshold: 2.8
+  canOpenDoors: 1
+  doorProbeDistance: 1.5
+  doorLookAheadSeconds: 0.55
+  doorProbeRadius: 0.35
+  doorProbeInterval: 0.25
+  doorProbeMask:
+    serializedVersion: 2
+    m_Bits: 0
+  doorSwingClearance: 0.25
+  doorBackOffSpeed: 2
+  doorBackOffMaxSeconds: 1.25
   clampStaggerToWalls: 1
   staggerWallMask:
     serializedVersion: 2
