@@ -48,9 +48,7 @@ public sealed class MainMenuController : MonoBehaviour
     MultiplayerSceneFlow _flow;
 
     MenuModal _modal;
-    MenuToast _toast;
     MenuFriendsPanel _friendsPanel;
-    TextMeshProUGUI _statusLabel;
 
     MenuScreenFader _rootFader;
     MenuScreenFader _settingsFader;
@@ -120,7 +118,6 @@ public sealed class MainMenuController : MonoBehaviour
 
         if (_session != null)
         {
-            _session.StatusChanged += OnStatusChanged;
             _session.LobbyStateChanged += OnLobbyStateChanged;
         }
 
@@ -134,7 +131,6 @@ public sealed class MainMenuController : MonoBehaviour
     {
         if (_session != null)
         {
-            _session.StatusChanged -= OnStatusChanged;
             _session.LobbyStateChanged -= OnLobbyStateChanged;
         }
     }
@@ -158,13 +154,11 @@ public sealed class MainMenuController : MonoBehaviour
         // Light wash only — the hallway built into Menu.unity is the background.
         MenuBackdrop.BuildMenuScrim(root);
         _rootFader = BuildRootScreen(root);
-        BuildFooter(root);
 
         _settingsFader = BuildSettingsScreen(root);
         _lobbyFader = BuildLobbyScreen(root);
 
         _friendsPanel = MenuFriendsPanel.Create(root, _session);
-        _toast = MenuToast.Create(root);
         _modal = MenuModal.Create(root);
     }
 
@@ -244,26 +238,6 @@ public sealed class MainMenuController : MonoBehaviour
         {
             _modal.Open("EXIT TO DESKTOP", string.Empty, "EXIT", true, QuitApplication);
         }, out _, true, true, NavHeight, NavFontSize);
-    }
-
-    void BuildFooter(Transform root)
-    {
-        RectTransform footer = MenuWidgets.CreateRect("Footer", root);
-        footer.anchorMin = new Vector2(0.5f, 0f);
-        footer.anchorMax = new Vector2(0.5f, 0f);
-        footer.pivot = new Vector2(0.5f, 0f);
-        footer.anchoredPosition = new Vector2(0f, 34f);
-        footer.sizeDelta = new Vector2(820f, 56f);
-
-        _statusLabel = MenuWidgets.CreateText(footer, "Status", string.Empty, 14.5f, MenuTheme.Mist,
-            MenuWidgets.FontKind.Body, TextAlignmentOptions.Bottom);
-        RectTransform statusRt = _statusLabel.rectTransform;
-        statusRt.anchorMin = Vector2.zero;
-        statusRt.anchorMax = Vector2.one;
-        statusRt.offsetMin = new Vector2(0f, 24f);
-        statusRt.offsetMax = Vector2.zero;
-        _statusLabel.textWrappingMode = TextWrappingModes.NoWrap;
-        _statusLabel.overflowMode = TextOverflowModes.Ellipsis;
     }
 
     /// <summary>A dedicated screen: centered on the canvas, shown with the button rail hidden.</summary>
@@ -716,7 +690,7 @@ public sealed class MainMenuController : MonoBehaviour
     {
         if (_session == null)
         {
-            _toast.Show("Multiplayer is unavailable in this scene.");
+            _modal.Open("MULTIPLAYER UNAVAILABLE", "This scene has no multiplayer session.", "OK", false, null);
             return;
         }
         if (_flow != null)
@@ -729,7 +703,7 @@ public sealed class MainMenuController : MonoBehaviour
     {
         if (_session == null)
         {
-            _toast.Show("Multiplayer is unavailable in this scene.");
+            _modal.Open("MULTIPLAYER UNAVAILABLE", "This scene has no multiplayer session.", "OK", false, null);
             return;
         }
         // Already hosting (the player backed out of the lobby): reopen it rather than failing on
@@ -796,14 +770,6 @@ public sealed class MainMenuController : MonoBehaviour
             fader.Hide(instant);
     }
 
-    void OnStatusChanged(string status)
-    {
-        if (_statusLabel != null)
-            _statusLabel.text = status;
-        if (_toast != null)
-            _toast.Show(status);
-    }
-
     /// <summary>
     /// A session the lobby screen belongs to. The offline run also starts a (loopback) host, but it
     /// goes straight into the level — showing it the lobby would flash the screen for a frame.
@@ -831,10 +797,6 @@ public sealed class MainMenuController : MonoBehaviour
             if (_current == MenuScreen.Lobby)
                 ShowScreen(MenuScreen.Root);
         }
-
-        // the lobby's identity panel already carries the status line; don't print it twice
-        if (_statusLabel != null)
-            _statusLabel.enabled = _current != MenuScreen.Lobby;
 
         // Only your own pick, only while the lobby screen itself is up — every other screen (and a
         // dead session) tears the preview down.
