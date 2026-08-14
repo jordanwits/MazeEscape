@@ -120,7 +120,7 @@ public partial class PlayerController
 
         int needed = gun.MissingRounds;
         int drawn = 0;
-        for (int i = 0; i < 3 && drawn < needed; i++)
+        for (int i = 0; i < InventorySlotCapacity && drawn < needed; i++)
         {
             if (_localInventorySlots[i] is not FlareAmmoItem ammo)
                 continue;
@@ -212,7 +212,7 @@ public partial class PlayerController
         {
             if (_networkPlayerInventory == null)
                 return false;
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < InventorySlotCapacity; i++)
             {
                 if (_networkPlayerInventory.GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdFlareAmmo)
                     return true;
@@ -221,7 +221,7 @@ public partial class PlayerController
             return false;
         }
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < InventorySlotCapacity; i++)
         {
             if (_localInventorySlots[i] is FlareAmmoItem)
                 return true;

@@ -30,7 +30,11 @@ using Object = UnityEngine.Object;
 /// </summary>
 public static class LevelCarryOverStore
 {
-    public const int SlotCount = 3;
+    /// <summary>
+    /// Snapshot width — the maximum hotbar, not the base three, so a player who bought the 4th slot at the
+    /// carnival counter carries its contents into the next section along with the unlock itself.
+    /// </summary>
+    public const int SlotCount = NetworkPlayerInventory.MaxSlotCount;
 
     public struct SlotState
     {
@@ -56,22 +60,27 @@ public static class LevelCarryOverStore
         public float Health;
         public byte SelectedSlot;
         public bool FlashlightLightOn;
+        /// <summary>Whether this player bought the 4th hotbar slot — the upgrade is for the whole run.</summary>
+        public bool HasExtraSlot;
         public SlotState Slot0;
         public SlotState Slot1;
         public SlotState Slot2;
+        public SlotState Slot3;
 
         public SlotState GetSlot(int index)
         {
             if (index == 0) return Slot0;
             if (index == 1) return Slot1;
-            return Slot2;
+            if (index == 2) return Slot2;
+            return Slot3;
         }
 
         public void SetSlot(int index, SlotState value)
         {
             if (index == 0) Slot0 = value;
             else if (index == 1) Slot1 = value;
-            else Slot2 = value;
+            else if (index == 2) Slot2 = value;
+            else Slot3 = value;
         }
     }
 
@@ -118,6 +127,7 @@ public static class LevelCarryOverStore
 
         state.SelectedSlot = (byte)Mathf.Clamp(inventory.SelectedSlotIndex, 0, SlotCount - 1);
         state.FlashlightLightOn = inventory.SelectedFlashlightLightOn;
+        state.HasExtraSlot = inventory.HasExtraSlot;
         for (int i = 0; i < SlotCount; i++)
         {
             SlotState slot = new SlotState

@@ -279,10 +279,37 @@ public partial class PlayerController : MonoBehaviour
     NetworkPlayerInventory _networkPlayerInventory;
     [Tooltip("Items not in the active hotbar slot are parented here. Auto-created as child of the player if empty.")]
     [SerializeField] Transform inventoryStashRoot;
-    GrabbableInventoryItem[] _localInventorySlots = new GrabbableInventoryItem[3];
+    GrabbableInventoryItem[] _localInventorySlots = new GrabbableInventoryItem[NetworkPlayerInventory.MaxSlotCount];
     /// <summary>Parallel to <see cref="_localInventorySlots"/>; 0 for empty, 1 for flashlight, 1–5 for glowstick.</summary>
-    int[] _localSlotStacks = new int[3];
+    int[] _localSlotStacks = new int[NetworkPlayerInventory.MaxSlotCount];
     int _localSelectedSlot;
+    /// <summary>Offline mirror of <see cref="NetworkPlayerInventory.HasExtraSlot"/> (dev scenes have no wallet to buy with).</summary>
+    bool _localExtraSlotUnlocked;
+    GameObject[] _inventorySlotRoots;
+    RectTransform _inventorySlotRowRect;
+    /// <summary>Last capacity the hotbar row was laid out for, so the poll below only rebuilds on a real change.</summary>
+    int _lastHudSlotCapacity = -1;
+
+    /// <summary>
+    /// Usable hotbar slots for whichever inventory path is live. Every "where can an item go / what can I
+    /// scroll to" loop uses this, so the bought 4th slot lights up the same way online and offline.
+    /// </summary>
+    public int InventorySlotCapacity => IsUsingNetworkedInventory
+        ? _networkPlayerInventory.SlotCapacity
+        : (_localExtraSlotUnlocked ? NetworkPlayerInventory.MaxSlotCount : NetworkPlayerInventory.BaseSlotCount);
+
+    /// <summary>True when this player owns the bought slot, on either inventory path.</summary>
+    public bool HasExtraInventorySlot => IsUsingNetworkedInventory
+        ? _networkPlayerInventory.HasExtraSlot
+        : _localExtraSlotUnlocked;
+
+    /// <summary>Offline-only grant so the dev scenes can exercise the 4-slot layout.</summary>
+    public void GrantLocalExtraInventorySlot()
+    {
+        _localExtraSlotUnlocked = true;
+        RefreshInventorySlotHudLayout();
+        RefreshInventorySlotHud();
+    }
     TMP_Text[] _inventorySlotCountTexts;
     HudPrompt _hudPrompt;
     float _footstepTimer;
@@ -1419,7 +1446,8 @@ public partial class PlayerController : MonoBehaviour
         invRowRect.anchorMax = new Vector2(0.5f, 0f);
         invRowRect.pivot = new Vector2(0.5f, 0f);
         invRowRect.anchoredPosition = new Vector2(0f, invSlotBottomPad);
-        invRowRect.sizeDelta = new Vector2(304f, invSlotRowHeight);
+        invRowRect.sizeDelta = new Vector2(InventoryRowWidthFor(NetworkPlayerInventory.BaseSlotCount), invSlotRowHeight);
+        _inventorySlotRowRect = invRowRect;
         HorizontalLayoutGroup invLayout = invRow.AddComponent<HorizontalLayoutGroup>();
         invLayout.spacing = 8f;
         invLayout.childAlignment = TextAnchor.MiddleCenter;
@@ -1431,12 +1459,16 @@ public partial class PlayerController : MonoBehaviour
         _inventoryDefaultBorderColor = MenuTheme.WithAlpha(MenuTheme.Bone, 0.28f);
         _inventoryDefaultFillColor = MenuTheme.WithAlpha(MenuTheme.Ink, 0.60f);
         _inventorySelectedBorderColor = MenuTheme.WithAlpha(MenuTheme.Amber, 0.95f);
-        _inventorySlotBorderImages = new Image[3];
-        _inventorySlotIconImages = new Image[3];
-        _inventorySlotCountTexts = new TMP_Text[3];
-        for (int i = 0; i < 3; i++)
+        // Every slot box is built up front, including the one sold at the prize counter — only its visibility
+        // and the row's width depend on the purchase, so nothing has to be constructed mid-run.
+        _inventorySlotBorderImages = new Image[NetworkPlayerInventory.MaxSlotCount];
+        _inventorySlotIconImages = new Image[NetworkPlayerInventory.MaxSlotCount];
+        _inventorySlotCountTexts = new TMP_Text[NetworkPlayerInventory.MaxSlotCount];
+        _inventorySlotRoots = new GameObject[NetworkPlayerInventory.MaxSlotCount];
+        for (int i = 0; i < NetworkPlayerInventory.MaxSlotCount; i++)
         {
             GameObject slot = new GameObject("InventorySlot" + (i + 1));
+            _inventorySlotRoots[i] = slot;
             slot.layer = 5;
             slot.transform.SetParent(invRow.transform, false);
             // the slot root draws only the frame ring; the dark plate is the inset fill child
@@ -1501,6 +1533,42 @@ public partial class PlayerController : MonoBehaviour
             countRect.offsetMax = new Vector2(-5f, 0f);
         }
         _inventorySlotsRoot = invRow;
+        RefreshInventorySlotHudLayout();
+    }
+
+    const float InventorySlotBoxSize = 96f;
+    const float InventorySlotSpacing = 8f;
+
+    static float InventoryRowWidthFor(int slots)
+    {
+        return slots * InventorySlotBoxSize + Mathf.Max(0, slots - 1) * InventorySlotSpacing;
+    }
+
+    /// <summary>
+    /// Shows exactly <see cref="InventorySlotCapacity"/> slot boxes and widens the row to match, so buying the
+    /// 4th slot adds a box rather than shrinking the other three (the layout group divides a fixed width).
+    /// Called when the HUD is built and whenever the unlock replicates in.
+    /// </summary>
+    void RefreshInventorySlotHudLayout()
+    {
+        if (_inventorySlotRoots == null)
+            return;
+
+        int capacity = InventorySlotCapacity;
+        for (int i = 0; i < _inventorySlotRoots.Length; i++)
+        {
+            GameObject slot = _inventorySlotRoots[i];
+            if (slot != null && slot.activeSelf != (i < capacity))
+                slot.SetActive(i < capacity);
+        }
+
+        if (_inventorySlotRowRect != null)
+        {
+            Vector2 size = _inventorySlotRowRect.sizeDelta;
+            float wanted = InventoryRowWidthFor(capacity);
+            if (!Mathf.Approximately(size.x, wanted))
+                _inventorySlotRowRect.sizeDelta = new Vector2(wanted, size.y);
+        }
     }
 
     void CreateThrowChargeBarUI()
@@ -2198,7 +2266,7 @@ public partial class PlayerController : MonoBehaviour
         {
             if (_networkPlayerInventory == null)
                 return false;
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < InventorySlotCapacity; i++)
             {
                 ulong id = _networkPlayerInventory.GetSlotItemId(i);
                 if (_networkPlayerInventory.GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdKey)
@@ -2211,7 +2279,7 @@ public partial class PlayerController : MonoBehaviour
             return false;
         }
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < InventorySlotCapacity; i++)
         {
             if (_localInventorySlots[i] is KeyItem)
                 return true;

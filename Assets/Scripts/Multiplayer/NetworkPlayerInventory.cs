@@ -8,6 +8,16 @@ using Object = UnityEngine.Object;
 [RequireComponent(typeof(NetworkObject))]
 public partial class NetworkPlayerInventory : NetworkBehaviour
 {
+    /// <summary>Hotbar slots every player starts with.</summary>
+    public const int BaseSlotCount = 3;
+
+    /// <summary>
+    /// Hotbar slots a player can reach at most — the base three plus the one sold at the carnival prize
+    /// counter. The backing NetworkVariables for ALL of these always exist; the purchase only raises
+    /// <see cref="SlotCapacity"/>, so nothing about the replicated layout changes when it is bought.
+    /// </summary>
+    public const int MaxSlotCount = 4;
+
     [SerializeField] PlayerController playerController;
     [Tooltip("Forward impulse when dropping (matches PlayerController drop force).")]
     [SerializeField] float dropThrowImpulse = 0.65f;
@@ -35,6 +45,11 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
+    readonly NetworkVariable<ulong> _slot3ItemId = new NetworkVariable<ulong>(
+        0UL,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
     readonly NetworkVariable<byte> _slot0ItemType = new NetworkVariable<byte>(
         GrabbableInventoryItem.TypeIdNone,
         NetworkVariableReadPermission.Everyone,
@@ -47,6 +62,22 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
     readonly NetworkVariable<byte> _slot2ItemType = new NetworkVariable<byte>(
         GrabbableInventoryItem.TypeIdNone,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    readonly NetworkVariable<byte> _slot3ItemType = new NetworkVariable<byte>(
+        GrabbableInventoryItem.TypeIdNone,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    /// <summary>
+    /// Whether this player bought the 4th hotbar slot at the carnival prize counter. Server-written, so a
+    /// client cannot grant itself the upgrade, and replicated so every peer's HUD agrees on the row width.
+    /// It rides the player object, which survives respawns, and <see cref="LevelCarryOverStore"/> carries it
+    /// across a section switch — you buy it once and keep it for the run.
+    /// </summary>
+    readonly NetworkVariable<bool> _extraSlotUnlocked = new NetworkVariable<bool>(
+        false,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
@@ -76,6 +107,10 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         0,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
+    readonly NetworkVariable<byte> _slot3Stack = new NetworkVariable<byte>(
+        0,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
 
     /// <summary>Replicated 0…1 for HUD; only meaningful when the slot holds a flashlight. Server-writes from the world object each frame.</summary>
     readonly NetworkVariable<float> _slot0FlashlightBattery = new NetworkVariable<float>(
@@ -90,9 +125,46 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         0f,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
+    readonly NetworkVariable<float> _slot3FlashlightBattery = new NetworkVariable<float>(
+        0f,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
 
     public int SelectedSlotIndex => _selectedSlot.Value;
     public bool SelectedFlashlightLightOn => _selectedFlashlightLightOn.Value;
+
+    /// <summary>True once this player has bought the extra hotbar slot.</summary>
+    public bool HasExtraSlot => _extraSlotUnlocked.Value;
+
+    /// <summary>
+    /// How many hotbar slots this player can actually use right now. Every loop that asks "where can an item
+    /// go / what can I scroll to" must use this, NOT <see cref="MaxSlotCount"/> — the 4th slot's variables
+    /// exist from spawn but are off-limits until bought. Teardown loops (scatter on disconnect, clear-all)
+    /// deliberately use MaxSlotCount instead, so nothing can strand in a slot that later locks.
+    /// </summary>
+    public int SlotCapacity => _extraSlotUnlocked.Value ? MaxSlotCount : BaseSlotCount;
+
+    /// <summary>
+    /// Server-only. Grants the bought 4th slot. Returns false when this player already owns it, which is what
+    /// enforces the shop's one-per-player limit — the check and the write live on the same authority, so two
+    /// rapid clicks cannot both pass.
+    /// </summary>
+    public bool ServerGrantExtraSlot()
+    {
+        if (!IsServer || _extraSlotUnlocked.Value)
+            return false;
+
+        _extraSlotUnlocked.Value = true;
+        RaiseChangedAndRefresh();
+        return true;
+    }
+
+    /// <summary>Server-only. Restores a previously-bought slot when rebuilding a player in the next section.</summary>
+    public void ServerRestoreExtraSlot(bool unlocked)
+    {
+        if (IsServer)
+            _extraSlotUnlocked.Value = unlocked;
+    }
 
     public event System.Action OnInventoryChanged;
 
@@ -101,6 +173,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (index == 0) return _slot0ItemId.Value;
         if (index == 1) return _slot1ItemId.Value;
         if (index == 2) return _slot2ItemId.Value;
+        if (index == 3) return _slot3ItemId.Value;
         return 0UL;
     }
 
@@ -109,6 +182,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (index == 0) _slot0ItemId.Value = value;
         else if (index == 1) _slot1ItemId.Value = value;
         else if (index == 2) _slot2ItemId.Value = value;
+        else if (index == 3) _slot3ItemId.Value = value;
     }
 
     public byte GetSlotItemTypeId(int index)
@@ -116,6 +190,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (index == 0) return _slot0ItemType.Value;
         if (index == 1) return _slot1ItemType.Value;
         if (index == 2) return _slot2ItemType.Value;
+        if (index == 3) return _slot3ItemType.Value;
         return GrabbableInventoryItem.TypeIdNone;
     }
 
@@ -124,6 +199,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (index == 0) _slot0ItemType.Value = value;
         else if (index == 1) _slot1ItemType.Value = value;
         else if (index == 2) _slot2ItemType.Value = value;
+        else if (index == 3) _slot3ItemType.Value = value;
     }
 
     public int GetSlotStackCount(int index)
@@ -131,6 +207,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (index == 0) return _slot0Stack.Value;
         if (index == 1) return _slot1Stack.Value;
         if (index == 2) return _slot2Stack.Value;
+        if (index == 3) return _slot3Stack.Value;
         return 0;
     }
 
@@ -139,6 +216,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (index == 0) _slot0Stack.Value = value;
         else if (index == 1) _slot1Stack.Value = value;
         else if (index == 2) _slot2Stack.Value = value;
+        else if (index == 3) _slot3Stack.Value = value;
     }
 
     public float GetSlotFlashlightBatteryNormalizedForHud(int index)
@@ -146,6 +224,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (index == 0) return _slot0FlashlightBattery.Value;
         if (index == 1) return _slot1FlashlightBattery.Value;
         if (index == 2) return _slot2FlashlightBattery.Value;
+        if (index == 3) return _slot3FlashlightBattery.Value;
         return 0f;
     }
 
@@ -179,11 +258,16 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             if (!Mathf.Approximately(_slot2FlashlightBattery.Value, quantized))
                 _slot2FlashlightBattery.Value = quantized;
         }
+        else if (index == 3)
+        {
+            if (!Mathf.Approximately(_slot3FlashlightBattery.Value, quantized))
+                _slot3FlashlightBattery.Value = quantized;
+        }
     }
 
     int GetFirstEmptySlot()
     {
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < SlotCapacity; i++)
         {
             if (GetSlotItemId(i) == 0UL)
                 return i;
@@ -240,6 +324,11 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         _slot0Stack.OnValueChanged += OnStackChanged;
         _slot1Stack.OnValueChanged += OnStackChanged;
         _slot2Stack.OnValueChanged += OnStackChanged;
+        _slot3ItemId.OnValueChanged += OnSlot3Changed;
+        _slot3ItemType.OnValueChanged += OnTypeChanged;
+        _slot3Stack.OnValueChanged += OnStackChanged;
+        // Drives the HUD row growing a box on every peer the moment the purchase lands.
+        _extraSlotUnlocked.OnValueChanged += OnExtraSlotUnlockedChanged;
 
         if (IsServer)
             SendItemSnapshotToOwner();
@@ -268,6 +357,15 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         _slot0Stack.OnValueChanged -= OnStackChanged;
         _slot1Stack.OnValueChanged -= OnStackChanged;
         _slot2Stack.OnValueChanged -= OnStackChanged;
+        _slot3ItemId.OnValueChanged -= OnSlot3Changed;
+        _slot3ItemType.OnValueChanged -= OnTypeChanged;
+        _slot3Stack.OnValueChanged -= OnStackChanged;
+        _extraSlotUnlocked.OnValueChanged -= OnExtraSlotUnlockedChanged;
+    }
+
+    void OnExtraSlotUnlockedChanged(bool previous, bool current)
+    {
+        RaiseChangedAndRefresh();
     }
 
     void HandleGameplaySceneLoadedForPresentationRefresh(Scene scene, LoadSceneMode mode)
@@ -286,7 +384,9 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             return;
         float dt = Time.deltaTime;
         Vector3 resolveHint = playerController != null ? playerController.transform.position : transform.position;
-        for (int i = 0; i < 3; i++)
+        // MaxSlotCount, not SlotCapacity: this only mirrors whatever a slot already holds, and a slot must
+        // still report itself empty if capacity ever shrinks under it.
+        for (int i = 0; i < MaxSlotCount; i++)
         {
             ulong id = GetSlotItemId(i);
             if (id == 0UL)
@@ -324,6 +424,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
     void OnSlot0Changed(ulong previous, ulong current) { RaiseChangedAndRefresh(); }
     void OnSlot1Changed(ulong previous, ulong current) { RaiseChangedAndRefresh(); }
     void OnSlot2Changed(ulong previous, ulong current) { RaiseChangedAndRefresh(); }
+    void OnSlot3Changed(ulong previous, ulong current) { RaiseChangedAndRefresh(); }
     void OnSelectedChanged(byte previous, byte current) { RaiseChangedAndRefresh(); }
     void OnFlashlightLightChanged(bool previous, bool current) { RaiseChangedAndRefresh(); }
 
@@ -345,7 +446,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         {
             if (GetFirstEmptySlot() >= 0)
                 return true;
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < SlotCapacity; i++)
             {
                 if (GetSlotItemId(i) == 0UL)
                     continue;
@@ -430,7 +531,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         {
             // Top up every same-type slot first; whatever is left needs an empty slot of its own.
             int w = item.StackCount;
-            for (int i = 0; i < 3 && w > 0; i++)
+            for (int i = 0; i < SlotCapacity && w > 0; i++)
             {
                 ulong slotId = GetSlotItemId(i);
                 if (slotId == 0UL)
@@ -621,7 +722,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
     void SelectAfterDrop()
     {
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < SlotCapacity; i++)
         {
             if (GetSlotItemId(i) != 0UL)
             {
@@ -667,7 +768,9 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         int sign = delta > 0 ? 1 : -1;
         int cur = _selectedSlot.Value;
         int next = cur + sign;
-        int n = 3;
+        int n = SlotCapacity;
+        // Clamp first: if selection was already parked on a slot that is now out of capacity, wrapping a
+        // larger index through the smaller modulus would jump somewhere arbitrary.
         int wrapped = ((next % n) + n) % n;
         _selectedSlot.Value = (byte)wrapped;
         UpdateFlashlightSyncFromSelected();
@@ -745,7 +848,8 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             return;
 
         Vector3 forward = transform.forward.sqrMagnitude > 0.0001f ? transform.forward : Vector3.forward;
-        for (int s = 0; s < 3; s++)
+        // Teardown sweeps run to MaxSlotCount so nothing can strand in the bought slot.
+        for (int s = 0; s < MaxSlotCount; s++)
         {
             int safety = 0;
             while (GetSlotItemId(s) != 0UL)
@@ -795,7 +899,8 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         Vector3 basePosition = transform.position;
         Vector3 forward = transform.forward.sqrMagnitude > 0.0001f ? transform.forward.normalized : Vector3.forward;
 
-        for (int i = 0; i < 3; i++)
+        // Teardown sweep — MaxSlotCount, so a disconnect still scatters the bought slot's item.
+        for (int i = 0; i < MaxSlotCount; i++)
         {
             ulong id = GetSlotItemId(i);
             byte typeId = GetSlotItemTypeId(i);
@@ -873,6 +978,10 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (!IsServer || !IsSpawned || !carried.HasValue)
             return;
 
+        // Restore the bought slot FIRST: SlotCapacity gates the selection clamp at the bottom of this method,
+        // so seating four items while capacity still reads three would park selection wrong.
+        ServerRestoreExtraSlot(carried.HasExtraSlot);
+
         for (int i = 0; i < LevelCarryOverStore.SlotCount; i++)
         {
             LevelCarryOverStore.SlotState slot = carried.GetSlot(i);
@@ -933,7 +1042,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                 default);
         }
 
-        _selectedSlot.Value = (byte)Mathf.Clamp(carried.SelectedSlot, 0, LevelCarryOverStore.SlotCount - 1);
+        _selectedSlot.Value = (byte)Mathf.Clamp(carried.SelectedSlot, 0, SlotCapacity - 1);
         _selectedFlashlightLightOn.Value = carried.FlashlightLightOn;
         UpdateFlashlightSyncFromSelected();
         RaiseChangedAndRefresh();
@@ -1496,7 +1605,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         // One reload fills the gun: draw from the FlareAmmo stacks in any hotbar slot until it is full or
         // the player runs out (selection stays on the gun either way).
         int drawn = 0;
-        for (int i = 0; i < 3 && drawn < needed; i++)
+        for (int i = 0; i < SlotCapacity && drawn < needed; i++)
         {
             ulong id = GetSlotItemId(i);
             bool slotSaysAmmo = GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdFlareAmmo;
@@ -1564,7 +1673,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (!IsServer || !IsSpawned)
             return false;
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < SlotCapacity; i++)
         {
             ulong id = GetSlotItemId(i);
             bool slotSaysKey = GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdKey;
@@ -1600,7 +1709,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (!IsServer || !IsSpawned)
             return false;
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < SlotCapacity; i++)
         {
             ulong id = GetSlotItemId(i);
             bool slotSaysKey = GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdKey;

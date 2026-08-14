@@ -78,7 +78,7 @@ public partial class PlayerController
             if (NetworkHeavyThrowableHold.FindOfflineHeldBy(this) != null)
                 return false;
 
-            return _localSelectedSlot >= 0 && _localSelectedSlot < 3
+            return _localSelectedSlot >= 0 && _localSelectedSlot < InventorySlotCapacity
                 && _localInventorySlots[_localSelectedSlot] is SwordItem;
         }
     }

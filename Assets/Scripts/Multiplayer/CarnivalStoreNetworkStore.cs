@@ -129,9 +129,10 @@ public sealed class CarnivalStoreNetworkStore : NetworkBehaviour
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
     void PurchaseRequestServerRpc(int storeId, int itemIndex, RpcParams rpcParams = default)
     {
-        ulong senderClientId = rpcParams.Receive.SenderClientId;
-        CarnivalStorePurchaseResult result = ServerTrySell(senderClientId, storeId, itemIndex);
-        PurchaseResultRpc(storeId, itemIndex, (byte)result, RpcTarget.Single(senderClientId, RpcTargetUse.Temp));
+        // The outcome is not sent back: the buyer reads it off the world instead — the replicated ticket
+        // balance drops, the goods appear on the counter, an owned upgrade row flips to OWNED. A refusal is
+        // simply nothing happening.
+        ServerTrySell(rpcParams.Receive.SenderClientId, storeId, itemIndex);
     }
 
     /// <summary>
@@ -146,7 +147,10 @@ public sealed class CarnivalStoreNetworkStore : NetworkBehaviour
         if (!CarnivalStore.TryResolve(storeId, out CarnivalStore store) || store == null)
             return CarnivalStorePurchaseResult.Unavailable;
 
-        if (!store.TryGetStock(itemIndex, out CarnivalStoreStockEntry entry) || entry.prefab == null)
+        if (!store.TryGetStock(itemIndex, out CarnivalStoreStockEntry entry))
+            return CarnivalStorePurchaseResult.Unavailable;
+        // Goods need something to build; upgrade rows deliberately carry no prefab.
+        if (entry.grant == CarnivalStoreGrant.DispenseItem && entry.prefab == null)
             return CarnivalStorePurchaseResult.Unavailable;
 
         NetworkManager nm = NetworkManager.Singleton;
@@ -165,9 +169,31 @@ public sealed class CarnivalStoreNetworkStore : NetworkBehaviour
         if (wallet == null)
             return CarnivalStorePurchaseResult.Unavailable;
 
+        // One-per-player rows are checked BEFORE the wallet is touched, so a second click is refused rather
+        // than charged. The check and the grant both run here on the server, in one call, so two clicks
+        // arriving back to back cannot both find the slot unowned.
+        NetworkPlayerInventory inventory = null;
+        if (entry.grant == CarnivalStoreGrant.ExtraInventorySlot)
+        {
+            inventory = client.PlayerObject.GetComponent<NetworkPlayerInventory>();
+            if (inventory == null)
+                return CarnivalStorePurchaseResult.Unavailable;
+            if (inventory.HasExtraSlot)
+                return CarnivalStorePurchaseResult.AlreadyOwned;
+        }
+
         // A free item still has to be a real sale, but ServerTrySpend rejects non-positive amounts.
         if (entry.price > 0 && !wallet.ServerTrySpend(entry.price))
             return CarnivalStorePurchaseResult.NotEnoughTickets;
+
+        if (entry.grant == CarnivalStoreGrant.ExtraInventorySlot)
+        {
+            // No sale-list entry: the unlock is per-player state on the buyer's own inventory, which
+            // replicates itself and rides LevelCarryOverStore into the next section. Recording it here would
+            // make every peer try to dispense goods that do not exist.
+            inventory.ServerGrantExtraSlot();
+            return CarnivalStorePurchaseResult.Granted;
+        }
 
         _sales.Add(new StoreSale
         {
@@ -177,15 +203,6 @@ public sealed class CarnivalStoreNetworkStore : NetworkBehaviour
         });
 
         return CarnivalStorePurchaseResult.Granted;
-    }
-
-    [Rpc(SendTo.SpecifiedInParams)]
-    void PurchaseResultRpc(int storeId, int itemIndex, byte result, RpcParams rpcParams = default)
-    {
-        if (!CarnivalStore.TryResolve(storeId, out CarnivalStore store) || store == null)
-            return;
-
-        CarnivalStoreOverlayController.NotifyPurchaseResult(store, itemIndex, (CarnivalStorePurchaseResult)result);
     }
 
     // ---- Server API ---------------------------------------------------------

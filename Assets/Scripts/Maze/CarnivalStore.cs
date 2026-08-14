@@ -13,6 +13,21 @@ public enum CarnivalStorePurchaseResult : byte
     OutOfRange = 2,
     /// <summary>Store/item could not be resolved on the authority (bad index, store not built yet, no session).</summary>
     Unavailable = 3,
+    /// <summary>A one-per-player upgrade this buyer already owns. Nothing was charged.</summary>
+    AlreadyOwned = 4,
+}
+
+/// <summary>What a stock row actually hands over when bought.</summary>
+public enum CarnivalStoreGrant : byte
+{
+    /// <summary>Builds the row's prefab on the counter for someone to pick up (the default for goods).</summary>
+    DispenseItem = 0,
+    /// <summary>
+    /// Unlocks the buyer's 4th hotbar slot. Nothing is dispensed and nothing is recorded in the sale list —
+    /// the upgrade lives on the player's own <see cref="NetworkPlayerInventory"/>, which already replicates
+    /// and already survives respawns and section switches. One per player, enforced on the server.
+    /// </summary>
+    ExtraInventorySlot = 1,
 }
 
 /// <summary>
@@ -25,10 +40,11 @@ public struct CarnivalStoreStockEntry
     [Tooltip("Name shown in the shop UI. Falls back to the prefab name when empty.")]
     public string displayName;
 
-    [Tooltip("Short line under the name describing what the item does.")]
-    public string blurb;
+    [Tooltip("What buying this row hands over: goods on the counter, or a one-per-player upgrade.")]
+    public CarnivalStoreGrant grant;
 
-    [Tooltip("Item prefab dispensed onto the counter on purchase. Must carry a GrabbableInventoryItem.")]
+    [Tooltip("Item prefab dispensed onto the counter on purchase. Must carry a GrabbableInventoryItem. " +
+             "Ignored (and may be empty) for upgrade rows.")]
     public GameObject prefab;
 
     [Tooltip("Optional shop icon. Leave empty to use the item's own HUD hotbar icon.")]
@@ -171,11 +187,82 @@ public sealed class CarnivalStore : MonoBehaviour
             return null;
         if (entry.icon != null)
             return entry.icon;
+        if (entry.grant == CarnivalStoreGrant.ExtraInventorySlot)
+            return ExtraSlotIcon();
         if (entry.prefab == null)
             return null;
 
         GrabbableInventoryItem grabbable = entry.prefab.GetComponent<GrabbableInventoryItem>();
         return grabbable != null ? grabbable.GetEffectiveSlotIconForHud() : null;
+    }
+
+    /// <summary>True when the given row is a one-per-player upgrade this player already has.</summary>
+    public bool IsAlreadyOwnedBy(PlayerController player, int index)
+    {
+        if (player == null || !TryGetStock(index, out CarnivalStoreStockEntry entry))
+            return false;
+        return entry.grant == CarnivalStoreGrant.ExtraInventorySlot && player.HasExtraInventorySlot;
+    }
+
+    static Sprite s_extraSlotIcon;
+
+    /// <summary>
+    /// Shop glyph for the slot upgrade: three filled hotbar boxes and a dashed empty fourth, drawn to match
+    /// the HUD row it adds to. Generated rather than authored so the row needs no art to ship.
+    /// </summary>
+    static Sprite ExtraSlotIcon()
+    {
+        if (s_extraSlotIcon != null)
+            return s_extraSlotIcon;
+
+        const int w = 128;
+        const int h = 96;
+        Color32 clear = new Color32(0, 0, 0, 0);
+        Color32 bone = new Color32(230, 225, 211, 255);
+        Color32 amber = new Color32(217, 138, 78, 255);
+        Color32[] px = new Color32[w * h];
+        for (int i = 0; i < px.Length; i++)
+            px[i] = clear;
+
+        // Four boxes in a 2x2 block; the fourth (bottom-right) is the bought one and is drawn hollow/amber.
+        int boxW = 52, boxH = 38, gap = 8;
+        int originX = (w - (boxW * 2 + gap)) / 2;
+        int originY = (h - (boxH * 2 + gap)) / 2;
+        for (int b = 0; b < 4; b++)
+        {
+            int bx = originX + (b % 2) * (boxW + gap);
+            int by = originY + (b / 2) * (boxH + gap);
+            bool isNewSlot = b == 3;
+            Color32 tint = isNewSlot ? amber : bone;
+            for (int y = 0; y < boxH; y++)
+            {
+                for (int x = 0; x < boxW; x++)
+                {
+                    bool edge = x < 3 || x >= boxW - 3 || y < 3 || y >= boxH - 3;
+                    // The new slot reads as an outline with a dashed edge; the owned three are solid plates.
+                    if (isNewSlot)
+                    {
+                        if (!edge)
+                            continue;
+                        if (((x + y) / 5) % 2 == 1)
+                            continue;
+                    }
+                    else if (!edge && ((x + y) % 2 == 1))
+                    {
+                        // subtle hatch inside the solid boxes so they don't read as flat blocks
+                        continue;
+                    }
+
+                    px[(by + y) * w + (bx + x)] = tint;
+                }
+            }
+        }
+
+        Texture2D tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
+        tex.SetPixels32(px);
+        tex.Apply();
+        s_extraSlotIcon = Sprite.Create(tex, new Rect(0f, 0f, w, h), new Vector2(0.5f, 0.5f), 100f);
+        return s_extraSlotIcon;
     }
 
     public bool IsInInteractRange(Vector3 worldPosition, float extraSlack = 0f)
@@ -211,7 +298,7 @@ public sealed class CarnivalStore : MonoBehaviour
     /// </summary>
     public void RequestPurchase(PlayerController player, int itemIndex)
     {
-        if (player == null || !TryGetStock(itemIndex, out _))
+        if (player == null || !TryGetStock(itemIndex, out CarnivalStoreStockEntry entry))
             return;
 
         NetworkManager nm = NetworkManager.Singleton;
@@ -223,8 +310,16 @@ public sealed class CarnivalStore : MonoBehaviour
             return;
         }
 
+        // Offline (dev scenes): this peer is the authority. There is no wallet to debit, but the
+        // one-per-player rule still holds so the UI behaves the same as it will online.
+        if (entry.grant == CarnivalStoreGrant.ExtraInventorySlot)
+        {
+            if (!player.HasExtraInventorySlot)
+                player.GrantLocalExtraInventorySlot();
+            return;
+        }
+
         ApplyDispense(_offlineSaleSeq++, itemIndex);
-        CarnivalStoreOverlayController.NotifyPurchaseResult(this, itemIndex, CarnivalStorePurchaseResult.Granted);
     }
 
     // ---- Dispensing (runs on EVERY peer, driven by the replicated sale list) ----------------------
@@ -236,6 +331,9 @@ public sealed class CarnivalStore : MonoBehaviour
     public void ApplyDispense(int saleSequence, int itemIndex)
     {
         if (!TryGetStock(itemIndex, out CarnivalStoreStockEntry entry) || entry.prefab == null)
+            return;
+        // Upgrade rows hand over a player-side unlock, not goods — there is nothing to build on the counter.
+        if (entry.grant != CarnivalStoreGrant.DispenseItem)
             return;
 
         ulong itemId = ComputeSoldItemId(storeId, saleSequence);

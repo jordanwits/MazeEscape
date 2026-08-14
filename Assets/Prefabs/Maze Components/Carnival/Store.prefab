@@ -3852,39 +3852,52 @@ MonoBehaviour:
   storeId: 1
   stock:
   - displayName: Bandage
-    blurb: Patches you up on the spot.
+    grant: 0
     prefab: {fileID: 6200471747207828773, guid: 88fbd24a3c94b7449bae2b07282b95c4, type: 3}
+    icon: {fileID: 0}
     price: 20
     stackCount: 0
   - displayName: Glowsticks
-    blurb: Five throwaways. Mark your way back.
+    grant: 0
     prefab: {fileID: 5194082878846942669, guid: 8443967f44b8a34489862946f10b2b29, type: 3}
+    icon: {fileID: 0}
     price: 25
     stackCount: 5
   - displayName: Energy Drink
-    blurb: Five seconds of endless sprint.
+    grant: 0
     prefab: {fileID: 2164958555813648190, guid: ee9733773cfe6a440922b56442c1d0d9, type: 3}
+    icon: {fileID: 0}
     price: 35
     stackCount: 0
   - displayName: Flashlight
-    blurb: A spare beam, batteries included.
+    grant: 0
     prefab: {fileID: 7328506109978203443, guid: 4f1b1ddb8a2d50848aa35c5643acaa6b, type: 3}
+    icon: {fileID: 0}
     price: 50
     stackCount: 0
   - displayName: Flare Rounds
-    blurb: Three rounds. Fits the flare gun.
+    grant: 0
     prefab: {fileID: 8486127490677680942, guid: 67bf06df404bf0c4cba9e9bb1c8f7f06, type: 3}
+    icon: {fileID: 0}
     price: 60
     stackCount: 3
   - displayName: Rusty Sword
-    blurb: Swing it. Something will notice.
+    grant: 0
     prefab: {fileID: 3637319848914468486, guid: 39f4b4478ebadcf43bf18fec82bd1de5, type: 3}
+    icon: {fileID: 0}
     price: 85
     stackCount: 0
   - displayName: Flare Gun
-    blurb: Break-action, three shots, sets them alight.
+    grant: 0
     prefab: {fileID: 626251595928374232, guid: e6051843afd979c49a2160cb2602adcb, type: 3}
+    icon: {fileID: 0}
     price: 130
+    stackCount: 0
+  - displayName: Extra Slot
+    grant: 1
+    prefab: {fileID: 0}
+    icon: {fileID: 0}
+    price: 110
     stackCount: 0
   interactMaxDistance: 4
   interactPromptMessage: Press E to redeem tickets

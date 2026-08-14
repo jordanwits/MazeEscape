@@ -58,7 +58,7 @@ public partial class PlayerController
                 return;
             ulong holderId = thisPlayer.NetworkObjectId;
             bool stashAllForBall = IsHeavyThrowableForcingInventoryStash(holderId);
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < NetworkPlayerInventory.MaxSlotCount; i++)
             {
                 ulong id = _networkPlayerInventory.GetSlotItemId(i);
                 byte itemType = _networkPlayerInventory.GetSlotItemTypeId(i);
@@ -144,7 +144,7 @@ public partial class PlayerController
                 else
                 {
                     int selected = _networkPlayerInventory.SelectedSlotIndex;
-                    if (selected >= 0 && selected < 3
+                    if (selected >= 0 && selected < InventorySlotCapacity
                         && (_networkPlayerInventory.GetSlotItemId(selected) != 0UL
                             || _networkPlayerInventory.GetSlotItemTypeId(selected) != GrabbableInventoryItem.TypeIdNone))
                     {
@@ -161,7 +161,7 @@ public partial class PlayerController
                 if (heavy != null)
                     pose = heavy.HeldItem != null && heavy.HeldItem.HeldAttachToHandSocket
                         ? heavy.HeldItem.HeldPoseIndex : 2;
-                else if (_localSelectedSlot >= 0 && _localSelectedSlot < 3 && _localInventorySlots[_localSelectedSlot] != null)
+                else if (_localSelectedSlot >= 0 && _localSelectedSlot < InventorySlotCapacity && _localInventorySlots[_localSelectedSlot] != null)
                     pose = _localInventorySlots[_localSelectedSlot].HeldPoseIndex;
             }
         }
@@ -214,7 +214,7 @@ public partial class PlayerController
         if (itemId == 0UL || _networkPlayerInventory == null)
             return false;
 
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < NetworkPlayerInventory.MaxSlotCount; i++)
         {
             if (_networkPlayerInventory.GetSlotItemId(i) == itemId)
                 return true;
@@ -230,7 +230,7 @@ public partial class PlayerController
         EnsureInventoryStashRoot();
         Transform follow = flashlightFollowsCameraPitch ? CameraTransformForFacing : flashlightHoldPoint;
         bool stashAllForBall = NetworkHeavyThrowableHold.FindOfflineHeldBy(this) != null;
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < NetworkPlayerInventory.MaxSlotCount; i++)
         {
             GrabbableInventoryItem g = _localInventorySlots[i];
             if (g == null)
@@ -261,7 +261,7 @@ public partial class PlayerController
 
     int GetLocalFirstEmptySlot()
     {
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < InventorySlotCapacity; i++)
         {
             if (_localInventorySlots[i] == null)
                 return i;
@@ -282,7 +282,7 @@ public partial class PlayerController
         {
             if (GetLocalFirstEmptySlot() >= 0)
                 return true;
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < InventorySlotCapacity; i++)
             {
                 GrabbableInventoryItem inSlot = _localInventorySlots[i];
                 if (inSlot == null || inSlot.ItemTypeId != item.ItemTypeId)
@@ -321,7 +321,7 @@ public partial class PlayerController
         {
             // Top up every same-type slot first; whatever is left needs an empty slot of its own.
             int w = g.StackCount;
-            for (int i = 0; i < 3 && w > 0; i++)
+            for (int i = 0; i < InventorySlotCapacity && w > 0; i++)
             {
                 GrabbableInventoryItem inSlot = _localInventorySlots[i];
                 if (inSlot == null || inSlot.ItemTypeId != g.ItemTypeId)
@@ -424,7 +424,7 @@ public partial class PlayerController
 
     bool IsLocalInventoryCompletelyEmpty()
     {
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < NetworkPlayerInventory.MaxSlotCount; i++)
         {
             if (_localInventorySlots[i] != null)
                 return false;
@@ -435,7 +435,7 @@ public partial class PlayerController
 
     void SelectAfterDropLocal()
     {
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < InventorySlotCapacity; i++)
         {
             if (_localInventorySlots[i] != null)
             {
@@ -451,19 +451,29 @@ public partial class PlayerController
     {
         if (sign == 0)
             return;
-        // Always move selection across all three indices so you can "equip" an empty row:
+        // Always move selection across every usable index so you can "equip" an empty row:
         // nothing is shown at the hold point until you scroll to a slot that has an item.
         int step = sign > 0 ? 1 : -1;
         int next = _localSelectedSlot + step;
-        _localSelectedSlot = ((next % 3) + 3) % 3;
+        int n = InventorySlotCapacity;
+        _localSelectedSlot = ((next % n) + n) % n;
         RefreshLocalInventoryView();
     }
 
     void RefreshInventorySlotHud()
     {
-        if (_inventorySlotIconImages == null || _inventorySlotIconImages.Length < 3)
+        if (_inventorySlotIconImages == null || _inventorySlotIconImages.Length < NetworkPlayerInventory.MaxSlotCount)
             return;
-        for (int i = 0; i < 3; i++)
+
+        // Self-correcting: whichever path delivered the unlock (server grant, replicated change, carry-over
+        // restore on the next section), the row reshapes here before the icons are drawn.
+        int capacity = InventorySlotCapacity;
+        if (capacity != _lastHudSlotCapacity)
+        {
+            _lastHudSlotCapacity = capacity;
+            RefreshInventorySlotHudLayout();
+        }
+        for (int i = 0; i < NetworkPlayerInventory.MaxSlotCount; i++)
         {
             Image icon = _inventorySlotIconImages[i];
             if (icon == null)
@@ -890,7 +900,7 @@ public partial class PlayerController
         Transform cam = CameraTransformForFacing;
         if (cam == null || !door.IsInInteractRange(cam.position))
             return;
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < NetworkPlayerInventory.MaxSlotCount; i++)
         {
             if (_localInventorySlots[i] is not KeyItem k)
                 continue;
@@ -1017,7 +1027,7 @@ public partial class PlayerController
     void TickLocalFlashlightBatteries()
     {
         bool anyLightStateChanged = false;
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < NetworkPlayerInventory.MaxSlotCount; i++)
         {
             if (_localInventorySlots[i] is not FlashlightItem f)
                 continue;

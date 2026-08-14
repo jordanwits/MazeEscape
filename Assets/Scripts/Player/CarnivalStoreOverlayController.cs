@@ -12,12 +12,15 @@ using UnityEngine.UI;
 ///
 /// The goods are a grid of icon cards (the item's own HUD hotbar icon, so the shelf reads at a glance), in a
 /// scroll view that only starts scrolling once the stock outgrows <see cref="MaxGridHeight"/>. Clicking a card
-/// buys it. Cards stay legible whether or not you can afford them — the price colour carries affordability and a
-/// click you can't cover answers in the status line, rather than fading the tile out to 35% and hiding the price.
+/// buys it. Cards stay legible whether or not you can afford them — the price colour carries affordability,
+/// rather than fading the tile out to 35% and hiding the price.
+///
+/// The panel is deliberately wordless: there is no status line and the server sends no result back. Every
+/// outcome is read off the world instead — the ticket balance drops, the goods appear on the counter behind
+/// you, an owned one-per-player row flips to OWNED. A refused purchase is simply nothing happening.
 ///
 /// The ticket balance tracks <see cref="NetworkPlayerCarnivalTickets"/> live, so a teammate's payout landing
-/// mid-browse unlocks the shelf without reopening. Buying is a request — the server adjudicates and answers
-/// through <see cref="NotifyPurchaseResult"/>. A single instance is created on demand and persists
+/// mid-browse unlocks the shelf without reopening. A single instance is created on demand and persists
 /// (DontDestroyOnLoad) so its canvas can't be torn down by scene churn.
 /// </summary>
 [DisallowMultipleComponent]
@@ -32,7 +35,6 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
     const float RangeClosePollSlack = 1.2f;
     /// <summary>Per-card lock after a click, so a double-click doesn't quietly buy two flare guns.</summary>
     const float BuyCooldownSeconds = 0.4f;
-    const float StatusHoldSeconds = 3.5f;
 
     sealed class StockTile
     {
@@ -44,6 +46,10 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         public float LockedUntil;
         /// <summary>Tri-state so the first refresh always writes the price colour (-1 = never styled).</summary>
         public int ShownAffordable = -1;
+        /// <summary>Tri-state mirror of "already owned", so the OWNED swap only runs on a real change.</summary>
+        public int ShownOwned = -1;
+        /// <summary>Overlays the price with OWNED once a one-per-player row has been bought.</summary>
+        public TMP_Text OwnedText;
     }
 
     PlayerController _player;
@@ -53,27 +59,17 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
     GameObject _root;
     CanvasGroup _canvasGroup;
     Canvas _canvas;
-    TMP_Text _balanceValue, _statusText;
+    TMP_Text _balanceValue;
     StockTile[] _tiles;
 
     bool _shown;
     int _lastDisplayedBalance = -1;
-    float _statusUntil;
 
     public static void Show(PlayerController player, CarnivalStore store)
     {
         if (player == null || store == null)
             return;
         EnsureInstance().Bind(player, store);
-    }
-
-    /// <summary>Called by the network store when the authority answered this peer's purchase request.</summary>
-    public static void NotifyPurchaseResult(CarnivalStore store, int itemIndex, CarnivalStorePurchaseResult result)
-    {
-        CarnivalStoreOverlayController inst = _instance;
-        if (inst == null || !inst._shown || inst._store != store)
-            return;
-        inst.ApplyPurchaseResult(itemIndex, result);
     }
 
     static CarnivalStoreOverlayController EnsureInstance()
@@ -105,7 +101,6 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         _store = store;
 
         EnsureUiBuilt();
-        SetStatus(string.Empty, MenuTheme.Mist);
         _lastDisplayedBalance = -1;
         Refresh();
         SetShown(true);
@@ -142,12 +137,6 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         }
         if (_canvasGroup != null)
             _canvasGroup.blocksRaycasts = !PauseMenuController.BlocksGameplayInput;
-
-        if (_statusText != null && _statusUntil > 0f && Time.unscaledTime >= _statusUntil)
-        {
-            _statusUntil = 0f;
-            SetStatus(string.Empty, MenuTheme.Mist);
-        }
 
         Refresh();
     }
@@ -204,9 +193,22 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         {
             StockTile tile = _tiles[i];
 
-            // Interactable tracks only the double-click lock: an unaffordable card stays lit and clickable so
-            // its price is readable, and the click answers in the status line.
-            tile.Button.interactable = now >= tile.LockedUntil;
+            // An owned one-per-player row is the only card that genuinely stops being clickable — everything
+            // else stays lit even when unaffordable so its price is readable.
+            bool owned = _store.IsAlreadyOwnedBy(_player, tile.Index);
+            int ownedFlag = owned ? 1 : 0;
+            if (tile.ShownOwned != ownedFlag)
+            {
+                tile.ShownOwned = ownedFlag;
+                if (tile.OwnedText != null)
+                    tile.OwnedText.gameObject.SetActive(owned);
+                tile.PriceText.gameObject.SetActive(!owned);
+                tile.PriceChip.gameObject.SetActive(!owned);
+            }
+
+            tile.Button.interactable = !owned && now >= tile.LockedUntil;
+            if (owned)
+                continue;
 
             int affordableFlag = balance >= tile.Price ? 1 : 0;
             if (tile.ShownAffordable != affordableFlag)
@@ -229,42 +231,16 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
             return;
         tile.LockedUntil = Time.unscaledTime + BuyCooldownSeconds;
 
-        if (Balance < tile.Price)
-        {
-            SetStatus("NOT ENOUGH TICKETS", MenuTheme.BloodBright);
+        // These two are silent guards, not messages: they stop a pointless request going to the server. The
+        // player reads the outcome off the panel itself — the ticket balance drops, an owned row flips to
+        // OWNED, and the goods appear on the counter behind them.
+        if (_store.IsAlreadyOwnedBy(_player, index))
             return;
-        }
+
+        if (Balance < tile.Price)
+            return;
 
         _store.RequestPurchase(_player, index);
-    }
-
-    void ApplyPurchaseResult(int itemIndex, CarnivalStorePurchaseResult result)
-    {
-        string name = _store != null ? _store.GetDisplayName(itemIndex) : "IT";
-        switch (result)
-        {
-            case CarnivalStorePurchaseResult.Granted:
-                SetStatus($"{name.ToUpperInvariant()} — ON THE COUNTER", MenuTheme.Moss);
-                break;
-            case CarnivalStorePurchaseResult.NotEnoughTickets:
-                SetStatus("NOT ENOUGH TICKETS", MenuTheme.BloodBright);
-                break;
-            case CarnivalStorePurchaseResult.OutOfRange:
-                SetStatus("STEP UP TO THE COUNTER", MenuTheme.BloodBright);
-                break;
-            default:
-                SetStatus("THE COUNTER IS CLOSED", MenuTheme.BloodBright);
-                break;
-        }
-    }
-
-    void SetStatus(string message, Color color)
-    {
-        if (_statusText == null)
-            return;
-        _statusText.text = message;
-        _statusText.color = color;
-        _statusUntil = string.IsNullOrEmpty(message) ? 0f : Time.unscaledTime + StatusHoldSeconds;
     }
 
     void OnClose() => SetShown(false);
@@ -456,6 +432,17 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         priceRt.sizeDelta = new Vector2(90f, 28f);
         price.textWrappingMode = TextWrappingModes.NoWrap;
 
+        // Sits exactly where the price does and swaps in once a one-per-player row is owned.
+        TMP_Text ownedText = MenuWidgets.CreateText(plate, "Owned", "OWNED", 18f,
+            MenuTheme.WithAlpha(MenuTheme.Moss, 0.95f), MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 4f);
+        RectTransform ownedRt = ownedText.rectTransform;
+        ownedRt.anchorMin = ownedRt.anchorMax = new Vector2(0.5f, 0f);
+        ownedRt.pivot = new Vector2(0.5f, 0.5f);
+        ownedRt.anchoredPosition = new Vector2(0f, 22f);
+        ownedRt.sizeDelta = new Vector2(CellWidth - 20f, 28f);
+        ownedText.textWrappingMode = TextWrappingModes.NoWrap;
+        ownedText.gameObject.SetActive(false);
+
         Image outline = MenuWidgets.CreateImage(plate, "Outline", MenuTheme.RoundedOutline(CardRadius, 1.8f),
             MenuTheme.WithAlpha(MenuTheme.Bone, 0.30f));
         outline.rectTransform.SetStretch();
@@ -477,46 +464,19 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         fx.suppressHoverAudio = true;
         MenuWidgets.ApplyPlateStyle(fx, MenuWidgets.PlateStyle.Nav);
 
-        // The tooltip line for the card, shown in the footer while hovered.
-        var hoverBlurb = cardRoot.gameObject.AddComponent<CarnivalStoreCardHover>();
-        hoverBlurb.Bind(this, entry.blurb, _store.GetDisplayName(index));
-
         return new StockTile
         {
             Index = index,
             Button = button,
             PriceText = price,
             PriceChip = chip,
+            OwnedText = ownedText,
             Price = entry.price,
         };
     }
 
-    /// <summary>Hover text for a card, routed to the footer status line (no per-card tooltip boxes to lay out).</summary>
-    internal void ShowCardBlurb(string blurb)
-    {
-        if (_statusUntil > 0f)
-            return;   // a purchase/refusal message is showing; don't stomp it
-        if (_statusText != null)
-        {
-            _statusText.text = blurb;
-            _statusText.color = MenuTheme.Mist;
-        }
-    }
-
-    internal void ClearCardBlurb()
-    {
-        if (_statusUntil > 0f)
-            return;
-        if (_statusText != null)
-            _statusText.text = string.Empty;
-    }
-
     void BuildFooter()
     {
-        _statusText = MakeLabel(_root.transform, "", 19f, MenuTheme.Mist, TextAlignmentOptions.MidlineLeft,
-            new Vector2(0f, 0f), new Vector2(PanelPadding, 40f), new Vector2(600f, 30f));
-        _statusText.characterSpacing = 2f;
-
         MakePlateFx("DONE", MenuWidgets.PlateStyle.Danger, OnClose,
             new Vector2(1f, 0f), new Vector2(-PanelPadding, 26f), new Vector2(200f, 56f), 22f);
     }
