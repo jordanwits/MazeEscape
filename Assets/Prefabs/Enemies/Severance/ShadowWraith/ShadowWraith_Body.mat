@@ -1,0 +1,63 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: ShadowWraith_Body
+  m_Shader: {fileID: 4800000, guid: 3a487a78af93699459cb85cef40d13a6, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs: []
+    m_Ints: []
+    m_Floats:
+    - _Agitation: 0
+    - _BumpStrength: 0.85
+    - _ChurnScale: 5
+    - _ChurnSpeed: 0.55
+    - _Contrast: 1.15
+    - _DetailScale: 17
+    - _DetailSpeed: 1.1
+    - _DissolveSharp: 0.3
+    - _EdgeLift: 0
+    - _ErodeGain: 0.95
+    - _FlowSpeed: 0.45
+    - _FringeScale: 46
+    - _Gloss: 9
+    - _HoleBias: 0.13
+    - _HoleSharp: 0.1
+    - _LightBite: 0.55
+    - _LightErode: 0
+    - _LightSensitivity: 1.6
+    - _LightThin: 0.05
+    - _Opacity: 1
+    - _OpacityFalloff: 0.15
+    - _RimErode: 0.8
+    - _RimPower: 2.2
+    - _Sheen: 2.9
+    - _SoftDepth: 0.22
+    - _StringStretch: 0.45
+    - _SwayAmount: 0.03
+    - _SwaySpeed: 1.45
+    - _WispErode: 0.7
+    - _WritheAmount: 0.014
+    m_Colors:
+    - _CoreColor: {r: 0, g: 0, b: 0, a: 1}
+    - _EdgeColor: {r: 0, g: 0, b: 0, a: 1}
+    - _SheenColor: {r: 0.33, g: 0.33, b: 0.35, a: 1}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1
