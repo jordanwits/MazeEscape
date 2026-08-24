@@ -156,6 +156,11 @@ public class ProceduralMazeCoordinator : MonoBehaviour
     int _lastServerMazeBuildSeed = int.MinValue;
     Dictionary<string, ProceduralMazeConfig> _sectionConfigsByTargetScene;
     bool _sectionConfigsIndexed;
+    // The registered exit-elevator sync prefab (see TrySpawnElevatorFinishSyncIfPresent). Cached because a
+    // missing asset must warn once, not once per finish piece per build.
+    const string ElevatorFinishSyncResourcePath = "ElevatorFinishSync";
+    GameObject _elevatorFinishSyncPrefab;
+    bool _elevatorFinishSyncPrefabLoaded;
 
     void Awake()
     {
@@ -2661,6 +2666,22 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         return result;
     }
 
+    /// <summary>
+    /// Server-only. Brings the exit elevator's replicated brain online for a finish piece.
+    ///
+    /// The copy embedded in the piece is an AUTHORING record, never the thing that gets spawned: Unity gives every
+    /// nested <see cref="NetworkObject"/> its own <c>GlobalObjectIdHash</c> (one per finish piece), and a client has
+    /// no prefab mapping for those hashes, so it silently drops the spawn — the cab pads went dead, the doors never
+    /// moved, and the level-switch / return-to-menu ClientRpcs on this object never landed on anyone but the host
+    /// (see MultiplayerBootstrap.EnsureNestedPrefabHashOverrides for why a nested NetworkObject cannot be spawned).
+    /// Instead this instantiates the registered <c>Resources/ElevatorFinishSync</c> prefab at the cab and spawns
+    /// that, so every peer resolves the same hash and the server's replica is built exactly like a client's.
+    ///
+    /// The replica is left unparented (a scene root) rather than pushed under the piece: NGO cannot replicate
+    /// parenting to a plain GameObject, so parenting it here would only make the host's hierarchy differ from
+    /// everyone else's. It finds its piece by proximity instead (ElevatorFinishController resolves the nearest
+    /// <see cref="ElevatorFinishSpawnMarker"/> in its own scene when it has no marker in its parent chain).
+    /// </summary>
     void TrySpawnElevatorFinishSyncIfPresent(GameObject pieceRoot)
     {
         if (pieceRoot == null || !IsServerListening() || _networkManager == null)
@@ -2670,8 +2691,8 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         if (marker == null)
             return;
 
-        ElevatorFinishController finish = pieceRoot.GetComponentInChildren<ElevatorFinishController>(true);
-        if (finish == null)
+        ElevatorFinishController authored = pieceRoot.GetComponentInChildren<ElevatorFinishController>(true);
+        if (authored == null)
         {
             LogMazeWarningOnce(
                 "elevator-finish-embedded-missing",
@@ -2680,23 +2701,71 @@ public class ProceduralMazeCoordinator : MonoBehaviour
             return;
         }
 
-        NetworkObject networkObject = finish.GetComponent<NetworkObject>();
-        if (networkObject == null)
+        if (authored.IsSpawned)
+            return; // already online for this piece
+
+        GameObject prefab = LoadElevatorFinishSyncPrefab();
+        if (prefab == null)
+            return;
+
+        GameObject instance = Instantiate(prefab, authored.transform.position, authored.transform.rotation);
+        instance.name = prefab.name;
+        if (instance.scene != pieceRoot.scene)
+            SceneManager.MoveGameObjectToScene(instance, pieceRoot.scene);
+
+        if (instance.TryGetComponent(out ElevatorFinishController replica))
+            replica.AdoptAuthoredSettingsFromPieceCopy(authored);
+
+        if (!instance.TryGetComponent(out NetworkObject networkObject))
         {
             LogMazeWarningOnce(
                 "elevator-finish-sync-no-netobj",
-                "[Maze] ElevatorFinishController must be on a GameObject with a NetworkObject.",
-                finish);
+                $"[Maze] \"{prefab.name}\" must have a NetworkObject on its root; the exit elevator will not replicate.",
+                instance);
+            Destroy(instance);
             return;
         }
 
-        if (networkObject.IsSpawned)
-            return;
-
-        if (finish.gameObject.scene != pieceRoot.scene)
-            SceneManager.MoveGameObjectToScene(finish.gameObject, pieceRoot.scene);
-
         networkObject.Spawn();
+    }
+
+    /// <summary>
+    /// The elevator sync prefab, from Resources so it is the same asset the NGO prefab list registers. Null (with a
+    /// one-shot warning) when the asset is missing or unregistered — spawning an unregistered prefab is exactly the
+    /// failure this whole path exists to avoid, so it is refused loudly rather than half-working on the host.
+    /// </summary>
+    GameObject LoadElevatorFinishSyncPrefab()
+    {
+        if (!_elevatorFinishSyncPrefabLoaded)
+        {
+            _elevatorFinishSyncPrefabLoaded = true;
+            _elevatorFinishSyncPrefab = Resources.Load<GameObject>(ElevatorFinishSyncResourcePath);
+        }
+
+        if (_elevatorFinishSyncPrefab == null)
+        {
+            LogMazeWarningOnce(
+                "elevator-finish-sync-prefab-missing",
+                $"[Maze] Could not load Resources/{ElevatorFinishSyncResourcePath}; the exit elevator cannot be spawned.",
+                this);
+            return null;
+        }
+
+        if (_networkManager != null
+            && _networkManager.NetworkConfig != null
+            && _networkManager.NetworkConfig.Prefabs != null
+            && _elevatorFinishSyncPrefab.TryGetComponent(out NetworkObject prefabNetworkObject)
+            && !_networkManager.NetworkConfig.Prefabs.NetworkPrefabOverrideLinks.ContainsKey(prefabNetworkObject.PrefabIdHash))
+        {
+            LogMazeWarningOnce(
+                "elevator-finish-sync-unregistered",
+                $"[Maze] \"{_elevatorFinishSyncPrefab.name}\" (hash {prefabNetworkObject.PrefabIdHash}) is not in "
+                + "Resources/DefaultNetworkPrefabs, so clients could not create it. Register it or the exit elevator "
+                + "will only work for the host.",
+                this);
+        }
+
+        return _elevatorFinishSyncPrefab;
     }
 
     void TrySpawnMazeNetworkRigidbodyPropsIfPresent(GameObject pieceRoot)

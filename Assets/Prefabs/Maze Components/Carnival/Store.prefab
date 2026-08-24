@@ -3677,6 +3677,8 @@ GameObject:
   - component: {fileID: 4644717850154353848}
   - component: {fileID: 961172441815398935}
   - component: {fileID: 720865690326073351}
+  - component: {fileID: 1496426868254653}
+  - component: {fileID: 2885423906601571502}
   m_Layer: 0
   m_Name: Store
   m_TagString: Untagged
@@ -3903,6 +3905,43 @@ MonoBehaviour:
   interactPromptMessage: Press E to redeem tickets
   dispenseClip: {fileID: 8300000, guid: 095c50d8a98f036489781782ceb76be1, type: 3}
   dispenseVolume: 0.55
+--- !u!114 &1496426868254653
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6590356383050392941}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
+  GlobalObjectIdHash: 1533549852
+  InScenePlacedSourceGlobalObjectIdHash: 0
+  DeferredDespawnTick: 0
+  Ownership: 1
+  AlwaysReplicateAsRoot: 0
+  SynchronizeTransform: 1
+  ActiveSceneSynchronization: 0
+  SceneMigrationSynchronization: 1
+  SpawnWithObservers: 1
+  DontDestroyWithOwner: 0
+  AutoObjectParentSync: 1
+  SyncOwnerTransformWhenParented: 1
+  AllowOwnerToParent: 0
+--- !u!114 &2885423906601571502
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6590356383050392941}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ae3f9012c4d54b4b8e6f71d2bc8aa101, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MazePieceNetworkRigidbodySpawn
 --- !u!1 &6739543561998494331
 GameObject:
   m_ObjectHideFlags: 0

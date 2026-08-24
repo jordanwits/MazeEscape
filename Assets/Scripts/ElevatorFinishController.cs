@@ -112,6 +112,33 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
     public override void OnNetworkDespawn()
     {
         _doorsOpen.OnValueChanged -= OnDoorsOpenChanged;
+
+        if (_bindRoutine != null)
+        {
+            StopCoroutine(_bindRoutine);
+            _bindRoutine = null;
+        }
+    }
+
+    /// <summary>
+    /// Server-side, called by <see cref="ProceduralMazeCoordinator"/> on the freshly instantiated replica before it
+    /// spawns: copies the settings that are authored per finish piece off that piece's own (never-spawned) copy.
+    /// The cab volume is re-adopted from the same source on every peer in <see cref="TryBindToFinishPiece"/>; doing
+    /// it here too matters because the server starts counting occupants in <see cref="FixedUpdate"/> the moment it
+    /// spawns, and <see cref="endRunInsteadOfAdvancing"/> has no other route onto the replica at all.
+    /// </summary>
+    public void AdoptAuthoredSettingsFromPieceCopy(ElevatorFinishController pieceCopy)
+    {
+        if (pieceCopy == null || pieceCopy == this)
+            return;
+
+        endRunInsteadOfAdvancing = pieceCopy.endRunInsteadOfAdvancing;
+
+        if (interiorVolume != null && pieceCopy.interiorVolume != null)
+        {
+            interiorVolume.size = pieceCopy.interiorVolume.size;
+            interiorVolume.center = pieceCopy.interiorVolume.center;
+        }
     }
 
     void OnDoorsOpenChanged(bool previous, bool current)
@@ -223,10 +250,10 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
     }
 
     /// <summary>
-    /// A client's replica is instantiated from the registered ElevatorFinishSync prefab, so it carries that prefab's
-    /// default cab volume rather than the per-piece override the server is counting occupants with. The piece the
-    /// client just built holds an inert copy with the authored volume — take the size from it so "am I aboard" means
-    /// the same thing on every peer.
+    /// Every peer's replica — the server's included — is instantiated from the registered ElevatorFinishSync prefab,
+    /// so it carries that prefab's default cab volume rather than the override authored on the finish piece. The
+    /// piece each peer just built holds an inert copy with the authored volume — take the size from it so "am I
+    /// aboard" means the same thing on every peer.
     /// </summary>
     void AdoptInteriorVolumeFromPieceCopy(ElevatorFinishSpawnMarker marker)
     {
