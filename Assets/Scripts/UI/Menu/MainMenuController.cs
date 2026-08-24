@@ -26,6 +26,19 @@ public sealed class MainMenuController : MonoBehaviour
     /// <summary>Corner radius of the lobby's survivor plates; smaller than a panel's so they read as cards, not boards.</summary>
     const int PortraitRadius = 12;
 
+    // Left-hand lobby column: the crew roster as bare elements in the top-left corner. No card —
+    // the roster sits directly on the canvas, over the hallway.
+    const float LobbyColumnWidth = 402f;
+    const float LobbyColumnInset = 76f;
+
+    /// <summary>Square hit area of a crew row's microphone toggle.</summary>
+    const float CrewMicSize = 26f;
+
+    /// <summary>Crew row for another player: name line over the voice slider.</summary>
+    const float CrewRowHeight = 68f;
+    /// <summary>Your own crew row is a single name line — you cannot mute or re-mix yourself.</summary>
+    const float CrewSelfRowHeight = 30f;
+
     // Lobby survivor grid: 2x2 on the right, above START. Values measured off the hand-placed
     // layout, then squared up — the GridLayoutGroup is what keeps the four plates exactly aligned.
     const float SurvivorPlateWidth = 108f;
@@ -36,8 +49,8 @@ public sealed class MainMenuController : MonoBehaviour
 
     /// <summary>
     /// Bottom of the plate grid. Chosen so the grid plus its caption sit centred in the gap between
-    /// the crew card (bottom edge y=836) and the START block (top edge y=212) — midpoint y=524, and
-    /// the caption-to-grid-top block is 392 tall. Re-derive if either of those panels changes height.
+    /// the top of the screen (the right column is otherwise empty since the crew card moved under
+    /// LOBBY) and the START block (top edge y=212). The caption-to-grid-top block is 392 tall.
     /// </summary>
     const float SurvivorGridBottom = 362f;
 
@@ -70,10 +83,9 @@ public sealed class MainMenuController : MonoBehaviour
     }
 
     // lobby screen
-    TextMeshProUGUI _lobbyTransportLabel;
-    TextMeshProUGUI _lobbyStatusLabel;
     TextMeshProUGUI _lobbyGateLabel;
     TextMeshProUGUI _crewCountLabel;
+    RectTransform _crewListRoot;
     RectTransform _playerListRoot;
     CharacterCard[] _characterCards;
     Button _readyButton;
@@ -81,9 +93,28 @@ public sealed class MainMenuController : MonoBehaviour
     TextMeshProUGUI _readyLabel;
     Button _startButton;
     GameObject _startSection;
-    /// <summary>Always Level01 in release; only the dev-only picker changes it.</summary>
+    /// <summary>Host-only: the level picker only feeds the host's START.</summary>
+    GameObject _levelSelectSection;
+    /// <summary>The section the host deploys to; set by the top-centre level picker.</summary>
     string _selectedScene = MultiplayerSceneFlow.GameSceneName;
     Button _inviteButton;
+
+    /// <summary>
+    /// One crew row per player. Rows are kept (not rebuilt) while the roster is unchanged so a voice
+    /// slider is not yanked out from under the cursor every time someone toggles ready.
+    /// </summary>
+    struct CrewRow
+    {
+        public Image ReadyChip;
+        public TextMeshProUGUI Name;
+        public Slider Volume;
+        public TextMeshProUGUI VolumeValue;
+        public Button MicButton;
+        public Image MicIcon;
+    }
+
+    readonly List<ulong> _crewRowIds = new();
+    readonly Dictionary<ulong, CrewRow> _crewRows = new();
 
     int _renderedLobbyHash = -1;
 
@@ -265,22 +296,6 @@ public sealed class MainMenuController : MonoBehaviour
         return screen;
     }
 
-    /// <summary>
-    /// Hand-cut panel pinned to a screen corner or edge. Pivot follows the anchor, so the offset
-    /// always reads as an inset from that corner. Returns the card's content rect.
-    /// </summary>
-    static RectTransform CreateAnchoredPanel(Transform parent, string name, float width,
-        Vector2 anchor, Vector2 offset)
-    {
-        RectTransform content = MenuWidgets.CreateCard(parent, name, width, new RectOffset(34, 34, 28, 30));
-        var card = (RectTransform)content.parent;
-        card.anchorMin = anchor;
-        card.anchorMax = anchor;
-        card.pivot = anchor;
-        card.anchoredPosition = offset;
-        return content;
-    }
-
     /// <summary>Bottom-of-card control that returns a dedicated screen to the button rail.</summary>
     void CreateBackButton(Transform card)
     {
@@ -306,63 +321,65 @@ public sealed class MainMenuController : MonoBehaviour
     // ---------------------------------------------------------------- lobby screen
 
     /// <summary>
-    /// The lobby spreads over the whole screen instead of stacking into one card: session identity
-    /// top-left, crew top-right, the host's deploy controls mid-right, exits bottom-left, and the
-    /// survivor plates as a wide strip along the bottom. The middle stays empty on purpose so the
-    /// hallway — and whoever is patrolling it — remains the backdrop, with the local player's picked
-    /// survivor standing in it (see <see cref="LobbyCharacterPreview"/>).
+    /// The lobby spreads over the whole screen instead of stacking into one card: the crew roster
+    /// top-left, the level picker top-centre, the host's deploy controls bottom-right, the exit
+    /// bottom-left, and the survivor plates on the right. Nothing here sits in a panel — the middle
+    /// stays empty on purpose so the hallway, and whoever is patrolling it, remains the backdrop with
+    /// the local player's picked survivor standing in it (see <see cref="LobbyCharacterPreview"/>).
     /// </summary>
     MenuScreenFader BuildLobbyScreen(Transform root)
     {
         RectTransform screen = CreateFullScreenRoot(root, "Screen_Lobby", out MenuScreenFader fader);
 
-        // Strip first so the edge panels draw over it if a wide screen ever brings them into contact.
+        // Strip first so the edge elements draw over it if a wide screen ever brings them into contact.
         BuildLobbySurvivorStrip(screen);
-        BuildLobbyIdentityPanel(screen);
         BuildLobbyCrewPanel(screen);
         BuildLobbyStartControls(screen);
         BuildLobbyExitControls(screen);
-        BuildDevLevelSelect(screen);
+        BuildLevelSelect(screen);
 
         return fader;
     }
 
-    void BuildLobbyIdentityPanel(Transform screen)
-    {
-        RectTransform card = CreateAnchoredPanel(screen, "Panel_Identity", 470f,
-            new Vector2(0f, 1f), new Vector2(76f, -76f));
-
-        RectTransform titleRow = MenuWidgets.CreateRow(card, "TitleRow", 40f, 12f);
-        TextMeshProUGUI title = MenuWidgets.CreateText(titleRow, "Title", "LOBBY", 30f, MenuTheme.Bone,
-            MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineLeft, 6f);
-        MenuWidgets.SetLayout(title, flexibleWidth: 1f);
-        _lobbyTransportLabel = MenuWidgets.CreateText(titleRow, "Transport", "ONLINE", 13f,
-            MenuTheme.WithAlpha(MenuTheme.Amber, 0.9f), MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineRight, 5f);
-        MenuWidgets.SetLayout(_lobbyTransportLabel, minWidth: 130f, preferredWidth: 130f);
-
-        _lobbyStatusLabel = MenuWidgets.CreateText(card, "Status", string.Empty, 14.5f, MenuTheme.Faint);
-    }
-
+    /// <summary>
+    /// The crew roster in the top-left corner: everyone in the lobby by name, each with your local
+    /// voice mix for them (<see cref="VoicePlayerMixSettings"/>) — a volume slider and a mic mute
+    /// toggle. No card: these are loose elements sitting straight on the canvas, over the hallway.
+    /// </summary>
     void BuildLobbyCrewPanel(Transform screen)
     {
-        RectTransform card = CreateAnchoredPanel(screen, "Panel_Crew", 400f,
-            new Vector2(1f, 1f), new Vector2(-76f, -76f));
+        RectTransform column = MenuWidgets.CreateRect("Crew", screen);
+        column.anchorMin = new Vector2(0f, 1f);
+        column.anchorMax = new Vector2(0f, 1f);
+        column.pivot = new Vector2(0f, 1f);
+        column.anchoredPosition = new Vector2(LobbyColumnInset, -LobbyColumnInset);
+        column.sizeDelta = new Vector2(LobbyColumnWidth, 100f);
+        MenuWidgets.AddVertical(column.gameObject, new RectOffset(0, 0, 0, 0), 10f);
+        // Pivot is the top edge, so the column grows downward as players join.
+        var fitter = column.gameObject.AddComponent<ContentSizeFitter>();
+        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        RectTransform headRow = MenuWidgets.CreateRow(card, "HeadRow", 30f, 10f);
-        TextMeshProUGUI head = MenuWidgets.CreateText(headRow, "Head", "CREW", 21f, MenuTheme.Bone,
+        RectTransform headRow = MenuWidgets.CreateRow(column, "HeadRow", 34f, 10f);
+        TextMeshProUGUI head = MenuWidgets.CreateText(headRow, "Head", "CREW", 26f, MenuTheme.Bone,
             MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineLeft, 6f);
         MenuWidgets.SetLayout(head, flexibleWidth: 1f);
         _crewCountLabel = MenuWidgets.CreateText(headRow, "Count", string.Empty, 13.5f, MenuTheme.Mist,
             MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineRight, 3f);
         MenuWidgets.SetLayout(_crewCountLabel, minWidth: 170f, preferredWidth: 170f);
 
-        MenuWidgets.CreateSpacer(card, 4f);
+        // The one piece of chrome left: a rule doing the job the card's top edge used to.
+        MenuWidgets.CreateHairline(column, MenuTheme.WithAlpha(MenuTheme.Bone, 0.16f));
 
-        _inviteButton = MenuWidgets.CreateGhostButton(card, "INVITE FRIENDS", () =>
+        _crewListRoot = MenuWidgets.CreateRect("CrewList", column);
+        MenuWidgets.AddVertical(_crewListRoot.gameObject, new RectOffset(0, 0, 4, 2), 8f);
+
+        MenuWidgets.CreateSpacer(column, 2f);
+
+        _inviteButton = MenuWidgets.CreateGhostButton(column, "INVITE FRIENDS", () =>
         {
             if (_friendsPanel != null)
                 _friendsPanel.Open();
-        }, false, 52f);
+        }, false, 50f);
     }
 
     /// <summary>
@@ -388,29 +405,29 @@ public sealed class MainMenuController : MonoBehaviour
     }
 
     /// <summary>
-    /// Dev-only maze-section picker, tucked on the left edge and compiled out of release builds —
-    /// production always deploys to <see cref="MultiplayerSceneFlow.GameSceneName"/>, which is what
-    /// <see cref="_selectedScene"/> already defaults to. Deliberately outside the main composition
-    /// so the lobby reads the way it will ship.
+    /// Which maze section the run starts on, pinned top-centre where the wordmark sits on the root
+    /// screen. Ships in release builds. Host-only: only the host has a START, and only the host's
+    /// <see cref="_selectedScene"/> is read (see <see cref="OnStartClicked"/>), so showing the picker
+    /// to a joiner would be a control that does nothing.
     /// </summary>
-    void BuildDevLevelSelect(Transform screen)
+    void BuildLevelSelect(Transform screen)
     {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
         string[] scenes = MultiplayerSceneFlow.MazeSectionSceneNames;
         if (scenes == null || scenes.Length <= 1)
             return;
 
-        RectTransform holder = MenuWidgets.CreateRect("DevLevelSelect", screen);
-        holder.anchorMin = new Vector2(0f, 0.5f);
-        holder.anchorMax = new Vector2(0f, 0.5f);
-        holder.pivot = new Vector2(0f, 0.5f);
-        holder.anchoredPosition = new Vector2(76f, 30f);
-        holder.sizeDelta = new Vector2(300f, 74f);
-        MenuWidgets.AddVertical(holder.gameObject, new RectOffset(0, 0, 0, 0), 8f);
+        RectTransform holder = MenuWidgets.CreateRect("LevelSelect", screen);
+        holder.anchorMin = new Vector2(0.5f, 1f);
+        holder.anchorMax = new Vector2(0.5f, 1f);
+        holder.pivot = new Vector2(0.5f, 1f);
+        holder.anchoredPosition = new Vector2(0f, -76f);
+        holder.sizeDelta = new Vector2(340f, 74f);
+        MenuWidgets.AddVertical(holder.gameObject, new RectOffset(0, 0, 0, 0), 8f, TextAnchor.UpperCenter);
+        _levelSelectSection = holder.gameObject;
 
-        TextMeshProUGUI head = MenuWidgets.CreateText(holder, "Head", "DEV · START LEVEL", 12f,
-            MenuTheme.WithAlpha(MenuTheme.Faint, 0.9f), MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 4f);
-        MenuWidgets.SetLayout(head, minHeight: 18f, preferredHeight: 18f);
+        TextMeshProUGUI head = MenuWidgets.CreateText(holder, "Head", "START LEVEL", 13f,
+            MenuTheme.WithAlpha(MenuTheme.Mist, 0.9f), MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 8f);
+        MenuWidgets.SetLayout(head, minHeight: 20f, preferredHeight: 20f);
 
         var labels = new string[scenes.Length];
         for (int i = 0; i < scenes.Length; i++)
@@ -428,7 +445,212 @@ public sealed class MainMenuController : MonoBehaviour
             if (index >= 0 && index < scenes.Length)
                 _selectedScene = scenes[index];
         };
-#endif
+    }
+
+
+    // ---------------------------------------------------------------- crew roster
+
+    /// <summary>
+    /// Rebuilds the roster only when the set of players changes, then re-labels every row. Names arrive
+    /// a beat after the client ids do (each peer announces its own), which is why the text is refreshed
+    /// separately from the rows themselves.
+    /// </summary>
+    void RefreshCrewList(IReadOnlyList<LobbyPlayerState> players)
+    {
+        if (_crewListRoot == null)
+            return;
+
+        if (!CrewRosterMatches(players))
+            RebuildCrewRows(players);
+
+        string amber = ColorUtility.ToHtmlStringRGB(MenuTheme.Amber);
+
+        for (int i = 0; i < players.Count; i++)
+        {
+            LobbyPlayerState player = players[i];
+            if (!_crewRows.TryGetValue(player.ClientId, out CrewRow row))
+                continue;
+
+            if (row.Name != null)
+            {
+                string who = player.DisplayName;
+                if (player.IsHost)
+                    who += "   <color=#" + amber + ">HOST</color>";
+                row.Name.text = who;
+            }
+
+            if (row.ReadyChip != null)
+                row.ReadyChip.color = player.IsReady ? MenuTheme.Moss : MenuTheme.Faint;
+        }
+    }
+
+    bool CrewRosterMatches(IReadOnlyList<LobbyPlayerState> players)
+    {
+        if (_crewRowIds.Count != players.Count)
+            return false;
+        for (int i = 0; i < players.Count; i++)
+        {
+            if (_crewRowIds[i] != players[i].ClientId)
+                return false;
+        }
+        return true;
+    }
+
+    void RebuildCrewRows(IReadOnlyList<LobbyPlayerState> players)
+    {
+        for (int i = _crewListRoot.childCount - 1; i >= 0; i--)
+            Destroy(_crewListRoot.GetChild(i).gameObject);
+        _crewRows.Clear();
+        _crewRowIds.Clear();
+
+        if (players.Count == 0)
+        {
+            TextMeshProUGUI empty = MenuWidgets.CreateText(_crewListRoot, "Empty", "SYNCING", 13.5f,
+                MenuTheme.Faint, MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineLeft, 4f);
+            MenuWidgets.SetLayout(empty, minHeight: 26f, preferredHeight: 26f);
+            return;
+        }
+
+        ulong localClientId = NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : ulong.MaxValue;
+        for (int i = 0; i < players.Count; i++)
+        {
+            ulong clientId = players[i].ClientId;
+            _crewRowIds.Add(clientId);
+            CreateCrewRow(clientId, clientId == localClientId);
+        }
+    }
+
+    /// <summary>
+    /// One roster row: ready pip, name, and — for everyone but you — the local voice controls. The
+    /// slider and MUTE are listener-side only (<see cref="VoicePlayerMixSettings"/>): nothing about
+    /// them is replicated, so the person you turn down is never told.
+    /// </summary>
+    void CreateCrewRow(ulong clientId, bool isLocal)
+    {
+        float height = isLocal ? CrewSelfRowHeight : CrewRowHeight;
+        RectTransform root = MenuWidgets.CreateRect("Crew_" + clientId, _crewListRoot);
+        MenuWidgets.SetLayout(root, minHeight: height, preferredHeight: height, flexibleWidth: 1f);
+
+        Image chip = MenuWidgets.CreateImage(root, "ReadyChip", MenuTheme.Solid(), MenuTheme.Faint);
+        RectTransform chipRt = chip.rectTransform;
+        chipRt.anchorMin = new Vector2(0f, 1f);
+        chipRt.anchorMax = new Vector2(0f, 1f);
+        chipRt.pivot = new Vector2(0f, 1f);
+        chipRt.anchoredPosition = new Vector2(1f, -8f);
+        chipRt.sizeDelta = new Vector2(9f, 9f);
+        chipRt.localRotation = Quaternion.Euler(0f, 0f, 45f);
+
+        TextMeshProUGUI name = MenuWidgets.CreateText(root, "Name", string.Empty, 15f, MenuTheme.Bone,
+            MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineLeft, 2f);
+        name.richText = true;
+        name.overflowMode = TextOverflowModes.Ellipsis;
+        RectTransform nameRt = name.rectTransform;
+        nameRt.anchorMin = new Vector2(0f, 1f);
+        nameRt.anchorMax = new Vector2(1f, 1f);
+        nameRt.pivot = new Vector2(0.5f, 1f);
+        nameRt.offsetMin = new Vector2(20f, -25f);
+        nameRt.offsetMax = new Vector2(isLocal ? 0f : -(CrewMicSize + 8f), 0f);
+
+        var row = new CrewRow { ReadyChip = chip, Name = name };
+        if (isLocal)
+        {
+            _crewRows[clientId] = row;
+            return;
+        }
+
+        TextMeshProUGUI caption = MenuWidgets.CreateText(root, "VoiceCaption", "VOICE", 10.5f,
+            MenuTheme.WithAlpha(MenuTheme.Faint, 0.9f), MenuWidgets.FontKind.Display,
+            TextAlignmentOptions.MidlineLeft, 3f);
+        RectTransform captionRt = caption.rectTransform;
+        captionRt.anchorMin = new Vector2(0f, 0f);
+        captionRt.anchorMax = new Vector2(0f, 0f);
+        captionRt.pivot = new Vector2(0f, 0f);
+        captionRt.anchoredPosition = new Vector2(20f, 6f);
+        captionRt.sizeDelta = new Vector2(46f, 24f);
+
+        Slider volume = MenuWidgets.CreateSlider(root);
+        var volumeRt = (RectTransform)volume.transform;
+        volumeRt.anchorMin = new Vector2(0f, 0f);
+        volumeRt.anchorMax = new Vector2(1f, 0f);
+        volumeRt.pivot = new Vector2(0.5f, 0f);
+        volumeRt.offsetMin = new Vector2(70f, 7f);
+        volumeRt.offsetMax = new Vector2(-56f, 29f);
+        volume.SetValueWithoutNotify(VoicePlayerMixSettings.GetVolume(clientId));
+
+        TextMeshProUGUI volumeValue = MenuWidgets.CreateText(root, "VolumeValue", string.Empty, 12.5f,
+            MenuTheme.Mist, MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineRight, 1f);
+        RectTransform volumeValueRt = volumeValue.rectTransform;
+        volumeValueRt.anchorMin = new Vector2(1f, 0f);
+        volumeValueRt.anchorMax = new Vector2(1f, 0f);
+        volumeValueRt.pivot = new Vector2(1f, 0f);
+        volumeValueRt.anchoredPosition = new Vector2(0f, 6f);
+        volumeValueRt.sizeDelta = new Vector2(50f, 24f);
+        volumeValue.text = Mathf.RoundToInt(volume.value * 100f) + "%";
+
+        volume.onValueChanged.AddListener(v =>
+        {
+            VoicePlayerMixSettings.SetVolume(clientId, v);
+            volumeValue.text = Mathf.RoundToInt(v * 100f) + "%";
+        });
+
+        // Bare glyph, no plate: the icon itself is the control, and the struck-through variant
+        // carries the state (see MenuTheme.MicIcon).
+        Image mic = MenuWidgets.CreateImage(root, "Mic", MenuTheme.MicIcon(false), MenuTheme.Bone, true);
+        mic.preserveAspect = true;
+        RectTransform micRt = mic.rectTransform;
+        micRt.anchorMin = new Vector2(1f, 1f);
+        micRt.anchorMax = new Vector2(1f, 1f);
+        micRt.pivot = new Vector2(1f, 1f);
+        micRt.anchoredPosition = new Vector2(0f, -1f);
+        micRt.sizeDelta = new Vector2(CrewMicSize, CrewMicSize);
+
+        var micButton = mic.gameObject.AddComponent<Button>();
+        micButton.targetGraphic = mic;
+        micButton.transition = Selectable.Transition.ColorTint;
+        micButton.navigation = new Navigation { mode = Navigation.Mode.None };
+        micButton.onClick.AddListener(() =>
+        {
+            MenuUiAudio.PlayClick();
+            VoicePlayerMixSettings.ToggleMuted(clientId);
+            ApplyCrewMuteVisual(clientId);
+        });
+
+        row.Volume = volume;
+        row.VolumeValue = volumeValue;
+        row.MicButton = micButton;
+        row.MicIcon = mic;
+        _crewRows[clientId] = row;
+        ApplyCrewMuteVisual(clientId);
+    }
+
+    /// <summary>Pushes the stored mute state onto one row — rows are not rebuilt on a mute click.</summary>
+    void ApplyCrewMuteVisual(ulong clientId)
+    {
+        if (!_crewRows.TryGetValue(clientId, out CrewRow row))
+            return;
+
+        bool muted = VoicePlayerMixSettings.IsMuted(clientId);
+
+        if (row.MicIcon != null)
+            row.MicIcon.sprite = MenuTheme.MicIcon(muted);
+
+        // ColorTint overwrites the Image colour every state change, so the mute state has to live in
+        // the button's palette rather than on the Image itself.
+        if (row.MicButton != null)
+        {
+            ColorBlock colors = row.MicButton.colors;
+            colors.normalColor = muted ? MenuTheme.BloodBright : MenuTheme.WithAlpha(MenuTheme.Bone, 0.85f);
+            colors.highlightedColor = muted ? MenuTheme.Bone : MenuTheme.AmberBright;
+            colors.pressedColor = muted ? MenuTheme.Blood : MenuTheme.Amber;
+            colors.selectedColor = colors.normalColor;
+            colors.disabledColor = MenuTheme.Faint;
+            row.MicButton.colors = colors;
+        }
+
+        if (row.Volume != null)
+            row.Volume.interactable = !muted;
+        if (row.VolumeValue != null)
+            row.VolumeValue.color = muted ? MenuTheme.Faint : MenuTheme.Mist;
     }
 
     void BuildLobbySurvivorStrip(Transform screen)
@@ -492,14 +714,12 @@ public sealed class MainMenuController : MonoBehaviour
         holder.anchorMax = new Vector2(0f, 0f);
         holder.pivot = new Vector2(0f, 0f);
         holder.anchoredPosition = new Vector2(76f, 108f);
-        holder.sizeDelta = new Vector2(420f, 70f);
+        holder.sizeDelta = new Vector2(260f, 70f);
         var layout = MenuWidgets.CreateRow(holder, "Row", 70f, 12f);
         ((RectTransform)layout).SetStretch();
 
-        // BACK leaves the lobby on screen and alive (HOST GAME reopens it); LEAVE tears the session down.
-        Button back = MenuWidgets.CreateGhostButton(layout, "BACK", () => ShowScreen(MenuScreen.Root), false, 56f);
-        MenuWidgets.SetLayout(back.transform, minWidth: 150f, preferredWidth: 150f, minHeight: 56f, preferredHeight: 56f);
-
+        // The only way out of the lobby: there is no BACK, so you cannot leave a live session
+        // running behind the root menu.
         Button leave = MenuWidgets.CreateGhostButton(layout, "LEAVE LOBBY", () =>
         {
             _modal.Open("LEAVE LOBBY", string.Empty, "LEAVE", true, () =>
@@ -510,7 +730,7 @@ public sealed class MainMenuController : MonoBehaviour
                     _session.ShutdownSession();
             });
         }, true, 56f);
-        MenuWidgets.SetLayout(leave.transform, minWidth: 236f, preferredWidth: 236f, minHeight: 56f, preferredHeight: 56f);
+        MenuWidgets.SetLayout(leave.transform, minWidth: 260f, preferredWidth: 260f, minHeight: 56f, preferredHeight: 56f);
     }
 
     /// <summary>
@@ -814,9 +1034,6 @@ public sealed class MainMenuController : MonoBehaviour
         if (_session == null || _current != MenuScreen.Lobby)
             return;
 
-        if (_lobbyStatusLabel != null)
-            _lobbyStatusLabel.text = _session.CurrentStatus;
-
         IReadOnlyList<LobbyPlayerState> lobbyPlayers = _session.LobbyPlayers;
         int ready = 0;
         for (int i = 0; i < lobbyPlayers.Count; i++)
@@ -838,6 +1055,8 @@ public sealed class MainMenuController : MonoBehaviour
         bool isHost = _session.IsLobbyHost;
         if (_startSection != null && _startSection.activeSelf != isHost)
             _startSection.SetActive(isHost);
+        if (_levelSelectSection != null && _levelSelectSection.activeSelf != isHost)
+            _levelSelectSection.SetActive(isHost);
         if (isHost && _startButton != null)
         {
             _startButton.interactable = _session.CanHostStartGame;
@@ -857,9 +1076,6 @@ public sealed class MainMenuController : MonoBehaviour
         // Kept visible but dimmed when there is nothing to invite into, so the row doesn't pop in and out.
         if (_inviteButton != null)
             _inviteButton.interactable = _session.CanInviteFriends;
-
-        if (_lobbyTransportLabel != null)
-            _lobbyTransportLabel.text = _session.CurrentTransportLabel.ToUpperInvariant();
     }
 
     void RefreshLobby()
@@ -877,12 +1093,15 @@ public sealed class MainMenuController : MonoBehaviour
             hash = hash * 31 + (p.IsReady ? 1 : 0);
             hash = hash * 31 + (p.IsHost ? 2 : 0);
             hash = hash * 31 + p.CharacterIndex;
+            hash = hash * 31 + (p.DisplayName != null ? p.DisplayName.GetHashCode() : 0);
         }
         hash = hash * 31 + (_session.IsGameStartRequested ? 1 : 0);
         hash = hash * 31 + (_session.CanSelectCharactersNow ? 2 : 0);
         if (hash == _renderedLobbyHash)
             return;
         _renderedLobbyHash = hash;
+
+        RefreshCrewList(players);
 
         if (_characterCards != null)
         {

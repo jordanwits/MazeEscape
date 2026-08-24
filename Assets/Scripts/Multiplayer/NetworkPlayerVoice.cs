@@ -36,11 +36,14 @@ public class NetworkPlayerVoice : NetworkBehaviour
     bool _pttWired;
 
     RemoteVoiceOutput _remoteOutput;
+    /// <summary>Cached because <see cref="_networkObject"/> is gone by the time we unsubscribe.</summary>
+    ulong _voiceOwnerClientId;
 
     public override void OnNetworkSpawn()
     {
         _networkObject = GetComponent<NetworkObject>();
-        VoiceClientRegistry.Register(_networkObject.OwnerClientId, this);
+        _voiceOwnerClientId = _networkObject.OwnerClientId;
+        VoiceClientRegistry.Register(_voiceOwnerClientId, this);
 
         if (IsOwner)
         {
@@ -60,13 +63,30 @@ public class NetworkPlayerVoice : NetworkBehaviour
             if (anchor == null)
                 anchor = transform;
             _remoteOutput = new RemoteVoiceOutput(anchor.gameObject, minHearingDistance, maxHearingDistance);
+
+            // This player's slot in the local voice mix (lobby crew card); survives the level switch.
+            ApplyVoiceMix();
+            VoicePlayerMixSettings.Changed += HandleVoiceMixChanged;
         }
+    }
+
+    void HandleVoiceMixChanged(ulong clientId)
+    {
+        if (clientId == _voiceOwnerClientId)
+            ApplyVoiceMix();
+    }
+
+    void ApplyVoiceMix()
+    {
+        _remoteOutput?.SetVolume(VoicePlayerMixSettings.GetEffectiveVolume(_voiceOwnerClientId));
     }
 
     public override void OnNetworkDespawn()
     {
+        VoicePlayerMixSettings.Changed -= HandleVoiceMixChanged;
+
         if (_networkObject != null)
-            VoiceClientRegistry.Unregister(_networkObject.OwnerClientId, this);
+            VoiceClientRegistry.Unregister(_voiceOwnerClientId, this);
 
         StopMicrophone();
         if (_pushToTalkAction != null)
@@ -250,6 +270,13 @@ public class NetworkPlayerVoice : NetworkBehaviour
             var clip = AudioClip.Create("ProximityVoice", SampleRate * 2, 1, SampleRate, true, PcmRead);
             _source.clip = clip;
             _source.Play();
+        }
+
+        /// <summary>Per-player trim on top of the Voice mixer bus; 0 = muted for this listener only.</summary>
+        public void SetVolume(float volume)
+        {
+            if (_source != null)
+                _source.volume = Mathf.Clamp01(volume);
         }
 
         void PcmRead(float[] data)

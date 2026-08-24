@@ -453,6 +453,96 @@ public static class MenuTheme
         });
     }
 
+
+    /// <summary>
+    /// Microphone glyph for the crew list's per-player mute toggle. <paramref name="muted"/> adds the
+    /// struck-through variant: the slash is knocked out of the mic body first so it reads as a cut
+    /// rather than a line laid on top. Drawn from signed distances (same 1.25px AA edge as
+    /// <see cref="Circle"/>); tint via Image.color.
+    /// </summary>
+    public static Sprite MicIcon(bool muted)
+    {
+        return CacheSprite(muted ? "mic_muted" : "mic", () =>
+        {
+            const int size = 128;
+            Texture2D tex = NewTexture(size, size);
+            var px = new Color32[size * size];
+
+            // Proportions are in this 128px box: capsule head, open cradle under it, stem, foot.
+            Vector2 headTop = new(64f, 95f);
+            Vector2 headBottom = new(64f, 85f);
+            const float headRadius = 13f;
+
+            Vector2 cradleCenter = new(64f, 84f);
+            const float cradleRadius = 25f;
+            const float cradleHalfBand = 4f;
+
+            Vector2 stemTop = new(64f, 59f);
+            Vector2 stemBottom = new(64f, 36f);
+            const float stemRadius = 4f;
+
+            Vector2 footLeft = new(47f, 33f);
+            Vector2 footRight = new(81f, 33f);
+            const float footRadius = 4f;
+
+            // Top-left to bottom-right, matching the universal "no" slash.
+            Vector2 slashFrom = new(32f, 100f);
+            Vector2 slashTo = new(96f, 28f);
+            const float slashRadius = 5f;
+            const float slashCutRadius = 8.5f;
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    Vector2 pt = new(x + 0.5f, y + 0.5f);
+
+                    float d = SegmentDistance(pt, headTop, headBottom) - headRadius;
+                    d = Mathf.Min(d, CradleDistance(pt, cradleCenter, cradleRadius, cradleHalfBand));
+                    d = Mathf.Min(d, SegmentDistance(pt, stemTop, stemBottom) - stemRadius);
+                    d = Mathf.Min(d, SegmentDistance(pt, footLeft, footRight) - footRadius);
+
+                    if (muted)
+                    {
+                        float slash = SegmentDistance(pt, slashFrom, slashTo);
+                        d = Mathf.Max(d, -(slash - slashCutRadius));   // knock the gap out of the mic
+                        d = Mathf.Min(d, slash - slashRadius);         // then lay the bar in the gap
+                    }
+
+                    float a = Mathf.Clamp01(0.5f - d / 1.25f);
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+
+            tex.SetPixels32(px);
+            tex.Apply(false, false);
+            return ToSprite(tex, Vector4.zero);
+        });
+    }
+
+    static float SegmentDistance(Vector2 p, Vector2 a, Vector2 b)
+    {
+        Vector2 pa = p - a;
+        Vector2 ba = b - a;
+        float denom = Vector2.Dot(ba, ba);
+        float h = denom <= Mathf.Epsilon ? 0f : Mathf.Clamp01(Vector2.Dot(pa, ba) / denom);
+        return (pa - ba * h).magnitude;
+    }
+
+    /// <summary>
+    /// The mic's open cradle: the lower half of an annulus, with round caps where it stops at the
+    /// centre line (above that line the nearest point on the shape is one of those two caps).
+    /// </summary>
+    static float CradleDistance(Vector2 p, Vector2 center, float radius, float halfBand)
+    {
+        if (p.y <= center.y)
+            return Mathf.Abs((p - center).magnitude - radius) - halfBand;
+
+        float left = (p - new Vector2(center.x - radius, center.y)).magnitude;
+        float right = (p - new Vector2(center.x + radius, center.y)).magnitude;
+        return Mathf.Min(left, right) - halfBand;
+    }
+
     /// <summary>Darkened-corner vignette; render as white-alpha mask, tint black at the Image.</summary>
     public static Sprite Vignette()
     {

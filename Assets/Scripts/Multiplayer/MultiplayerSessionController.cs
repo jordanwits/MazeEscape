@@ -16,12 +16,15 @@ public enum MultiplayerTransportMode
 
 public readonly struct LobbyPlayerState
 {
-    public LobbyPlayerState(ulong clientId, bool isReady, bool isHost, int characterIndex)
+    public LobbyPlayerState(ulong clientId, bool isReady, bool isHost, int characterIndex, string displayName)
     {
         ClientId = clientId;
         IsReady = isReady;
         IsHost = isHost;
         CharacterIndex = characterIndex;
+        DisplayName = string.IsNullOrWhiteSpace(displayName)
+            ? MultiplayerSessionController.FallbackDisplayName(clientId)
+            : displayName;
     }
 
     public ulong ClientId { get; }
@@ -29,6 +32,8 @@ public readonly struct LobbyPlayerState
     public bool IsHost { get; }
     /// <summary>Index into <see cref="MultiplayerProjectSettings"/> lobby characters; -1 = none.</summary>
     public int CharacterIndex { get; }
+    /// <summary>Steam persona name when Steam is up, otherwise a PLAYER n placeholder. Never empty.</summary>
+    public string DisplayName { get; }
 }
 
 [DisallowMultipleComponent]
@@ -40,8 +45,10 @@ public class MultiplayerSessionController : MonoBehaviour
     const string HostListenAddress = "0.0.0.0";
     const string LobbyReadyRequestMessageName = "lobby-ready-request";
     const string LobbyCharacterRequestMessageName = "lobby-character-request";
+    const string LobbyNameRequestMessageName = "lobby-name-request";
     const string LobbyStateMessageName = "lobby-state";
     const byte NoCharacterByte = 0xFF;
+    const int MaxDisplayNameLength = 24;
     const string OnlineUnavailableStatus = "Online play is unavailable right now.";
 
     [SerializeField] string defaultAddress = "127.0.0.1";
@@ -64,6 +71,7 @@ public class MultiplayerSessionController : MonoBehaviour
     readonly Dictionary<ulong, Coroutine> _pendingSpawnMoves = new();
     readonly Dictionary<ulong, bool> _serverLobbyReadyByClient = new();
     readonly Dictionary<ulong, int> _serverLobbyCharacterByClient = new();
+    readonly Dictionary<ulong, string> _serverLobbyNameByClient = new();
     readonly List<LobbyPlayerState> _lobbyPlayers = new();
     bool _lobbyMessageHandlersRegistered;
     bool _lobbyReadyRequestHandlerRegistered;
@@ -155,6 +163,35 @@ public class MultiplayerSessionController : MonoBehaviour
 
         ownerClientId = 0;
         return false;
+    }
+
+    /// <summary>Placeholder used until (or unless) a real name arrives — Steam is off in LAN/direct-IP play.</summary>
+    public static string FallbackDisplayName(ulong clientId) => "PLAYER " + clientId;
+
+    /// <summary>
+    /// The name this machine announces to the lobby. Empty when Steam is not up; the server then keeps
+    /// the <see cref="FallbackDisplayName"/> placeholder rather than showing a blank row.
+    /// </summary>
+    static string LocalDisplayName()
+    {
+        if (!SteamworksBootstrap.IsReady)
+            return string.Empty;
+        return SanitizeDisplayName(SteamworksBootstrap.LocalPersonaName);
+    }
+
+    /// <summary>
+    /// Persona names are user-authored: cap the length so the payload stays bounded, and strip the
+    /// angle brackets that would otherwise be parsed as TMP rich-text tags in the crew list.
+    /// </summary>
+    static string SanitizeDisplayName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return string.Empty;
+
+        name = name.Trim().Replace('<', ' ').Replace('>', ' ');
+        if (name.Length > MaxDisplayNameLength)
+            name = name.Substring(0, MaxDisplayNameLength);
+        return name.Trim();
     }
 
     bool IsSteamTransportAvailable => _steamTransport != null;
@@ -793,6 +830,7 @@ public class MultiplayerSessionController : MonoBehaviour
         if (clientId == _networkManager.LocalClientId)
         {
             EnsureLobbyMessageHandlersRegistered();
+            SendNameRequest(LocalDisplayName());
             UpdateStatus("Connected.");
         }
     }
@@ -859,6 +897,7 @@ public class MultiplayerSessionController : MonoBehaviour
         {
             _networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LobbyReadyRequestMessageName, HandleLobbyReadyRequest);
             _networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LobbyCharacterRequestMessageName, HandleLobbyCharacterRequest);
+            _networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LobbyNameRequestMessageName, HandleLobbyNameRequest);
             _lobbyReadyRequestHandlerRegistered = true;
         }
 
@@ -879,6 +918,7 @@ public class MultiplayerSessionController : MonoBehaviour
         {
             _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbyReadyRequestMessageName);
             _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbyCharacterRequestMessageName);
+            _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbyNameRequestMessageName);
         }
         _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbyStateMessageName);
         _lobbyMessageHandlersRegistered = false;
@@ -952,6 +992,43 @@ public class MultiplayerSessionController : MonoBehaviour
         return -1;
     }
 
+    void HandleLobbyNameRequest(ulong senderClientId, FastBufferReader reader)
+    {
+        if (_networkManager == null || !_networkManager.IsServer)
+            return;
+
+        reader.ReadValueSafe(out string rawName);
+        SetServerLobbyName(senderClientId, SanitizeDisplayName(rawName));
+    }
+
+    void SendNameRequest(string displayName)
+    {
+        if (_networkManager == null || _networkManager.CustomMessagingManager == null)
+            return;
+        if (string.IsNullOrEmpty(displayName))
+            return;
+
+        // Growable writer: a persona name is variable-length UTF-16 and the cap only bounds characters.
+        using FastBufferWriter writer = new(128, Allocator.Temp, 1024);
+        writer.WriteValueSafe(displayName);
+        _networkManager.CustomMessagingManager.SendNamedMessage(
+            LobbyNameRequestMessageName,
+            NetworkManager.ServerClientId,
+            writer,
+            NetworkDelivery.ReliableSequenced);
+    }
+
+    void SetServerLobbyName(ulong clientId, string displayName)
+    {
+        if (_networkManager == null || !_networkManager.IsServer)
+            return;
+        if (string.IsNullOrEmpty(displayName))
+            return;
+
+        _serverLobbyNameByClient[clientId] = displayName;
+        PublishServerLobbyState();
+    }
+
     void SendCharacterRequest(int characterIndex)
     {
         if (_networkManager == null || _networkManager.CustomMessagingManager == null)
@@ -983,10 +1060,11 @@ public class MultiplayerSessionController : MonoBehaviour
             reader.ReadValueSafe(out byte readyByte);
             reader.ReadValueSafe(out byte hostByte);
             reader.ReadValueSafe(out byte characterByte);
+            reader.ReadValueSafe(out string displayName);
 
             bool isReady = readyByte != 0;
             int characterIndex = characterByte == NoCharacterByte ? -1 : characterByte;
-            _lobbyPlayers.Add(new LobbyPlayerState(clientId, isReady, hostByte != 0, characterIndex));
+            _lobbyPlayers.Add(new LobbyPlayerState(clientId, isReady, hostByte != 0, characterIndex, displayName));
             allReady &= isReady;
 
             if (clientId == _networkManager.LocalClientId)
@@ -1021,10 +1099,12 @@ public class MultiplayerSessionController : MonoBehaviour
 
         _serverLobbyReadyByClient.Clear();
         _serverLobbyCharacterByClient.Clear();
+        _serverLobbyNameByClient.Clear();
         foreach (ulong clientId in _networkManager.ConnectedClientsIds)
         {
             _serverLobbyReadyByClient[clientId] = false;
             _serverLobbyCharacterByClient[clientId] = ServerFindFreeCharacterIndex();
+            SeedServerLobbyName(clientId);
         }
 
         _localReady = false;
@@ -1044,6 +1124,10 @@ public class MultiplayerSessionController : MonoBehaviour
         if (!_serverLobbyCharacterByClient.ContainsKey(clientId))
             _serverLobbyCharacterByClient[clientId] = ServerFindFreeCharacterIndex();
 
+        // A remote client's real name arrives a moment later on its own message; until then the
+        // placeholder keeps the crew row from rendering blank.
+        SeedServerLobbyName(clientId);
+
         PublishServerLobbyState();
     }
 
@@ -1054,7 +1138,21 @@ public class MultiplayerSessionController : MonoBehaviour
 
         _serverLobbyReadyByClient.Remove(clientId);
         _serverLobbyCharacterByClient.Remove(clientId);
+        _serverLobbyNameByClient.Remove(clientId);
         PublishServerLobbyState();
+    }
+
+    /// <summary>
+    /// Fills in a name for a client we have not heard from yet: the host knows its own persona name
+    /// directly, everyone else gets the placeholder until their name message lands.
+    /// </summary>
+    void SeedServerLobbyName(ulong clientId)
+    {
+        if (_serverLobbyNameByClient.ContainsKey(clientId))
+            return;
+
+        string name = clientId == _networkManager.LocalClientId ? LocalDisplayName() : string.Empty;
+        _serverLobbyNameByClient[clientId] = string.IsNullOrEmpty(name) ? FallbackDisplayName(clientId) : name;
     }
 
     void SetServerLobbyReady(ulong clientId, bool ready)
@@ -1077,7 +1175,8 @@ public class MultiplayerSessionController : MonoBehaviour
         {
             bool isHost = pair.Key == _networkManager.LocalClientId;
             int characterIndex = _serverLobbyCharacterByClient.TryGetValue(pair.Key, out int idx) ? idx : -1;
-            _lobbyPlayers.Add(new LobbyPlayerState(pair.Key, pair.Value, isHost, characterIndex));
+            string displayName = _serverLobbyNameByClient.TryGetValue(pair.Key, out string named) ? named : string.Empty;
+            _lobbyPlayers.Add(new LobbyPlayerState(pair.Key, pair.Value, isHost, characterIndex, displayName));
             allReady &= pair.Value;
         }
 
@@ -1093,8 +1192,9 @@ public class MultiplayerSessionController : MonoBehaviour
         if (_networkManager == null || _networkManager.CustomMessagingManager == null || !_networkManager.IsServer)
             return;
 
-        int payloadSize = sizeof(int) + _lobbyPlayers.Count * (sizeof(ulong) + sizeof(byte) + sizeof(byte) + sizeof(byte));
-        using FastBufferWriter writer = new(payloadSize, Allocator.Temp);
+        // Names are variable-length, so the writer is allowed to grow instead of being sized up front.
+        int payloadSize = sizeof(int) + _lobbyPlayers.Count * (sizeof(ulong) + 3 * sizeof(byte) + 4 + 2 * MaxDisplayNameLength);
+        using FastBufferWriter writer = new(payloadSize, Allocator.Temp, 64 * 1024);
         writer.WriteValueSafe(_lobbyPlayers.Count);
         for (int i = 0; i < _lobbyPlayers.Count; i++)
         {
@@ -1105,6 +1205,7 @@ public class MultiplayerSessionController : MonoBehaviour
             writer.WriteValueSafe(player.CharacterIndex >= 0 && player.CharacterIndex < NoCharacterByte
                 ? (byte)player.CharacterIndex
                 : NoCharacterByte);
+            writer.WriteValueSafe(player.DisplayName);
         }
 
         foreach (ulong clientId in _networkManager.ConnectedClientsIds)
@@ -1124,6 +1225,7 @@ public class MultiplayerSessionController : MonoBehaviour
     {
         _serverLobbyReadyByClient.Clear();
         _serverLobbyCharacterByClient.Clear();
+        _serverLobbyNameByClient.Clear();
         _lobbyPlayers.Clear();
         _localReady = false;
         _allLobbyPlayersReady = false;

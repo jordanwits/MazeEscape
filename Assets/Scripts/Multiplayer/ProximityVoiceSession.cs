@@ -39,6 +39,7 @@ public class ProximityVoiceSession : MonoBehaviour
         if (!s_HandlersRegistered)
         {
             VoiceClientRegistry.Clear();
+            VoicePlayerMixSettings.Clear();
             return;
         }
 
@@ -52,6 +53,7 @@ public class ProximityVoiceSession : MonoBehaviour
 
         s_HandlersRegistered = false;
         VoiceClientRegistry.Clear();
+        VoicePlayerMixSettings.Clear();
     }
 
     /// <summary>
