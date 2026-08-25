@@ -11,7 +11,7 @@ using UnityEditor;
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(CharacterController))]
-public class ZombieAI : MonoBehaviour
+public class ZombieAI : MonoBehaviour, IBlindableEnemy
 {
     const string VoiceAudioChildName = "Zombie_Voice";
     const string FootstepAudioChildName = "Zombie_Footsteps";
@@ -182,6 +182,7 @@ public class ZombieAI : MonoBehaviour
     float _nextSenseTime = -1f;
 
     ZombieState _state;
+    EnemyBlindEffect _blindEffect;
     Transform _target;
     PlayerHealth _targetHealth;
     float _nextAttackTime;
@@ -307,6 +308,13 @@ public class ZombieAI : MonoBehaviour
 
         if (_state == ZombieState.Dead)
             return;
+
+        // Flashbanged: no senses, no chase, no attack — just stumble in circles until it wears off.
+        if (IsBlinded)
+        {
+            UpdateBlindWander();
+            return;
+        }
 
         if (_poise < maxPoise && Time.time >= _poiseRegenBlockedUntil)
             _poise = Mathf.Min(maxPoise, _poise + poiseRegenPerSecond * Time.deltaTime);
@@ -599,6 +607,48 @@ public class ZombieAI : MonoBehaviour
     }
 
     /// <summary>The earned full-body stagger: only reachable by depleting poise, and never repeatable back-to-back.</summary>
+    /// <summary>True while a flashbang still has this zombie blinded (server-side).</summary>
+    bool IsBlinded => EnemyBlindEffect.IsBlinded(ref _blindEffect, gameObject);
+
+    /// <summary>
+    /// One frame of the flashbang stumble. Deliberately still runs the footsteps and animator so the
+    /// blinded zombie looks like it is walking (it is) rather than sliding — the only thing missing is
+    /// every part of the state machine that could sense or hit a player.
+    /// </summary>
+    void UpdateBlindWander()
+    {
+        Vector3 wander = _blindEffect != null
+            ? _blindEffect.TickWanderVelocity(transform, EffectiveMoveSpeed)
+            : Vector3.zero;
+        _intendedMoveSpeed = wander.magnitude;
+        ApplyMovement(wander);
+        UpdateFootsteps();
+        UpdateAnimatorParameters();
+    }
+
+    /// <summary>Flashbang caught it: abort the swing, forget the target and drop back to Idle.</summary>
+    public void OnFlashbangBlinded(float seconds)
+    {
+        if (_state == ZombieState.Dead)
+            return;
+
+        if (_attackRoutine != null)
+        {
+            StopCoroutine(_attackRoutine);
+            _attackRoutine = null;
+        }
+
+        if (animator != null && upperBodyLayerIndex > 0)
+        {
+            animator.Play("Empty", upperBodyLayerIndex, 0f);
+            animator.SetLayerWeight(upperBodyLayerIndex, 0f);
+        }
+
+        ClearTarget();
+        EnterIdle();
+        _nextAttackTime = Time.time + seconds;
+    }
+
     void BeginPoiseBreakStagger()
     {
         if (_attackRoutine != null)
@@ -1402,7 +1452,7 @@ public class ZombieAI : MonoBehaviour
         if (hitDelay > 0f)
             yield return new WaitForSeconds(hitDelay);
 
-        if (CanLandCommittedAttack(_targetHealth, committedAttackDirection))
+        if (!IsBlinded && CanLandCommittedAttack(_targetHealth, committedAttackDirection))
             _targetHealth.TakeDamage(damage); // victim feedback comes from the universal hurt-feedback watcher
 
         _nextAttackTime = Time.time + EffectiveAttackRate;

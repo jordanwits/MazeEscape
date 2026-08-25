@@ -22,7 +22,7 @@ using UnityEngine.AI;
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(CharacterController))]
-public class SecurityGuardAI : MonoBehaviour
+public class SecurityGuardAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 {
     const string FootstepAudioChildName = "Guard_Footsteps";
     const string FxAudioChildName = "Guard_Fx";
@@ -316,6 +316,7 @@ public class SecurityGuardAI : MonoBehaviour
 
     // Combat
     Coroutine _attackRoutine;
+    EnemyBlindEffect _blindEffect;
     float _nextAttackTime;
     float _nextMmaKickTime;
     float _nextHurricaneTime;
@@ -389,6 +390,15 @@ public class SecurityGuardAI : MonoBehaviour
         ConfigureFootstepAudioSource();
         ConfigureFxAudioSource();
         ApplyAgentSettings();
+
+        // Awake/OnDestroy rather than OnEnable/OnDisable, matching ClownAIRegistry/JailorAIRegistry: an
+        // observer client keeps this component disabled, but the guard is still very much in the world.
+        SecurityGuardAIRegistry.Register(this);
+    }
+
+    void OnDestroy()
+    {
+        SecurityGuardAIRegistry.Unregister(this);
     }
 
     void Reset()
@@ -428,6 +438,13 @@ public class SecurityGuardAI : MonoBehaviour
 
         if (isNetworkClient)
             return; // footsteps run in LateUpdate off the replicated pose; movement/AI are server-only
+
+        // Flashbanged: no senses, no chase, no strikes — just stumble in circles until it wears off.
+        if (IsBlinded)
+        {
+            UpdateBlindWander();
+            return;
+        }
 
         if (_poise < maxPoise && Time.time >= _poiseRegenBlockedUntil)
             _poise = Mathf.Min(maxPoise, _poise + poiseRegenPerSecond * Time.deltaTime);
@@ -843,11 +860,54 @@ public class SecurityGuardAI : MonoBehaviour
         _investigateAbortTime = Time.time + 15f; // unreachable point → give up and dwell where he is
         _nextInvestigateRepathTime = 0f;
         _hasPatrolDestination = false;
+        // Any ordinary investigate walks; only LureToNoise re-arms the override, immediately after this.
+        _lureSpeedOverride = 0f;
+    }
+
+    // ----- ILurableEnemy (decoy grenade) -----
+
+    /// <summary>
+    /// Set by a decoy lure so he jogs to the noise instead of strolling. Cleared on arrival so the
+    /// stand-and-scan dwell that follows is unhurried. Mirrors the Clown and the Jailor.
+    /// </summary>
+    float _lureSpeedOverride;
+
+    /// <summary>Approach speed while investigating: the lure override if one is set, else normal patrol.</summary>
+    float InvestigateMoveSpeed => _lureSpeedOverride > 0.01f ? _lureSpeedOverride : patrolSpeed;
+
+    /// <summary>Chasing or mid-attack — a decoy must not pull him off a player he already has.</summary>
+    public bool IsPursuingPlayer => _state == GuardState.Chase || _state == GuardState.Attack;
+
+    public Vector3 LureListenPosition => transform.position;
+
+    /// <summary>
+    /// A decoy grenade went off within earshot — go look. Refused outright while dead or staggered:
+    /// staggering is a committed recovery animation and re-entering Investigate mid-stagger would snap
+    /// him out of it.
+    /// </summary>
+    public void LureToNoise(Vector3 worldPoint)
+    {
+        if (IsPursuingPlayer || _state == GuardState.Dead || _state == GuardState.Stagger)
+            return;
+
+        // Already stood at the decoy scanning: top the dwell up so he keeps searching around it rather
+        // than restarting the walk-in.
+        if (_state == GuardState.Investigate && _investigateDwellEndTime > 0f
+            && (worldPoint - _investigatePoint).sqrMagnitude
+                <= investigateArrivalDistance * investigateArrivalDistance)
+        {
+            _investigateDwellEndTime = Time.time + investigateDwellSeconds;
+            return;
+        }
+
+        // Order matters: EnterInvestigate resets the override, so arm it afterwards.
+        EnterInvestigate(worldPoint);
+        _lureSpeedOverride = Mathf.Max(0.01f, chaseSpeed * 0.8f);
     }
 
     Vector3 UpdateInvestigate()
     {
-        _intendedMoveSpeed = patrolSpeed;
+        _intendedMoveSpeed = InvestigateMoveSpeed;
         if (!TrySnapToNavMesh() || navMeshAgent == null || !navMeshAgent.isOnNavMesh)
             return Vector3.zero;
 
@@ -855,7 +915,7 @@ public class SecurityGuardAI : MonoBehaviour
         if (_investigateDwellEndTime < 0f)
         {
             navMeshAgent.isStopped = false;
-            navMeshAgent.speed = patrolSpeed;
+            navMeshAgent.speed = InvestigateMoveSpeed;
             navMeshAgent.stoppingDistance = Mathf.Max(0.2f, investigateArrivalDistance * 0.8f);
 
             // Interval re-path only (see the chase-side comment: per-frame SetDestination stalls
@@ -873,13 +933,14 @@ public class SecurityGuardAI : MonoBehaviour
                 || Time.time >= _investigateAbortTime;
             if (!arrived)
             {
-                Vector3 approachVelocity = ClampedDesiredVelocity(patrolSpeed);
+                Vector3 approachVelocity = ClampedDesiredVelocity(InvestigateMoveSpeed);
                 _intendedMoveSpeed = approachVelocity.magnitude;
                 return approachVelocity;
             }
 
             navMeshAgent.isStopped = true;
             navMeshAgent.ResetPath();
+            _lureSpeedOverride = 0f; // arrived; scan at the normal unhurried pace
             _investigateDwellEndTime = Time.time + investigateDwellSeconds;
             _investigateScanNextTurnTime = 0f;
             return Vector3.zero;
@@ -1379,6 +1440,9 @@ public class SecurityGuardAI : MonoBehaviour
 
     bool TryLandMeleeTick(float damage, Vector3 committedDirection)
     {
+        if (IsBlinded)
+            return false; // the flash landed mid-strike; it whiffs
+
         if (!CanLandCommittedAttack(_targetHealth, committedDirection, meleeRange + attackHitRangePadding))
             return false;
 
@@ -1412,6 +1476,9 @@ public class SecurityGuardAI : MonoBehaviour
 
     bool TryLandHurricaneHit(Vector3 committedDirection)
     {
+        if (IsBlinded)
+            return false; // the flash landed mid-spin; it whiffs
+
         float reach = meleeRange + attackHitRangePadding + 0.6f; // the spin sweeps wider than a jab
         if (!CanLandCommittedAttack(_targetHealth, committedDirection, reach))
             return false;
@@ -1647,6 +1714,50 @@ public class SecurityGuardAI : MonoBehaviour
     /// runs on all peers. Only the server cross-fades the Death state; the ServerNetworkAnimator replicates that
     /// transition, exactly as it does the attack and stagger cross-fades.
     /// </summary>
+    /// <summary>True while a flashbang still has the guard blinded (server-side).</summary>
+    bool IsBlinded => EnemyBlindEffect.IsBlinded(ref _blindEffect, gameObject);
+
+    /// <summary>
+    /// One frame of the flashbang stumble. Footsteps are driven off the animated pose in LateUpdate on
+    /// every peer, so this only needs the movement and the animator parameters.
+    /// </summary>
+    void UpdateBlindWander()
+    {
+        Vector3 wander = _blindEffect != null
+            ? _blindEffect.TickWanderVelocity(transform, patrolSpeed)
+            : Vector3.zero;
+        _intendedMoveSpeed = wander.magnitude;
+        ApplyMovement(wander);
+        UpdateAnimatorParameters();
+    }
+
+    /// <summary>Flashbang caught him: abort the strike, forget the target and drop back to patrol.</summary>
+    public void OnFlashbangBlinded(float seconds)
+    {
+        if (_state == GuardState.Dead)
+            return;
+
+        if (_attackRoutine != null)
+        {
+            StopCoroutine(_attackRoutine);
+            _attackRoutine = null;
+        }
+
+        EndAttackDrive();
+        EndHurricaneCapsule();
+        ClearTarget();
+
+        if (navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh)
+        {
+            navMeshAgent.isStopped = true;
+            navMeshAgent.ResetPath();
+        }
+
+        _horizontalVelocity = Vector3.zero;
+        _nextAttackTime = Time.time + seconds;
+        EnterPatrol();
+    }
+
     public void HandleDeath()
     {
         if (_state == GuardState.Dead)

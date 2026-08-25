@@ -17,7 +17,7 @@ using UnityEditor;
 [RequireComponent(typeof(Animator))]
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(CharacterController))]
-public class ClownAI : MonoBehaviour
+public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 {
     enum ClownState
     {
@@ -256,6 +256,7 @@ public class ClownAI : MonoBehaviour
     float _nextSenseTime = -1f;
 
     ClownState _state;
+    EnemyBlindEffect _blindEffect;
     Transform _target;
     PlayerHealth _targetHealth;
     Vector3 _horizontalVelocity;
@@ -664,6 +665,13 @@ public class ClownAI : MonoBehaviour
         // The hammer swing no longer freezes the Clown — it keeps chasing while the swing plays so it can
         // attack on the run and land the hit on a fleeing player instead of stopping dead and whiffing.
         // UpdateAttacking drives the movement, the impact poll and the end-of-swing handoff itself.
+        // Flashbanged: no senses, no chase, no hammer — just stumble in circles until it wears off.
+        if (IsBlinded)
+        {
+            UpdateBlindWander();
+            return;
+        }
+
         if (_state == ClownState.Attacking)
         {
             UpdateAttacking();
@@ -1309,6 +1317,9 @@ public class ClownAI : MonoBehaviour
         if (d > voiceHearRadius)
             return;
 
+        if (IsLureHoldingAttention)
+            return; // a lure is still calling; a voice does not outrank it
+
         SetInvestigationPoint(voice.transform.position);
     }
 
@@ -1431,7 +1442,8 @@ public class ClownAI : MonoBehaviour
             return;
         }
 
-        if (hasSoundPoint)
+        // A sprint or a zombie only redirects him if no lure currently owns his attention.
+        if (hasSoundPoint && !IsLureHoldingAttention)
             SetInvestigationPoint(bestSoundPoint);
     }
 
@@ -1441,6 +1453,7 @@ public class ClownAI : MonoBehaviour
         _target = health.transform;
         _hasInvestigationPoint = false;
         _chaseLineOfSightLostSince = -1f;
+        _lureHoldUntil = 0f; // he has eyes on a player now; the lure's claim is void
     }
 
     void ClearTarget()
@@ -2200,6 +2213,8 @@ public class ClownAI : MonoBehaviour
     {
         if (!ShouldRunSimulation() || _hammerHitDone)
             return;
+        if (IsBlinded)
+            return; // the flash landed mid-swing; the hammer whiffs
 
         _hammerHitDone = true;
 
@@ -2410,6 +2425,40 @@ public class ClownAI : MonoBehaviour
     /// the meantime — so it stays on the player and clubs them again the moment they recover, instead of
     /// standing still or running in place.
     /// </summary>
+    /// <summary>True while a flashbang still has the Clown blinded (server-side).</summary>
+    bool IsBlinded => EnemyBlindEffect.IsBlinded(ref _blindEffect, gameObject);
+
+    /// <summary>One frame of the flashbang stumble — movement, footsteps and animator only.</summary>
+    void UpdateBlindWander()
+    {
+        Vector3 wander = _blindEffect != null
+            ? _blindEffect.TickWanderVelocity(transform, patrolSpeed)
+            : Vector3.zero;
+        _intendedMoveSpeed = wander.magnitude;
+        ApplyMovement(wander);
+        HandleClownFootsteps();
+        UpdateAnimatorParameters();
+    }
+
+    /// <summary>
+    /// Flashbang caught it: end any swing in progress (which also clears the attack target and the
+    /// late-join animation snapshot), forget the player and the lure, and fall back to patrol.
+    /// </summary>
+    public void OnFlashbangBlinded(float seconds)
+    {
+        if (_state == ClownState.Dead)
+            return;
+
+        if (_state == ClownState.Attacking)
+            EndSwing();
+
+        ClearTarget();
+        _hasInvestigationPoint = false;
+        _lureMonkey = null;
+        _suppressAttackAndChaseUntil = Mathf.Max(_suppressAttackAndChaseUntil, Time.time + seconds);
+        EnterPatrol();
+    }
+
     void EndSwing()
     {
         _suppressAttackAndChaseUntil = Time.time + Mathf.Max(0.25f, postAttackCooldownSeconds);
@@ -2444,16 +2493,50 @@ public class ClownAI : MonoBehaviour
         _investigationLingerEndTime = 0f;
         _hasInvestigationSearchDestination = false;
         _investigationSearchDestination = Vector3.zero;
+        // Run speed belongs to the LURE (monkey clap / decoy), not to investigating in general. Without
+        // this, one lure leaves him sprinting to every later noise he investigates, including a player's
+        // sprint - which reads as the lure item calling him straight onto you.
+        _investigationSpeedOverride = 0f;
     }
 
     // Approach speed used while Investigating: the lure override (run) if set, else the normal patrol/search speed.
     float InvestigationMoveSpeed => _investigationSpeedOverride > 0.01f ? _investigationSpeedOverride : patrolSpeed;
+
+    /// <summary>Slightly longer than the decoy pulse interval, so a live decoy holds continuously.</summary>
+    const float LureHoldSeconds = 2.5f;
+
+    float _lureHoldUntil;
+
+    /// <summary>
+    /// True while a lure (decoy grenade or monkey clap) has a live claim on his attention. Ordinary
+    /// noise — a sprint, a zombie, a voice — must NOT steal the investigation point from it, otherwise
+    /// throwing a decoy and then running hands him your exact position. Actually SEEING a player still
+    /// overrides everything: that goes through AssignTarget into Chase, never the sound paths.
+    /// </summary>
+    bool IsLureHoldingAttention => Time.time < _lureHoldUntil;
 
     /// <summary>
     /// Public command (used by the wind-up monkey's clap) to make the Clown RUN to a world position, no matter
     /// how far away he is. Won't pull him off a player he's actively chasing/attacking. If he's already lingering
     /// at that spot, just refreshes the linger so he keeps hanging around the monkey.
     /// </summary>
+    // ----- ILurableEnemy (decoy grenade) -----
+
+    /// <summary>Chasing or mid-swing: a decoy must not pull him off a player he already has.</summary>
+    public bool IsPursuingPlayer => _state == ClownState.Chase || _state == ClownState.Attacking;
+
+    public Vector3 LureListenPosition => transform.position;
+
+    /// <summary>
+    /// A decoy grenade went off within earshot. Same handling as the wind-up monkey's clap, minus the
+    /// monkey to club afterwards — <see cref="LureToPosition"/> already refuses while chasing and
+    /// refreshes the linger if he is standing on the spot.
+    /// </summary>
+    public void LureToNoise(Vector3 worldPoint)
+    {
+        LureToPosition(worldPoint);
+    }
+
     public void LureToPosition(Vector3 worldPoint, WindupMonkeyAI monkey = null)
     {
         if (_state == ClownState.Chase || _state == ClownState.Attacking)
@@ -2461,6 +2544,10 @@ public class ClownAI : MonoBehaviour
 
         // Track the monkey behind this lure so the Clown can club it over once it arrives (ShouldSmashMonkey).
         _lureMonkey = monkey;
+
+        // Claim his attention on BOTH paths below, so it is refreshed even once he has arrived and is
+        // only topping up his linger.
+        _lureHoldUntil = Time.time + LureHoldSeconds;
 
         if (_state == ClownState.Investigating && _isLingerAtInvestigationPoint
             && (worldPoint - _investigationPoint).sqrMagnitude
@@ -2470,8 +2557,9 @@ public class ClownAI : MonoBehaviour
             return;
         }
 
-        _investigationSpeedOverride = Mathf.Max(0.01f, runSpeed);
+        // Order matters: SetInvestigationPoint clears the override, so arm it afterwards.
         SetInvestigationPoint(worldPoint);
+        _investigationSpeedOverride = Mathf.Max(0.01f, runSpeed);
         EnterInvestigating();
     }
 

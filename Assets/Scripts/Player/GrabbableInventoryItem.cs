@@ -24,6 +24,8 @@ public class GrabbableInventoryItem : MonoBehaviour
     public const byte TypeIdFlareGun = 10;
     public const byte TypeIdFlareAmmo = 11;
     public const byte TypeIdSword = 12;
+    public const byte TypeIdFlashbang = 13;
+    public const byte TypeIdDecoyGrenade = 14;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -168,7 +170,10 @@ public class GrabbableInventoryItem : MonoBehaviour
     /// </summary>
     public static bool IsStackableTypeId(byte typeId)
     {
-        return typeId == TypeIdGlowstick || typeId == TypeIdFlareAmmo;
+        return typeId == TypeIdGlowstick
+            || typeId == TypeIdFlareAmmo
+            || typeId == TypeIdFlashbang
+            || typeId == TypeIdDecoyGrenade;
     }
 
     // Renamed to invalidate one-time cached disc sprites if placeholder art changes.
@@ -185,6 +190,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhFlareGun;
     static Sprite s_hudPhFlareAmmo;
     static Sprite s_hudPhSword;
+    static Sprite s_hudPhFlashbang;
 
     /// <summary>Inspector <see cref="_slotIcon"/> if set; otherwise a simple circular runtime glyph (transparent outside the disk).</summary>
     public Sprite GetEffectiveSlotIconForHud()
@@ -219,6 +225,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdFlareAmmo;
         if (GetComponent<SwordItem>() != null)
             return TypeIdSword;
+        if (GetComponent<FlashbangItem>() != null)
+            return TypeIdFlashbang;
         if (GetComponent<RingTossItem>() != null)
             return _itemTypeId != TypeIdNone ? _itemTypeId : TypeIdRingBlue;
         if (GetComponent<StarBallItem>() != null)
@@ -242,6 +250,7 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdFlareGun => FlareGunItem.SharedHudSlotIcon ?? (s_hudPhFlareGun ??= CreatePlaceholderSprite(0.95f, 0.32f, 0.12f)),
             TypeIdFlareAmmo => FlareAmmoItem.SharedHudSlotIcon ?? (s_hudPhFlareAmmo ??= CreatePlaceholderSprite(0.9f, 0.6f, 0.18f)),
             TypeIdSword => SwordItem.SharedHudSlotIcon ?? (s_hudPhSword ??= CreatePlaceholderSprite(0.72f, 0.74f, 0.78f)),
+            TypeIdFlashbang => FlashbangItem.SharedHudSlotIcon ?? (s_hudPhFlashbang ??= CreatePlaceholderSprite(0.86f, 0.88f, 0.95f)),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
     }

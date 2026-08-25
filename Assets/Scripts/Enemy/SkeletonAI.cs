@@ -22,7 +22,7 @@ using UnityEngine.AI;
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(CharacterController))]
-public class SkeletonAI : MonoBehaviour
+public class SkeletonAI : MonoBehaviour, IBlindableEnemy
 {
     enum SkeletonState
     {
@@ -227,6 +227,7 @@ public class SkeletonAI : MonoBehaviour
     float _staggerImmuneUntil;
     float _nextRetaliationRollTime;
     Coroutine _actionRoutine;
+    EnemyBlindEffect _blindEffect;
     Vector3 _horizontalVelocity;
     Vector3 _verticalVelocity;
     bool _pitBlocked;
@@ -364,6 +365,13 @@ public class SkeletonAI : MonoBehaviour
 
         if (_state == SkeletonState.Dead)
             return;
+
+        // Flashbanged: no senses, no chase, no throw, no bash — just stumble in circles until it wears off.
+        if (IsBlinded)
+        {
+            UpdateBlindWander();
+            return;
+        }
 
         if (_poise < maxPoise && Time.time >= _poiseRegenBlockedUntil)
             _poise = Mathf.Min(maxPoise, _poise + poiseRegenPerSecond * Time.deltaTime);
@@ -916,6 +924,9 @@ public class SkeletonAI : MonoBehaviour
 
     void ApplyBashHit(PlayerHealth targetHealth, Vector3 committedDirection)
     {
+        if (IsBlinded)
+            return; // the flash landed mid-swing; the bash whiffs
+
         targetHealth.TakeDamage(bashDamage);
 
         Vector3 pushVel = committedDirection * bashPushHorizontalSpeed;
@@ -989,6 +1000,44 @@ public class SkeletonAI : MonoBehaviour
         // While stagger-immune it powers through hits without even flinching.
         if (!staggerImmune)
             PlayFlinch();
+    }
+
+    /// <summary>True while a flashbang still has this skeleton blinded (server-side).</summary>
+    bool IsBlinded => EnemyBlindEffect.IsBlinded(ref _blindEffect, gameObject);
+
+    /// <summary>
+    /// One frame of the flashbang stumble. Footsteps already ran at the top of Update (they run on every
+    /// peer), so this only needs the movement and the animator.
+    /// </summary>
+    void UpdateBlindWander()
+    {
+        Vector3 wander = _blindEffect != null
+            ? _blindEffect.TickWanderVelocity(transform, walkSpeed)
+            : Vector3.zero;
+        ApplyMovement(wander);
+        UpdateAnimatorParameters();
+    }
+
+    /// <summary>Flashbang caught it: abort the throw/bash, forget the target and drop back to Idle.</summary>
+    public void OnFlashbangBlinded(float seconds)
+    {
+        if (_state == SkeletonState.Dead)
+            return;
+
+        if (_actionRoutine != null)
+        {
+            StopCoroutine(_actionRoutine);
+            _actionRoutine = null;
+        }
+
+        SetHeldSkullHidden(false); // restore the skull if a throw was interrupted
+
+        ClearTarget();
+        StopNavigation();
+        _horizontalVelocity = Vector3.zero;
+        _state = SkeletonState.Idle;
+        _nextBashTime = Time.time + seconds;
+        _nextThrowTime = Mathf.Max(_nextThrowTime, Time.time + seconds);
     }
 
     /// <summary>The earned full-body stagger — resets poise and starts the stagger-immunity window.</summary>

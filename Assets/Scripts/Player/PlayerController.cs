@@ -593,6 +593,7 @@ public partial class PlayerController : MonoBehaviour
         if (_runtimeInputActions != null)
             Destroy(_runtimeInputActions);
         UnhookCarnivalTickets();
+        DestroyFlashbangOverlay();
     }
 
     void Update()
@@ -1605,6 +1606,10 @@ public partial class PlayerController : MonoBehaviour
         // Taking-damage feedback (hurt jolt + thud + low-health heartbeat). Watches replicated health, so it
         // must tick before the kick pump below applies this frame's offsets.
         TickHurtFeedback();
+
+        // Flashbang whiteout. Beside the hurt feedback for the same reason: it is a screen effect that has to
+        // keep running while control is lost (ragdolled, carried), not something gated on being able to move.
+        TickFlashbangBlind();
 
         // Directional melee recoil kick (fired from the hit-SFX methods on connect). Before the early-returns so
         // it always springs back to center even if control is momentarily lost mid-recovery.
@@ -2684,17 +2689,26 @@ public partial class PlayerController : MonoBehaviour
     }
 
     // Attack (left click) behaves two ways:
-    //  - Holding a heavy throwable: press starts charging, holding fills the charge, release throws
-    //    with distance scaled by how long it was held. A charged release never falls through to melee.
+    //  - Holding something throwable — a carried heavy throwable, or a selected flashbang: press starts
+    //    charging, holding fills the charge, release throws with distance scaled by how long it was held.
+    //    A charged release never falls through to melee.
     //  - Otherwise: a press performs a melee, exactly as before.
     void HandleAttackInput(bool pressed, bool released, bool held)
     {
         bool holdingThrowable = IsHoldingHeavyThrowable();
+        // A carried heavy throwable stashes the hotbar, so the two can never both be live; checking it
+        // first keeps that precedence explicit.
+        bool holdingFlashbang = !holdingThrowable && HasSelectedFlashbang();
+        // Third charge source, same gesture. Only one hotbar slot is selected at a time so these are
+        // mutually exclusive by construction; the explicit ordering just makes the precedence readable.
+        bool holdingDecoy = !holdingThrowable && !holdingFlashbang && HasSelectedDecoyGrenade();
 
-        if (pressed && holdingThrowable)
+        if (pressed && (holdingThrowable || holdingFlashbang || holdingDecoy))
         {
             _isChargingThrow = true;
             _throwChargeTimer = 0f;
+            _chargingFlashbangThrow = holdingFlashbang;
+            _chargingDecoyThrow = holdingDecoy;
         }
         else if (pressed && !_isChargingThrow)
         {
@@ -2709,8 +2723,12 @@ public partial class PlayerController : MonoBehaviour
         if (!_isChargingThrow)
             return;
 
-        // Throwable was dropped, stolen, or otherwise lost mid-charge: abort cleanly, no throw.
-        if (!holdingThrowable)
+        // Throwable was dropped, stolen, thrown out of the slot, or otherwise lost mid-charge: abort
+        // cleanly, no throw.
+        bool lostChargedItem = _chargingFlashbangThrow ? !holdingFlashbang
+            : _chargingDecoyThrow ? !holdingDecoy
+            : !holdingThrowable;
+        if (lostChargedItem)
         {
             CancelThrowCharge();
             return;
@@ -2722,9 +2740,18 @@ public partial class PlayerController : MonoBehaviour
         if (released)
         {
             float charge01 = ThrowChargeNormalized;
+            bool wasFlashbang = _chargingFlashbangThrow;
+            bool wasDecoy = _chargingDecoyThrow;
             _isChargingThrow = false;
             _throwChargeTimer = 0f;
-            TryShootHeldHeavyThrowable(charge01);
+            _chargingFlashbangThrow = false;
+            _chargingDecoyThrow = false;
+            if (wasFlashbang)
+                ThrowSelectedFlashbang(charge01);
+            else if (wasDecoy)
+                ThrowSelectedDecoyGrenade(charge01);
+            else
+                TryShootHeldHeavyThrowable(charge01);
         }
     }
 
@@ -2734,6 +2761,8 @@ public partial class PlayerController : MonoBehaviour
             return;
         _isChargingThrow = false;
         _throwChargeTimer = 0f;
+        _chargingFlashbangThrow = false;
+        _chargingDecoyThrow = false;
         if (_throwChargeBarRoot != null && _throwChargeBarRoot.activeSelf)
             _throwChargeBarRoot.SetActive(false);
     }

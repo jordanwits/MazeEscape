@@ -21,7 +21,7 @@ using UnityEngine.AI;
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
-public class RatBotAI : NetworkBehaviour
+public class RatBotAI : NetworkBehaviour, IBlindableEnemy
 {
     enum RatBotState : byte
     {
@@ -187,6 +187,7 @@ public class RatBotAI : NetworkBehaviour
 
     // stalking target
     PlayerHealth _stalkTarget;
+    EnemyBlindEffect _blindEffect;
     int _rolledCreepGait = LocomotionSneakLeft; // the crawl/sneak chosen this burst; sprint overrides it live
     Vector3 _targetLastPos;
     bool _hasTargetLastPos;
@@ -316,6 +317,14 @@ public class RatBotAI : NetworkBehaviour
         if (!ShouldSimulate)
         {
             ClientReapplyFreezeFrame();
+            return;
+        }
+
+        // Flashbanged: no stalking, no contact grab — just stumble in circles until it wears off. A pounce
+        // already in flight is deliberately exempt (see IsBlinded) so a victim can never be left mid-throw.
+        if (IsBlinded)
+        {
+            UpdateBlindWander();
             return;
         }
 
@@ -674,6 +683,34 @@ public class RatBotAI : NetworkBehaviour
         _nextRepathTime = 0f;
         SetLocomotion(LocomotionSprint); // sprint away
         SetState(RatBotState.Fleeing);
+    }
+
+    /// <summary>
+    /// True while a flashbang has him blinded. A committed pounce is exempt: interrupting one mid-throw
+    /// would strand the player it is carrying, so the blind only takes hold once the pounce resolves (and
+    /// only if the timer has not already run out by then).
+    /// </summary>
+    bool IsBlinded => _state != RatBotState.Pouncing
+        && EnemyBlindEffect.IsBlinded(ref _blindEffect, gameObject);
+
+    /// <summary>One frame of the flashbang stumble; the crawl clip set in OnFlashbangBlinded plays under it.</summary>
+    void UpdateBlindWander()
+    {
+        Vector3 wander = _blindEffect != null
+            ? _blindEffect.TickWanderVelocity(transform, crawlSpeed)
+            : Vector3.zero;
+        ApplyMotion(wander);
+    }
+
+    /// <summary>Flashbang caught him: drop the stalk, go dormant and crawl blindly.</summary>
+    public void OnFlashbangBlinded(float seconds)
+    {
+        if (_state == RatBotState.Pouncing)
+            return; // see IsBlinded — never interrupt a throw in progress
+
+        _stalkTarget = null;
+        GoDormant();
+        SetLocomotion(LocomotionCrawl);
     }
 
     void GoDormant()

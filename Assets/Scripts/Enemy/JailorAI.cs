@@ -13,7 +13,7 @@ using UnityEditor;
 [RequireComponent(typeof(Animator))]
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(CharacterController))]
-public class JailorAI : MonoBehaviour
+public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 {
     enum JailorState
     {
@@ -257,6 +257,7 @@ public class JailorAI : MonoBehaviour
     float _nextSenseTime = -1f;
 
     JailorState _state;
+    EnemyBlindEffect _blindEffect;
     Transform _target;
     PlayerHealth _targetHealth;
     NetworkPlayerAvatar _carriedAvatar;
@@ -517,6 +518,7 @@ public class JailorAI : MonoBehaviour
         _investigationLingerEndTime = 0f;
         _hasInvestigationSearchDestination = false;
         _investigationSearchDestination = Vector3.zero;
+        _investigationSpeedOverride = 0f;
     }
 
     /// <summary>Used by <see cref="JailCellDoorTripwire"/> so the wire does not fire while the Jailor brings a prisoner in or is still in the delivery sequence.</summary>
@@ -803,6 +805,14 @@ public class JailorAI : MonoBehaviour
     {
         if (!ShouldRunSimulation())
             return;
+
+        // Flashbanged: no senses, no chase, no grab — just stumble in circles until it wears off. Anyone
+        // he was carrying was already put down by OnFlashbangBlinded.
+        if (IsBlinded)
+        {
+            UpdateBlindWander();
+            return;
+        }
 
         RecoverNavMeshIfOffMesh();
         UpdatePitStuckWatchdog();
@@ -1582,6 +1592,9 @@ public class JailorAI : MonoBehaviour
 
     void EnterGrabbing()
     {
+        if (IsBlinded)
+            return; // blinded: he cannot find anyone to grab
+
         _state = JailorState.Grabbing;
         _grabAttachCompleted = false;
         _enteredCarrying = false;
@@ -2225,6 +2238,35 @@ public class JailorAI : MonoBehaviour
         return true;
     }
 
+    /// <summary>True while a flashbang still has the Jailor blinded (server-side).</summary>
+    bool IsBlinded => EnemyBlindEffect.IsBlinded(ref _blindEffect, gameObject);
+
+    /// <summary>One frame of the flashbang stumble — movement, footsteps and animator only.</summary>
+    void UpdateBlindWander()
+    {
+        Vector3 wander = _blindEffect != null
+            ? _blindEffect.TickWanderVelocity(transform, patrolSpeed)
+            : Vector3.zero;
+        _intendedMoveSpeed = wander.magnitude;
+        ApplyMovement(wander);
+        HandleJailorFootsteps();
+        UpdateAnimatorParameters();
+    }
+
+    /// <summary>
+    /// Flashbang caught him: whoever he was carrying goes down (the flash is the counter-play to being
+    /// hauled to the cells), the target and search point are forgotten, and he falls back to patrol.
+    /// </summary>
+    public void OnFlashbangBlinded(float seconds)
+    {
+        ReleaseCarriedPlayerIfNeeded(); // no-ops unless he is grabbing / carrying / delivering
+
+        ClearTarget();
+        _hasInvestigationPoint = false;
+        _suppressChaseUntil = Mathf.Max(_suppressChaseUntil, Time.time + seconds);
+        EnterPatrol();
+    }
+
     void ReleaseCarriedPlayerIfNeeded()
     {
         if (!ShouldRunSimulation())
@@ -2327,6 +2369,9 @@ public class JailorAI : MonoBehaviour
 
         if (Time.time < _suppressChaseUntil)
             return;
+
+        if (IsLureHoldingAttention)
+            return; // a decoy is still calling; a voice does not outrank it
 
         SetInvestigationPoint(voice.transform.position);
     }
@@ -2453,7 +2498,8 @@ public class JailorAI : MonoBehaviour
             return;
         }
 
-        if (hasSoundPoint)
+        // A sprint or a zombie only redirects him if no decoy currently owns his attention.
+        if (hasSoundPoint && !IsLureHoldingAttention)
             SetInvestigationPoint(bestSoundPoint);
     }
 
@@ -2463,6 +2509,7 @@ public class JailorAI : MonoBehaviour
         _target = health.transform;
         _hasInvestigationPoint = false;
         _chaseLineOfSightLostSince = -1f;
+        _lureHoldUntil = 0f; // he has eyes on a player now; the decoy's claim is void
     }
 
     void ClearTarget()
@@ -2743,6 +2790,74 @@ public class JailorAI : MonoBehaviour
         _investigationLingerEndTime = 0f;
         _hasInvestigationSearchDestination = false;
         _investigationSearchDestination = Vector3.zero;
+        // Run speed belongs to the LURE, not to investigating in general. Every other caller of this
+        // (heard a sprint, heard a zombie, lost a chase target) must go back to walking pace, or a decoy
+        // thrown earlier leaves him sprinting to the player's sprint noise forever after.
+        _investigationSpeedOverride = 0f;
+    }
+
+    // ----- ILurableEnemy (decoy grenade) -----
+
+    /// <summary>
+    /// Set by a decoy lure so he RUNS to the noise instead of strolling. Cleared the moment he arrives,
+    /// so the linger/search that follows happens at the normal unhurried patrol pace. Mirrors the Clown.
+    /// </summary>
+    float _investigationSpeedOverride;
+
+    /// <summary>Approach speed while Investigating: the lure override if one is set, else normal patrol.</summary>
+    float InvestigationMoveSpeed => _investigationSpeedOverride > 0.01f ? _investigationSpeedOverride : patrolSpeed;
+
+    /// <summary>Slightly longer than the decoy pulse interval, so a live decoy holds continuously.</summary>
+    const float LureHoldSeconds = 2.5f;
+
+    float _lureHoldUntil;
+
+    /// <summary>
+    /// True while a decoy has a live claim on his attention. Ordinary noise — a sprint, a zombie, a
+    /// voice — must NOT steal the investigation point from a decoy that is still calling, otherwise
+    /// throwing one and then running hands him your exact position and the item works backwards.
+    /// Actually SEEING a player still overrides everything: that goes through AssignTarget into Chase,
+    /// never through the sound paths this gates.
+    /// </summary>
+    bool IsLureHoldingAttention => Time.time < _lureHoldUntil;
+
+    /// <summary>
+    /// Chasing, grabbing, carrying or delivering: all of these are "he already has a player", and a decoy
+    /// must not rescue them. Delivery counts — he is mid-errand with a prisoner and interrupting it would
+    /// strand the carry state machine.
+    /// </summary>
+    public bool IsPursuingPlayer =>
+        _state == JailorState.Chase
+        || _state == JailorState.Grabbing
+        || _state == JailorState.Carrying
+        || _state == JailorState.JailDelivery;
+
+    public Vector3 LureListenPosition => transform.position;
+
+    /// <summary>A decoy grenade went off within earshot — run to it and search around for a while.</summary>
+    public void LureToNoise(Vector3 worldPoint)
+    {
+        if (IsPursuingPlayer)
+            return;
+
+        // Claim his attention first, on BOTH paths below, so the claim is refreshed even once he has
+        // arrived and is only topping up his linger.
+        _lureHoldUntil = Time.time + LureHoldSeconds;
+
+        // Already loitering on the spot: just top the linger up so he keeps milling around the decoy
+        // rather than restarting the walk-in from wherever he happens to be standing.
+        if (_state == JailorState.Investigating && _isLingerAtInvestigationPoint
+            && (worldPoint - _investigationPoint).sqrMagnitude
+                <= investigationArrivalDistance * investigationArrivalDistance)
+        {
+            _investigationLingerEndTime = Time.time + Mathf.Max(0f, investigationLingerSeconds);
+            return;
+        }
+
+        // Order matters: SetInvestigationPoint clears the override, so arm it afterwards.
+        SetInvestigationPoint(worldPoint);
+        _investigationSpeedOverride = Mathf.Max(0.01f, runSpeed);
+        EnterInvestigating();
     }
 
     void EnterInvestigating()
@@ -2751,14 +2866,14 @@ public class JailorAI : MonoBehaviour
             _state = JailorState.Investigating;
         _chaseLineOfSightLostSince = -1f;
 
-        _intendedMoveSpeed = patrolSpeed;
+        _intendedMoveSpeed = InvestigationMoveSpeed;
         if (!TrySnapToNavMesh())
             return;
         if (navMeshAgent == null || !navMeshAgent.isOnNavMesh)
             return;
 
         navMeshAgent.isStopped = false;
-        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.speed = InvestigationMoveSpeed;
         navMeshAgent.stoppingDistance = Mathf.Max(0.2f, investigationArrivalDistance);
         if (_isLingerAtInvestigationPoint)
         {
@@ -2770,12 +2885,12 @@ public class JailorAI : MonoBehaviour
 
     Vector3 UpdateInvestigating()
     {
-        _intendedMoveSpeed = patrolSpeed;
+        _intendedMoveSpeed = InvestigationMoveSpeed;
         if (!_hasInvestigationPoint || !TrySnapToNavMesh() || navMeshAgent == null || !navMeshAgent.isOnNavMesh)
             return Vector3.zero;
 
         navMeshAgent.isStopped = false;
-        navMeshAgent.speed = patrolSpeed;
+        navMeshAgent.speed = InvestigationMoveSpeed;
         navMeshAgent.stoppingDistance = Mathf.Max(0.2f, investigationArrivalDistance);
 
         if (_isLingerAtInvestigationPoint)
@@ -2852,17 +2967,19 @@ public class JailorAI : MonoBehaviour
         {
             _isLingerAtInvestigationPoint = true;
             _investigationLingerEndTime = Time.time + Mathf.Max(0f, investigationLingerSeconds);
+            _investigationSpeedOverride = 0f; // arrived; linger/search at the normal patrol pace
             navMeshAgent.isStopped = true;
             navMeshAgent.ResetPath();
             return Vector3.zero;
         }
 
+        float approachSpeed = InvestigationMoveSpeed;
         Vector3 desiredVelocity = navMeshAgent.velocity.sqrMagnitude > 0.0001f
             ? navMeshAgent.velocity
             : navMeshAgent.desiredVelocity;
         desiredVelocity.y = 0f;
-        if (desiredVelocity.sqrMagnitude > patrolSpeed * patrolSpeed)
-            desiredVelocity = desiredVelocity.normalized * patrolSpeed;
+        if (desiredVelocity.sqrMagnitude > approachSpeed * approachSpeed)
+            desiredVelocity = desiredVelocity.normalized * approachSpeed;
         return desiredVelocity;
     }
 
