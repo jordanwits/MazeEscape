@@ -135,7 +135,8 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] float meleeRange = 2f;
     [Tooltip("Angle in degrees for the melee cone (half-angle from center).")]
     [SerializeField] float meleeAngle = 60f;
-    [Tooltip("Layer mask for detecting enemies. Defaults to 'Enemy' layer if empty.")]
+    [Tooltip("Layer mask for detecting enemies. Defaults to the 'Enemy' layer if empty. The 'Clown' " +
+             "layer is always added on top of whatever is set here — see MeleeOverlapMask.")]
     [SerializeField] LayerMask enemyMask;
     [Tooltip("Delay in seconds before damage is applied (sync with animation hit frame).")]
     [SerializeField] float meleeHitDelay = 0.25f;
@@ -329,6 +330,7 @@ public partial class PlayerController : MonoBehaviour
     readonly HashSet<BomberHealth> _meleeHitBombers = new();
     bool _meleeHitSkeletonThisSwing;
     const string EnemyLayerName = "Enemy";
+    const string ClownLayerName = "Clown";
     NetworkPlayerCombat _networkPlayerCombat;
     NetworkPlayerAvatar _networkPlayerAvatar;
     PlayerRagdollController _ragdollController;
@@ -2878,6 +2880,27 @@ public partial class PlayerController : MonoBehaviour
             PlayMeleeHitSfx();
     }
 
+    /// <summary>
+    /// Layers the melee overlap sphere tests against. The Clown layer is OR'd in unconditionally: ClownAI
+    /// moves him onto his own "Clown" layer so he does not shove the other enemies around, which is a
+    /// collision concern and not a damage one. With only the "Enemy" bit set the OverlapSphere never
+    /// returned him at all, so neither a punch nor a sword swing could touch him — only the flare, which
+    /// casts against every layer, ever did any damage.
+    /// </summary>
+    int MeleeOverlapMask
+    {
+        get
+        {
+            int mask = enemyMask.value == 0 ? Physics.DefaultRaycastLayers : enemyMask.value;
+
+            int clownLayer = LayerMask.NameToLayer(ClownLayerName);
+            if (clownLayer >= 0)
+                mask |= 1 << clownLayer;
+
+            return mask;
+        }
+    }
+
     bool ApplyMeleeDamageLocally()
     {
         Vector3 origin = transform.position;
@@ -2889,7 +2912,7 @@ public partial class PlayerController : MonoBehaviour
         float coneAngle = ActiveMeleeAngle;
         float damageFraction = ActiveMeleeDamageFraction;
 
-        int mask = enemyMask.value == 0 ? Physics.DefaultRaycastLayers : enemyMask.value;
+        int mask = MeleeOverlapMask;
         int hitCount = Physics.OverlapSphereNonAlloc(origin, range, _meleeHits, mask, QueryTriggerInteraction.Ignore);
 
         bool damagedAny = false;
