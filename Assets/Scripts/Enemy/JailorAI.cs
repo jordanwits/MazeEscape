@@ -113,6 +113,22 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         + "Keep modest: very large values effectively open from far away; jail doors are chosen by preferring Jail Cell Start Unlocked hinge doors in the carry subtree.")]
     [SerializeField]
     float jailDoorPremptiveOpenDistance = 7f;
+    [Tooltip(
+        "Distance (m, measured to the door object) at which a carry hands off to the delivery sequence when the cell "
+        + "door is not already open and idle. The drop marker sits behind the leaf, so the walk-in can never finish "
+        + "against a shut door — he stops here, opens it, then walks the rest of the way in.")]
+    [SerializeField]
+    float jailDoorApproachHandoffDistance = 2.6f;
+    [Tooltip(
+        "Standoff (m) added to his own capsule radius when clearing the cell door leaf's swing arc. A leaf opening "
+        + "into him sweeps him against the wall behind and he cannot push it back.")]
+    [SerializeField, Min(0f)] float jailDoorSwingClearance = 0.25f;
+    [Tooltip("Speed (m/s) of the step back out of the cell door's swing arc.")]
+    [SerializeField, Min(0.1f)] float jailDoorBackOffSpeed = 2f;
+    [Tooltip(
+        "Give up on a cell door that never reaches open-and-idle after this long and drop the prisoner where he "
+        + "stands — the release teleports them onto the drop marker and seals them either way.")]
+    [SerializeField, Min(0.5f)] float jailDoorOpenWaitMaxSeconds = 4f;
     [Tooltip("After dropping a prisoner, the Jailor walks this far past the jail door before returning to patrol.")]
     [SerializeField] float jailExitDistance = 3.25f;
     [SerializeField] float jailExitArrivalDistance = 0.85f;
@@ -347,6 +363,16 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
     Vector3 _jailExitDestination;
     bool _hasJailExitDestination;
     float _jailExitStartedTime;
+    bool _resumeCarryWhenJailDoorOpens;
+    float _jailDoorOpenWaitStartedTime;
+    float _nextJailDoorHandoffAllowedTime;
+    Vector3 _jailDoorSwingCenter;
+    float _jailDoorSwingRadius;
+    bool _hasJailDoorSwingSweep;
+    bool _faceJailDoorWhileClearingSwing;
+    static readonly List<Collider> s_jailDoorColliderScratch = new();
+    /// <summary>Keeps the at-door hand-off from re-firing on the carry it just handed back.</summary>
+    const float JailDoorHandoffRetrySeconds = 1.25f;
 
     void Reset()
     {
@@ -806,6 +832,8 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (!ShouldRunSimulation())
             return;
 
+        _faceJailDoorWhileClearingSwing = false;
+
         // Flashbanged: no senses, no chase, no grab — just stumble in circles until it wears off. Anyone
         // he was carrying was already put down by OnFlashbangBlinded.
         if (IsBlinded)
@@ -1064,6 +1092,12 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             return false;
         if (_state == JailorState.Grabbing || _state == JailorState.JailDelivery)
             return false;
+        // Recovery disables the CharacterController and hard-writes the root metres along the path, which at a shut
+        // or still-swinging leaf means straight through it with a prisoner in his arms. An open, settled leaf has
+        // nothing to phase through, and his capsule snagging on the jamb on the way in needs the warp to come free —
+        // carrying has no timeout, so suppressing it there is an unbounded grind with the prisoner immobilised.
+        if (_state == JailorState.Carrying && !IsJailCellDoorOpenAndIdle() && IsNearJailCellDoor())
+            return false;
         if (IsNearLockedClosedJailDoor())
             return false;
         return true;
@@ -1074,7 +1108,19 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (jailCellDoor == null || !jailCellDoor.IsJailCellStyleEntry || !jailCellDoor.IsLocked || jailCellDoor.IsOpen)
             return false;
 
-        Vector3 door = jailCellDoor.IdentityHintPosition;
+        return IsNearJailCellDoor();
+    }
+
+    /// <summary>Resolved cell door standing open with its leaf at rest — nothing a recovery warp could pass through.</summary>
+    bool IsJailCellDoorOpenAndIdle() => jailCellDoor != null && jailCellDoor.JailorDoorIsOpenAndIdle();
+
+    /// <summary>Within the prop-stuck nudge radius of the resolved cell door (live transform, whatever its state).</summary>
+    bool IsNearJailCellDoor()
+    {
+        if (jailCellDoor == null || !jailCellDoor.IsJailCellStyleEntry)
+            return false;
+
+        Vector3 door = jailCellDoor.transform.position;
         door.y = transform.position.y;
         float guardRadius = Mathf.Max(2.25f, propStuckNudgeMaxRadius + 0.75f);
         return (transform.position - door).sqrMagnitude <= guardRadius * guardRadius;
@@ -1849,12 +1895,33 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
         Vector3 flatSelf = transform.position;
         flatSelf.y = 0f;
-        if (jailCellDoor != null && !jailCellDoor.IsOpen && carryDestination != null)
+        float horizToDoor = float.PositiveInfinity;
+        if (jailCellDoor != null && carryDestination != null)
         {
-            Vector3 flatDoor = jailCellDoor.IdentityHintPosition;
+            Vector3 flatDoor = jailCellDoor.transform.position;
             flatDoor.y = 0f;
-            if (Vector3.Distance(flatSelf, flatDoor) <= jailDoorPremptiveOpenDistance)
-                jailCellDoor.ServerJailorOpenForEntry();
+            horizToDoor = Vector3.Distance(flatSelf, flatDoor);
+        }
+
+        // A locked cell already holds a prisoner, and unlocking it from across the room hands them the whole
+        // approach as an escape window. That door is only opened at the doorway, by the delivery sequence below.
+        if (jailCellDoor != null
+            && carryDestination != null
+            && !jailCellDoor.IsOpen
+            && !jailCellDoor.IsLocked
+            && horizToDoor <= jailDoorPremptiveOpenDistance)
+            jailCellDoor.ServerJailorOpenForEntry();
+
+        // Shut leaf ahead: the drop marker sits behind it, so the arrival test can never pass and the carry grinds
+        // into the door. Hand off at the door instead — the delivery opens it and hands the walk-in straight back.
+        if (jailCellDoor != null
+            && carryDestination != null
+            && !jailCellDoor.JailorDoorIsOpenAndIdle()
+            && Time.time >= _nextJailDoorHandoffAllowedTime
+            && horizToDoor <= Mathf.Max(0.5f, jailDoorApproachHandoffDistance))
+        {
+            EnterJailDelivery(jailCellDoor, resumeCarryAfterDoorOpens: true);
+            return Vector3.zero;
         }
 
         navMeshAgent.isStopped = false;
@@ -2024,7 +2091,12 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         ClearTarget();
     }
 
-    void EnterJailDelivery(HingeInteractDoor door)
+    /// <param name="resumeCarryAfterDoorOpens">
+    /// Set by the at-door hand-off: once the leaf is open he picks the carry back up and walks the prisoner to the
+    /// drop marker, so an occupied cell ends exactly like a first capture. A delivery that started at the marker
+    /// leaves this false and drops straight away.
+    /// </param>
+    void EnterJailDelivery(HingeInteractDoor door, bool resumeCarryAfterDoorOpens = false)
     {
         if (door == null)
         {
@@ -2039,6 +2111,9 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         _jailDropApplied = false;
         _hasJailExitDestination = false;
         _jailExitStartedTime = 0f;
+        _resumeCarryWhenJailDoorOpens = resumeCarryAfterDoorOpens;
+        _jailDoorOpenWaitStartedTime = Time.time;
+        _hasJailDoorSwingSweep = door.TryGetSwingSweep(out _jailDoorSwingCenter, out _jailDoorSwingRadius);
 
         if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
         {
@@ -2068,16 +2143,14 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         switch (_jailDeliveryPhase)
         {
             case JailDeliveryPhase.OpeningDoor:
-                _activeJailDoor.ServerJailorOpenForEntry();
-                if (_activeJailDoor.JailorDoorIsOpenAndIdle())
-                    _jailDeliveryPhase = JailDeliveryPhase.DroppingPlayer;
-                break;
+                return UpdateJailDoorOpening();
 
             case JailDeliveryPhase.DroppingPlayer:
                 if (!_jailDropApplied)
                 {
                     ApplyCarryDropRelease(false, sealDroppedPlayerAsJailPrisoner: true);
                     _jailDropApplied = true;
+                    NotifyJailTripwireOfCompletedDelivery();
                     if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
                     {
                         navMeshAgent.isStopped = false;
@@ -2094,6 +2167,152 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
         _intendedMoveSpeed = 0f;
         return Vector3.zero;
+    }
+
+    /// <summary>
+    /// The wire across the doorway only arms itself when he crosses it carrying, and a capture whose grab happened
+    /// INSIDE the cell never does — he only ever steps over it in a non-blocking state — so the drop has to start
+    /// the close, or the cell stands open and the capture is void. The wire still waits for him to clear it.
+    /// </summary>
+    void NotifyJailTripwireOfCompletedDelivery()
+    {
+        JailCellDoorTripwire wire = JailCellDoorTripwire.FindForDoor(_activeJailDoor);
+        if (wire != null)
+        {
+            wire.ServerNotifyJailorDeliveryCompleted();
+        }
+        else if (!_warnedMissingJailTripwire)
+        {
+            // Without the wire nothing closes the cell after an in-cell grab, so the misconfiguration must not be silent.
+            _warnedMissingJailTripwire = true;
+            Debug.LogWarning($"JailorAI: no JailCellDoorTripwire resolves to jail door '{(_activeJailDoor != null ? _activeJailDoor.name : "<null>")}' — the cell will not close after this delivery.", this);
+        }
+    }
+
+    bool _warnedMissingJailTripwire;
+
+    /// <summary>
+    /// Holds the prisoner at the cell door until the leaf is open and still. The open request only goes out while
+    /// the leaf still reads closed: repeating it on an already-open door kills the in-flight swing and replays it
+    /// immediately, so the server stands open in one frame while clients are still animating the previous swing.
+    /// While it moves he steps out of its swept disc, because a leaf opening into him pins him against the wall
+    /// behind it — he cannot push one back. Once it settles he either resumes the walk to the drop marker or drops
+    /// where he stands.
+    /// </summary>
+    Vector3 UpdateJailDoorOpening()
+    {
+        if (!_activeJailDoor.IsOpen)
+            _activeJailDoor.ServerJailorOpenForEntry();
+
+        if (_activeJailDoor.JailorDoorIsOpenAndIdle())
+        {
+            if (TryResumeCarryApproachAfterJailDoorOpened())
+                return Vector3.zero;
+
+            _jailDeliveryPhase = JailDeliveryPhase.DroppingPlayer;
+            _intendedMoveSpeed = 0f;
+            return Vector3.zero;
+        }
+
+        // A leaf that never settles (blocked, jammed, someone holding it) must not become an endless wait with a
+        // player in his arms — the release puts the prisoner on the marker from wherever he is standing.
+        if (Time.time >= _jailDoorOpenWaitStartedTime + Mathf.Max(0.5f, jailDoorOpenWaitMaxSeconds))
+        {
+            _resumeCarryWhenJailDoorOpens = false;
+            _jailDeliveryPhase = JailDeliveryPhase.DroppingPlayer;
+            _intendedMoveSpeed = 0f;
+            return Vector3.zero;
+        }
+
+        if (TryGetJailDoorSwingEscapeVelocity(out Vector3 escape))
+        {
+            _faceJailDoorWhileClearingSwing = true;
+            _intendedMoveSpeed = escape.magnitude;
+            return escape;
+        }
+
+        _intendedMoveSpeed = 0f;
+        return Vector3.zero;
+    }
+
+    /// <summary>
+    /// Hands the opened door back to the carry so the prisoner is still walked in and dropped on the marker.
+    /// False when this delivery started at the marker (nothing to resume) or the carry is no longer valid.
+    /// </summary>
+    bool TryResumeCarryApproachAfterJailDoorOpened()
+    {
+        if (!_resumeCarryWhenJailDoorOpens)
+            return false;
+
+        _resumeCarryWhenJailDoorOpens = false;
+
+        if (_jailDropApplied
+            || !_grabAttachCompleted
+            || _target == null
+            || _targetHealth == null
+            || _targetHealth.IsDead
+            || carryDestination == null)
+            return false;
+
+        Vector3 flatSelf = transform.position;
+        flatSelf.y = 0f;
+        Vector3 flatMarker = carryDestination.position;
+        flatMarker.y = 0f;
+        if (Vector3.Distance(flatSelf, flatMarker) <= carryArrivalDistance)
+            return false;
+
+        _nextJailDoorHandoffAllowedTime = Time.time + JailDoorHandoffRetrySeconds;
+        _state = JailorState.Carrying;
+        _lastCarryPathDestination = Vector3.zero;
+        _nextDestinationRefreshTime = 0f;
+
+        if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
+        {
+            navMeshAgent.isStopped = false;
+            navMeshAgent.ResetPath();
+        }
+
+        return true;
+    }
+
+    /// <summary>True while he stands inside the disc the cell door's leaf sweeps as it swings.</summary>
+    bool IsInsideJailDoorSwingArc()
+    {
+        if (!_hasJailDoorSwingSweep)
+            return false;
+
+        float bodyRadius = 0.5f;
+        if (characterController != null)
+        {
+            float lossy = Mathf.Max(transform.lossyScale.x, transform.lossyScale.z);
+            bodyRadius = characterController.radius * Mathf.Max(0.01f, lossy);
+        }
+
+        float radius = _jailDoorSwingRadius + bodyRadius + Mathf.Max(0f, jailDoorSwingClearance);
+        Vector3 offset = transform.position - _jailDoorSwingCenter;
+        offset.y = 0f;
+        return offset.sqrMagnitude < radius * radius;
+    }
+
+    /// <summary>Straight out of the leaf's swept disc — the shortest way clear of a door opening into him.</summary>
+    bool TryGetJailDoorSwingEscapeVelocity(out Vector3 velocity)
+    {
+        velocity = Vector3.zero;
+        if (!IsInsideJailDoorSwingArc())
+            return false;
+
+        Vector3 away = transform.position - _jailDoorSwingCenter;
+        away.y = 0f;
+        if (away.sqrMagnitude < 1e-4f)
+        {
+            away = -transform.forward;
+            away.y = 0f;
+            if (away.sqrMagnitude < 1e-4f)
+                return false;
+        }
+
+        velocity = away.normalized * Mathf.Max(0.1f, jailDoorBackOffSpeed);
+        return true;
     }
 
     void BeginJailExit()
@@ -2167,8 +2386,12 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (_activeJailDoor == null)
             return false;
 
-        Vector3 door = _activeJailDoor.IdentityHintPosition;
         Vector3 inside = carryDestination != null ? carryDestination.position : transform.position;
+        // Measured from the opening, not from the door object: a hinge door's root sits at the post, a half leaf
+        // off to one side, and a line drawn from there runs diagonally into the jamb instead of out of the cell.
+        Vector3 door = TryGetJailDoorwayCenter(_activeJailDoor, inside, out Vector3 doorwayCenter)
+            ? doorwayCenter
+            : _activeJailDoor.transform.position;
         Vector3 outward = door - inside;
         outward.y = 0f;
         if (outward.sqrMagnitude < 0.01f)
@@ -2180,15 +2403,82 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             outward = transform.forward;
 
         outward.Normalize();
-        Vector3 raw = door + outward * Mathf.Max(1f, jailExitDistance);
         float sampleRadius = Mathf.Max(1.25f, jailExitDistance);
-        if (NavMesh.SamplePosition(raw, out NavMeshHit hit, sampleRadius, NavMesh.AllAreas))
+        // The snap radius is wide enough to pull a point back to where he already stands, and UpdateJailExit would
+        // read that as "arrived" on the first frame and drop him back to patrol inside the cell.
+        float minSeparation = Mathf.Max(0.1f, jailExitArrivalDistance) + 0.35f;
+        Vector3 raw = door + outward * Mathf.Max(1f, jailExitDistance);
+
+        for (int step = 0; step < 3; step++)
         {
+            raw = door + outward * (Mathf.Max(1f, jailExitDistance) * (1f + step * 0.6f));
+            if (!NavMesh.SamplePosition(raw, out NavMeshHit hit, sampleRadius, NavMesh.AllAreas))
+                continue;
+
+            Vector3 flatDelta = hit.position - transform.position;
+            flatDelta.y = 0f;
+            if (flatDelta.magnitude <= minSeparation)
+                continue;
+
             destination = hit.position;
             return true;
         }
 
         destination = raw;
+        return true;
+    }
+
+    /// <summary>
+    /// Centre of the doorway opening for a hinge door. The leaf's own colliders give the arm from the pivot to the
+    /// leaf centre — half the leaf — and which axis it currently lies on: a closed leaf lies along the opening, an
+    /// open one across it. <paramref name="insidePoint"/> only says which side of the post the opening is on.
+    /// </summary>
+    bool TryGetJailDoorwayCenter(HingeInteractDoor door, Vector3 insidePoint, out Vector3 center)
+    {
+        center = Vector3.zero;
+        if (door == null || !door.TryGetSwingSweep(out Vector3 hinge, out _))
+            return false;
+
+        s_jailDoorColliderScratch.Clear();
+        door.AppendSolidDoorColliders(s_jailDoorColliderScratch, includePairedLeaf: false);
+        Bounds leafBounds = default;
+        bool hasBounds = false;
+        for (int i = 0; i < s_jailDoorColliderScratch.Count; i++)
+        {
+            Collider c = s_jailDoorColliderScratch[i];
+            if (c == null)
+                continue;
+
+            if (!hasBounds)
+            {
+                leafBounds = c.bounds;
+                hasBounds = true;
+            }
+            else
+                leafBounds.Encapsulate(c.bounds);
+        }
+
+        s_jailDoorColliderScratch.Clear();
+        if (!hasBounds)
+            return false;
+
+        Vector3 leafArm = leafBounds.center - hinge;
+        leafArm.y = 0f;
+        float halfLeaf = leafArm.magnitude;
+        if (halfLeaf < 0.05f)
+            return false;
+
+        Vector3 openingAxis = leafArm / halfLeaf;
+        if (door.IsOpen)
+        {
+            openingAxis = new Vector3(-openingAxis.z, 0f, openingAxis.x);
+            Vector3 toInside = insidePoint - hinge;
+            toInside.y = 0f;
+            if (Vector3.Dot(toInside, openingAxis) < 0f)
+                openingAxis = -openingAxis;
+        }
+
+        center = hinge + openingAxis * halfLeaf;
         return true;
     }
 
@@ -3045,7 +3335,11 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (navMeshAgent != null && navMeshAgent.enabled)
             navMeshAgent.nextPosition = transform.position;
 
-        Vector3 horizontalDirection = _horizontalVelocity;
+        // Stepping out of a swing arc he keeps his eyes (and the prisoner on his arm) on the cell door instead of
+        // turning his back on it for a two-step retreat.
+        Vector3 horizontalDirection = _faceJailDoorWhileClearingSwing
+            ? _jailDoorSwingCenter - transform.position
+            : _horizontalVelocity;
         horizontalDirection.y = 0f;
         if (horizontalDirection.sqrMagnitude > 0.0001f)
         {

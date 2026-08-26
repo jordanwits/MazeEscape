@@ -6,10 +6,12 @@ using UnityEngine;
 /// player could hear his footsteps (the start distance matches the footstep AudioSource max distance), the
 /// local view camera trembles; the tremble grows the closer he gets. Local-control / owner only.
 ///
-/// Applied as an additive rotational offset on the view camera in <c>LateUpdate</c>, after the first-person
-/// look system writes the camera pose in <c>Update</c>. Nothing else writes the camera's rotation in
-/// LateUpdate (<see cref="FirstPersonViewHeadSync"/> moves the pitch node's position, <see cref="MovementViewBob"/>
-/// moves the hips bone), so the offset is re-derived each frame and never accumulates or fights another writer.
+/// Every shake source here only accumulates a rotational offset; <see cref="ApplyComposedViewShake"/> resolves
+/// the look system's neutral camera pose itself and stamps <c>neutral * offset</c> in a single write per frame.
+/// The layer therefore never reads the camera back and never depends on <c>Update</c> having written the look
+/// pose this frame — it doesn't on frames where an overlay, the pause menu or a get-up skips that write.
+/// Nothing else writes the local player's view camera rotation (<see cref="FirstPersonViewHeadSync"/> moves the
+/// pitch node's position, <see cref="MovementViewBob"/> moves the hips bone).
 /// </summary>
 public partial class PlayerController
 {
@@ -78,9 +80,15 @@ public partial class PlayerController
     Vector3 _meleeKickOffsetDeg;
     Vector3 _meleeKickVelocityDeg;
 
+    // This frame's composed shake offset in the camera's own frame, built up by the sources in application
+    // order and consumed by ApplyComposedViewShake. The flag distinguishes "no source fired" from "the sources
+    // happened to sum to identity", which matters only on the fallback path that has no neutral base to stamp.
+    Quaternion _viewShakeOffset = Quaternion.identity;
+    bool _viewShakeOffsetActive;
+
     /// <summary>
-    /// Called from <see cref="LateUpdate"/> (before its early-returns) so the shake layers on top of the
-    /// pose the look system already wrote this frame, in every camera mode.
+    /// Called from <see cref="LateUpdate"/> (before its early-returns) so the shake is computed in every camera
+    /// mode, and before <see cref="ApplyComposedViewShake"/> stamps it.
     /// </summary>
     void UpdateJailorProximityShake()
     {
@@ -107,7 +115,7 @@ public partial class PlayerController
         if (_jailorShakeIntensity <= 0.0005f)
             return;
 
-        ApplyJailorShakeToCamera(cam, _jailorShakeIntensity);
+        AccumulateJailorShakeOffset(_jailorShakeIntensity);
     }
 
     /// <summary>
@@ -229,8 +237,8 @@ public partial class PlayerController
     }
 
     /// <summary>
-    /// Decays and applies the one-shot scream jolt. Unlike the Jailor shake this STAYS active while the player is
-    /// held (the grabbed victim is exactly who we want to rattle) — during a hold the ragdoll camera path drives
+    /// Decays and contributes the one-shot scream jolt. Unlike the Jailor shake this STAYS active while the player
+    /// is held (the grabbed victim is exactly who we want to rattle) — during a hold the ragdoll camera path drives
     /// the pitch node's parent/position but never <c>cameraTransform.localRotation</c>, so this offset survives.
     /// Called from <see cref="LateUpdate"/> right after the Jailor shake; the two offsets simply compose.
     /// </summary>
@@ -250,10 +258,6 @@ public partial class PlayerController
         if (!_hasLocalControl || (_playerHealth != null && _playerHealth.IsDead))
             return;
 
-        Transform cam = CameraTransformForFacing;
-        if (cam == null)
-            return;
-
         _screamShakeNoiseTime += Time.deltaTime * Mathf.Max(0.01f, screamShakeFrequency);
         float pitch = (Mathf.PerlinNoise(s_ScreamShakeNoiseLanes.x, _screamShakeNoiseTime) - 0.5f) * 2f;
         float yaw = (Mathf.PerlinNoise(s_ScreamShakeNoiseLanes.y, _screamShakeNoiseTime) - 0.5f) * 2f;
@@ -263,9 +267,9 @@ public partial class PlayerController
         float angle = screamShakeMaxAngleDegrees * shaped;
         Quaternion shake = Quaternion.Euler(pitch * angle, yaw * angle, roll * angle);
 
-        // Right-multiply: view-space tremble layered on the pose already written this frame (same idiom as the
-        // Jailor shake). If both fire at once they compose.
-        cam.localRotation = cam.localRotation * shake;
+        // Right-multiplied onto the offsets contributed before it (same idiom as the Jailor shake), so a scream
+        // during a tremble composes instead of replacing it.
+        AddViewShakeOffset(shake);
     }
 
     /// <summary>
@@ -319,7 +323,7 @@ public partial class PlayerController
     }
 
     /// <summary>
-    /// Springs the melee kick offset back to center and applies it to the view. Called from <see cref="LateUpdate"/>
+    /// Springs the melee kick offset back to center and contributes it to the view. Called from <see cref="LateUpdate"/>
     /// alongside the other shakes; the offset always decays (even on frames it can't draw) so it never lingers when
     /// control returns. Composes with the Jailor/scream shakes via the same right-multiply idiom.
     /// </summary>
@@ -340,14 +344,10 @@ public partial class PlayerController
         if (!_hasLocalControl || (_playerHealth != null && _playerHealth.IsDead))
             return;
 
-        Transform cam = CameraTransformForFacing;
-        if (cam == null)
-            return;
-
-        cam.localRotation = cam.localRotation * Quaternion.Euler(offset);
+        AddViewShakeOffset(Quaternion.Euler(offset));
     }
 
-    void ApplyJailorShakeToCamera(Transform cam, float intensity)
+    void AccumulateJailorShakeOffset(float intensity)
     {
         _jailorShakeNoiseTime += Time.deltaTime * Mathf.Max(0.01f, jailorShakeFrequency);
 
@@ -359,8 +359,73 @@ public partial class PlayerController
         float angle = jailorShakeMaxAngleDegrees * intensity;
         Quaternion shake = Quaternion.Euler(pitch * angle, yaw * angle, roll * angle);
 
-        // Right-multiply so the tremble is in the camera's own frame (view-space pitch/yaw/roll), layered on
-        // top of whatever the look system set this frame.
-        cam.localRotation = cam.localRotation * shake;
+        // Right-multiplied so the tremble stays in the camera's own frame (view-space pitch/yaw/roll) once it is
+        // stamped onto the neutral look pose.
+        AddViewShakeOffset(shake);
+    }
+
+    /// <summary>Adds one source's offset to this frame's composed offset, in the camera's own frame.</summary>
+    void AddViewShakeOffset(Quaternion offset)
+    {
+        _viewShakeOffset = _viewShakeOffset * offset;
+        _viewShakeOffsetActive = true;
+    }
+
+    /// <summary>
+    /// The neutral (shake-free) view-camera localRotation the look system writes when it owns the pose through
+    /// the local-rotation path: <see cref="ApplyFirstPersonLook"/>'s child-camera branch and
+    /// <see cref="ApplyRagdollFirstPersonLook"/>'s head-parented branch, which both write pitch only (an enemy
+    /// hold zeroes the look angles in that branch, so the same formula yields the identity it writes there).
+    /// False on the world-space fallback branches, where the camera's local rotation carries no look pose to
+    /// rebuild from.
+    /// </summary>
+    bool TryResolveNeutralViewLocalRotation(Transform cam, out Quaternion neutral)
+    {
+        neutral = Quaternion.identity;
+        if (cam == null || !firstPersonLook)
+            return false;
+
+        // Ragdolled / held / getting up, the ragdoll look path owns the view, and it only drives localRotation
+        // while the pitch node rides the head; otherwise it writes world rotation.
+        if (_ragdollController != null
+            && (_ragdollController.IsRagdolled || _ragdollController.IsHeld || _ragdollController.IsGettingUp))
+        {
+            if (cameraPitchTransform == null || !_cameraPitchParentedToHead)
+                return false;
+        }
+        else if (!cam.IsChildOf(transform))
+            return false;
+
+        neutral = Quaternion.Euler(_lookPitchDegrees, 0f, 0f);
+        return true;
+    }
+
+    /// <summary>
+    /// The shake layer's one camera write per frame: neutral look pose stamped with the composed offset. Called
+    /// from <see cref="LateUpdate"/> after every source has contributed. The accumulator is consumed before any
+    /// gate so a frame that can't draw (remote player, dead) never carries its offset into the next one.
+    /// </summary>
+    void ApplyComposedViewShake()
+    {
+        Quaternion offset = _viewShakeOffset;
+        bool hasOffset = _viewShakeOffsetActive;
+        _viewShakeOffset = Quaternion.identity;
+        _viewShakeOffsetActive = false;
+
+        // Remote players' view cameras are driven by NetworkPlayerAvatar (replicated flashlight aim); only the
+        // locally-controlled one is ours to write.
+        if (!_hasLocalControl || (_playerHealth != null && _playerHealth.IsDead))
+            return;
+
+        Transform cam = CameraTransformForFacing;
+        if (cam == null)
+            return;
+
+        if (TryResolveNeutralViewLocalRotation(cam, out Quaternion neutral))
+            cam.localRotation = neutral * offset;
+        else if (hasOffset)
+            // World-space look branch: there is no local base to rebuild, so the offset can only ride whatever
+            // pose currently owns the camera.
+            cam.localRotation = cam.localRotation * offset;
     }
 }

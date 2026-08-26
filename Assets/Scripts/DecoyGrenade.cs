@@ -45,11 +45,15 @@ public class DecoyGrenade : NetworkBehaviour
     [SerializeField, Min(0.1f)] float lurePulseSeconds = 1f;
 
     [Header("Audio")]
-    [Tooltip("The racket it makes, played positionally on every peer for the whole call.")]
+    [Tooltip("The racket it makes, played positionally on every peer from switch-on until it winds down.")]
     [SerializeField] AudioClip decoyClip;
     [SerializeField, Range(0f, 1f)] float decoyVolume = 1f;
-    [Tooltip("Loop the clip for the full call duration. Off = play it once at switch-on.")]
+    [Tooltip("Loop the clip until the noise winds down. Off = play it once at switch-on.")]
     [SerializeField] bool loopClip = true;
+    [Tooltip("How long the racket is audible once it switches on. Shorter than the call window on purpose - a decoy that keeps squawking for the full lure is exhausting to be near, and the pull does not need the noise to keep working. 0 or anything past the call = audible for the whole thing.")]
+    [SerializeField, Min(0f)] float soundSeconds = 6f;
+    [Tooltip("Seconds spent fading out at the end of the racket. A looping clip cut dead mid-waveform clicks; this also reads as the thing running out of steam.")]
+    [SerializeField, Min(0.01f)] float soundFadeSeconds = 0.6f;
     [Tooltip("Inside this distance the decoy is at full volume for a listening player.")]
     [SerializeField, Min(0.5f)] float audioMinDistance = 4f;
     [Tooltip("Beyond this a player cannot hear it at all. Independent of hearingRadius, which is what ENEMIES use.")]
@@ -74,6 +78,7 @@ public class DecoyGrenade : NetworkBehaviour
     bool _atRest;
     Vector3 _spinAxis = Vector3.right;
     AudioSource _source;
+    float _muteAt;
 
     /// <summary>How long this decoy keeps calling once lit - exposed so tuning lives on the prefab alone.</summary>
     public float CallSeconds => callSeconds;
@@ -112,6 +117,33 @@ public class DecoyGrenade : NetworkBehaviour
         // in flight, so a decoy in the air never gives away where it is going to land.
         if (_launched && !_finished && !_atRest)
             transform.rotation = Quaternion.AngleAxis(spinDegreesPerSecond * Time.deltaTime, _spinAxis) * transform.rotation;
+
+        UpdateNoiseWindDown();
+    }
+
+    /// <summary>
+    /// Winds the racket down once <see cref="soundSeconds"/> is up, leaving the decoy to keep pulling
+    /// hunters in silence for the rest of its call.
+    ///
+    /// Deliberately driven from Update rather than FixedUpdate: the noise is a purely local effect that
+    /// every peer runs for itself, and clients never reach FixedUpdate's authority-only body at all.
+    /// </summary>
+    void UpdateNoiseWindDown()
+    {
+        if (_source == null || _muteAt <= 0f)
+            return;
+
+        float past = Time.time - _muteAt;
+        if (past < 0f)
+            return;
+
+        float t = Mathf.Clamp01(past / Mathf.Max(0.01f, soundFadeSeconds));
+        _source.volume = Mathf.Clamp01(decoyVolume) * (1f - t);
+        if (t < 1f)
+            return;
+
+        _source.Stop();
+        _muteAt = 0f; // done - stop touching the source for the rest of the call
     }
 
     void FixedUpdate()
@@ -407,6 +439,15 @@ public class DecoyGrenade : NetworkBehaviour
         _source.maxDistance = Mathf.Max(audioMinDistance + 1f, audioMaxDistance);
         GameAudioManager.RouteSfxSource(_source);
         _source.Play();
+
+        // Zero (or anything at/past the call) means "audible the whole time" - leave the wind-down off and
+        // let the despawn kill it, exactly as it behaved before this knob existed.
+        // _muteAt is when the fade STARTS, so soundSeconds is the whole audible window, fade included.
+        float audible = Mathf.Max(0f, soundSeconds);
+        float fade = Mathf.Max(0.01f, soundFadeSeconds);
+        _muteAt = audible > 0f && audible < Mathf.Max(0.5f, callSeconds)
+            ? Time.time + Mathf.Max(0.05f, audible - fade)
+            : 0f;
     }
 
     public override void OnNetworkDespawn()

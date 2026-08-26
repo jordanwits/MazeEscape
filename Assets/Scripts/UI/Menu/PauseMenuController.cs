@@ -68,6 +68,11 @@ public sealed class PauseMenuController : MonoBehaviour
             (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
             || (Gamepad.current != null && Gamepad.current.startButton.wasPressedThisFrame);
 
+        // While the skeleton's panel is up it closes itself on cancel; don't ride the same press into pause.
+        // Once pause is already open the press is ours again, so it can still be closed.
+        if (!_isOpen && SkeletonRpsOverlayController.ConsumesCancelInput)
+            togglePressed = false;
+
         if (togglePressed)
         {
             if (!_isOpen)

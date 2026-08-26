@@ -1,6 +1,7 @@
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 
@@ -11,6 +12,9 @@ using UnityEngine.UI;
 /// camera stays live — the player keeps looking at the skeleton; only the control panel is an overlay.
 /// Pacing is client-side: a short suspense beat before every reveal (even when the authoritative result arrives
 /// instantly), a hold on each reveal, then back to choosing; match end shows a banner and auto-closes.
+/// Because it eats player input while up, the panel must always have a way out that does not depend on the
+/// authority answering or on the mouse reaching a plate: cancel (Esc, or Start / B on a pad) walks away, and
+/// two throws in a row that go nowhere close it.
 /// A single instance is created on demand and persists (DontDestroyOnLoad).
 /// </summary>
 [DisallowMultipleComponent]
@@ -19,7 +23,15 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
     /// <summary>True while the overlay is shown — PlayerController ORs this into its input-block + cursor-lock gate.</summary>
     public static bool IsInteractive { get; private set; }
 
+    /// <summary>
+    /// True while the panel owns the cancel press: shown, or on the frame it consumed one to close itself.
+    /// Update order against <see cref="PauseMenuController"/> is undefined, so the closing frame has to keep
+    /// swallowing the press or the pause menu opens behind the dismissed panel.
+    /// </summary>
+    public static bool ConsumesCancelInput => IsInteractive || Time.frameCount == _cancelConsumedFrame;
+
     static SkeletonRpsOverlayController _instance;
+    static int _cancelConsumedFrame = -1;
 
     const float MinSuspenseSeconds = 0.75f;
     const float WaitingTimeoutSeconds = 8f;
@@ -27,6 +39,8 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
     const float MatchOverHoldSeconds = 2.6f;
     const float NoticeHoldSeconds = 1.8f;
     const float RangeClosePollSlack = 0.9f;
+    /// <summary>Throws in a row that neither advanced nor ended the match before the panel stops trying.</summary>
+    const int NoProgressStrikesToGiveUp = 2;
 
     enum OverlayState : byte
     {
@@ -52,6 +66,10 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
     float _stateUntil;
     bool _hasPendingResult;
     SkeletonRpsThrowResult _pendingResult;
+    /// <summary>Counts submitted throws; with <see cref="_answeredThrow"/> it says whether the newest one is still unanswered.</summary>
+    int _submittedThrow;
+    int _answeredThrow;
+    int _consecutiveNoProgress;
 
     public static void Show(PlayerController player, SkeletonRpsChallenge challenge)
     {
@@ -66,11 +84,25 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
         SkeletonRpsOverlayController inst = _instance;
         if (inst == null || !inst._shown || inst._challenge != challenge)
             return;
-        if (inst._state != OverlayState.Waiting)
-            return;
 
-        inst._pendingResult = result;
-        inst._hasPendingResult = true;
+        if (inst._state == OverlayState.Waiting)
+        {
+            // Replies are reliable-sequenced, so they land in submission order and each one retires exactly ONE
+            // outstanding throw. Snapping to _submittedThrow would let a delayed reply to an earlier throw mark the
+            // newest one answered, and the Choosing late-accept below would then refuse the reply that is really its.
+            inst._answeredThrow = Mathf.Min(inst._answeredThrow + 1, inst._submittedThrow);
+            inst._pendingResult = result;
+            inst._hasPendingResult = true;
+            return;
+        }
+
+        // A reply that outran the waiting timeout still answers the throw the player made, so take it while the
+        // newest throw is the unanswered one and nothing was thrown since. Suspense already had its 8 seconds.
+        if (inst._state == OverlayState.Choosing && inst._answeredThrow != inst._submittedThrow)
+        {
+            inst._answeredThrow = inst._submittedThrow;
+            inst.ApplyResult(result);
+        }
     }
 
     static SkeletonRpsOverlayController EnsureInstance()
@@ -88,8 +120,12 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
     {
         _player = player;
         _challenge = challenge;
+        _consecutiveNoProgress = 0;
+        _answeredThrow = _submittedThrow;
 
         EnsureUiBuilt();
+        // Re-checked on every show: the event system is a plain object that a scene load or the pause menu can take.
+        EnsureEventSystem();
         RefreshPips(challenge.LocalKnownPlayerWins, challenge.LocalKnownSkeletonWins);
         EnterChoosing(challenge.LocalPlayerHasUnfinishedMatch ? "FIRST TO 2 TAKES IT — GAME IN PROGRESS" : "FIRST TO 2 TAKES IT");
         SetShown(true);
@@ -113,6 +149,15 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
         if (_player == null || _challenge == null || !_player.HasNormalInteractiveControl)
         {
             SetShown(false);
+            return;
+        }
+
+        // Cancel walks away exactly like the plate does. The pause menu yields the same press (see
+        // ConsumesCancelInput); while it is open on top, the press belongs to it instead.
+        if (!PauseMenuController.BlocksGameplayInput && CancelPressedThisFrame())
+        {
+            _cancelConsumedFrame = Time.frameCount;
+            OnLeave();
             return;
         }
 
@@ -157,13 +202,28 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// The cancel press, keyboard and pad. The pad half is not optional: <see cref="PauseMenuController"/> gives up
+    /// its Start toggle while <see cref="ConsumesCancelInput"/> is true, and nothing hands a pad a UI selection to
+    /// work the plates with, so Start / B is a pad player's only way out of the panel.
+    /// </summary>
+    static bool CancelPressedThisFrame()
+    {
+        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+            return true;
+
+        Gamepad pad = Gamepad.current;
+        return pad != null
+            && (pad.startButton.wasPressedThisFrame || pad.buttonEast.wasPressedThisFrame);
+    }
+
     void TickWaiting()
     {
         float elapsed = Time.unscaledTime - _waitingSince;
         if (!_hasPendingResult && elapsed > WaitingTimeoutSeconds)
         {
             // The authority never answered (dropped session, despawned store) — don't strand the panel.
-            EnterChoosing("NO ANSWER — THROW AGAIN");
+            EnterChoosingOrGiveUp("NO ANSWER — THROW AGAIN");
             return;
         }
 
@@ -186,7 +246,7 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
             switch ((SkeletonRpsRejectReason)result.RejectReason)
             {
                 case SkeletonRpsRejectReason.OutOfRange:
-                    EnterChoosing("STEP CLOSER");
+                    EnterChoosingOrGiveUp("STEP CLOSER");
                     break;
                 case SkeletonRpsRejectReason.AlreadyPlayed:
                     EnterNotice("IT REMEMBERS YOU", MenuTheme.BloodBright);
@@ -201,6 +261,7 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
             return;
         }
 
+        _consecutiveNoProgress = 0;
         RefreshPips(result.PlayerRoundWins, result.SkeletonRoundWins);
         _challenge.PlayRoundRevealSfx();
 
@@ -257,6 +318,23 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Back to the choice screen after a throw that went nowhere (no answer, or refused for being too far).
+    /// Choosing is the one state with no time bound of its own, so a second dead throw in a row ends the panel
+    /// instead of parking the player there — the plates may be exactly what they cannot reach.
+    /// </summary>
+    void EnterChoosingOrGiveUp(string status)
+    {
+        _consecutiveNoProgress++;
+        if (_consecutiveNoProgress >= NoProgressStrikesToGiveUp)
+        {
+            EnterNotice("THE BONES IGNORE YOU", MenuTheme.Mist);
+            return;
+        }
+
+        EnterChoosing(status);
+    }
+
     void EnterChoosing(string status)
     {
         _state = OverlayState.Choosing;
@@ -300,6 +378,8 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
         _hasPendingResult = false;
         _verdictText.gameObject.SetActive(false);
         SetChoiceButtonsVisible(false);
+        // Counted before submitting: offline and on the host the throw resolves inside the call below.
+        _submittedThrow++;
         _challenge.SubmitLocalThrow(_player, choice);
     }
 
@@ -346,7 +426,6 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
         if (_root != null)
             return;
 
-        EnsureEventSystem();
         Canvas canvas = CreateOwnedCanvas();
 
         const float W = 840f;
@@ -513,11 +592,16 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
         return canvas;
     }
 
+    /// <summary>
+    /// The canvas outlives scene loads, so the event system feeding it has to as well — a scene-bound one dies
+    /// on the next level and leaves the plates unclickable.
+    /// </summary>
     static void EnsureEventSystem()
     {
         if (EventSystem.current != null || FindAnyObjectByType<EventSystem>() != null)
             return;
         GameObject es = new("EventSystem (SkeletonRps)");
+        DontDestroyOnLoad(es);
         es.AddComponent<EventSystem>();
         es.AddComponent<InputSystemUIInputModule>();
     }

@@ -591,6 +591,32 @@ public class HingeInteractDoor : NetworkBehaviour
         return true;
     }
 
+    /// <summary>
+    /// Server / offline: raise <see cref="OnJailUnlockedByPlayerKey"/> without touching lock state, for a release the
+    /// players earned some other way (winning the skeleton's game). The lock can already be clear when that release
+    /// is due — <see cref="ServerJailorOpenForEntry"/> clears it and deliberately does not raise this — which leaves
+    /// the unlock paths nothing to do and the occupants sealed. Listeners are idempotent; doors that do not use a key
+    /// have no cell to release, so this is a no-op on them.
+    /// </summary>
+    public void ServerNotifyJailUnlockedByPlayerKey()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm != null && nm.IsListening && !nm.IsServer)
+            return;
+
+        RaiseJailUnlockedByPlayerKeyThisLeafOnly();
+        if (pairedLeaf != null)
+            pairedLeaf.RaiseJailUnlockedByPlayerKeyThisLeafOnly();
+    }
+
+    void RaiseJailUnlockedByPlayerKeyThisLeafOnly()
+    {
+        if (!useKeyToUnlock)
+            return;
+
+        OnJailUnlockedByPlayerKey?.Invoke(this);
+    }
+
     /// <summary>Single-player / non-network: key was removed from inventory by the player; door stays closed until open interact.</summary>
     public void ApplyLocalUnlock()
     {

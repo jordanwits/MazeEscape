@@ -10,8 +10,12 @@ using UnityEngine;
 /// </summary>
 public partial class NetworkPlayerInventory
 {
-    /// <summary>Extra server-side tolerance on the challenge's interact range (owner moved since the client-side check).</summary>
-    const float SkeletonRpsServerRangeSlack = 1.5f;
+    /// <summary>
+    /// Extra server-side tolerance on the challenge's interact range. The server measures against the owner's
+    /// replicated transform, which is stalest right after an authority hand-off (Jailor carry release), and the
+    /// cell the win opens is the one the thrower is already standing in — so generous slack costs nothing.
+    /// </summary>
+    const float SkeletonRpsServerRangeSlack = 3f;
 
     /// <summary>Local-owner entry point: host resolves directly, clients relay to the server.</summary>
     public void RequestSkeletonRpsThrow(SkeletonRpsChallenge challenge, SkeletonRpsChoice choice)
@@ -21,10 +25,25 @@ public partial class NetworkPlayerInventory
 
         if (IsServer)
         {
+            // The overlay only leaves its waiting state on an answer, so every branch below resolves the throw.
             if (!TryGetConnectedPlayerPosition(OwnerClientId, out Vector3 playerPosition))
+            {
+                challenge.NotifyThrowResolved(new SkeletonRpsThrowResult
+                {
+                    PlayerChoice = (byte)choice,
+                    RejectReason = (byte)SkeletonRpsRejectReason.Unavailable,
+                });
                 return;
+            }
             if (!challenge.IsInInteractRange(playerPosition, SkeletonRpsServerRangeSlack))
+            {
+                challenge.NotifyThrowResolved(new SkeletonRpsThrowResult
+                {
+                    PlayerChoice = (byte)choice,
+                    RejectReason = (byte)SkeletonRpsRejectReason.OutOfRange,
+                });
                 return;
+            }
 
             challenge.ServerProcessThrow(OwnerClientId, choice, out SkeletonRpsThrowResult result);
             // The host is also the throwing player: apply the result locally, no RPC needed.
@@ -39,15 +58,22 @@ public partial class NetworkPlayerInventory
     void RequestSkeletonRpsThrowServerRpc(ulong challengeId, Vector3 hintPosition, byte choice, ServerRpcParams serverRpcParams = default)
     {
         ulong senderId = serverRpcParams.Receive.SenderClientId;
+        // Spoofed sender: no reply at all — answering would hand a stranger a seat at someone else's game.
         if (senderId != OwnerClientId)
-            return;
-        if (!SkeletonRpsChallenge.TryResolve(challengeId, hintPosition, out SkeletonRpsChallenge challenge) || challenge == null)
-            return;
-        if (!TryGetConnectedPlayerPosition(senderId, out Vector3 playerPosition))
             return;
 
         SkeletonRpsThrowResult result;
-        if (!challenge.IsInInteractRange(playerPosition, SkeletonRpsServerRangeSlack))
+        if (!SkeletonRpsChallenge.TryResolve(challengeId, hintPosition, out SkeletonRpsChallenge challenge) || challenge == null
+            || !TryGetConnectedPlayerPosition(senderId, out Vector3 playerPosition))
+        {
+            // The sender's overlay is waiting on this reply; a miss here still has to say something.
+            result = new SkeletonRpsThrowResult
+            {
+                PlayerChoice = choice,
+                RejectReason = (byte)SkeletonRpsRejectReason.Unavailable,
+            };
+        }
+        else if (!challenge.IsInInteractRange(playerPosition, SkeletonRpsServerRangeSlack))
         {
             result = new SkeletonRpsThrowResult
             {

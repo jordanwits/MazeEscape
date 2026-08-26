@@ -358,14 +358,19 @@ public class SkeletonRpsChallenge : MonoBehaviour
     }
 
     /// <summary>
-    /// Server / offline: unlock exactly like a player key (fires <see cref="HingeInteractDoor.OnJailUnlockedByPlayerKey"/>
-    /// so sealed occupants are released), then swing the door open. Uses the same spawned / unspawned-procedural /
-    /// offline branches as the key-unlock paths in <see cref="NetworkPlayerInventory"/>.
+    /// Server / offline: release sealed occupants exactly like a player key (<see cref="HingeInteractDoor.OnJailUnlockedByPlayerKey"/>),
+    /// then unlock and swing the door open. Uses the same spawned / unspawned-procedural / offline branches as the
+    /// key-unlock paths in <see cref="NetworkPlayerInventory"/>.
     /// </summary>
     void OpenJailDoorAsAuthority()
     {
         if (jailDoor == null || !IsAuthority())
             return;
+
+        // Unconditional, and ahead of the unlock branches: the win is what frees the winner, not the state of the
+        // lock. Anything that cleared the lock during the reveal delay (the Jailor's delivery open) leaves those
+        // branches nothing to do, and this notification is the only thing that clears IsSealedInJailCell.
+        jailDoor.ServerNotifyJailUnlockedByPlayerKey();
 
         NetworkManager nm = NetworkManager.Singleton;
         bool online = nm != null && nm.IsListening;
