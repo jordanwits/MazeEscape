@@ -5019,8 +5019,8 @@ ParticleSystem:
     startLifetime:
       serializedVersion: 2
       minMaxState: 3
-      scalar: 1.5
-      minScalar: 0.6
+      scalar: 0.85
+      minScalar: 0.4
       maxCurve:
         serializedVersion: 2
         m_Curve:
@@ -9946,10 +9946,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::BomberExplosionFx
   flashLight: {fileID: 4951622387363842804}
   audioSource: {fileID: 8630257472990938903}
-  lightSeconds: 0.75
+  lightSeconds: 0.4
   peakIntensity: 180
   lightFalloff: 3.4
-  lifeSeconds: 4.5
+  lifeSeconds: 5
 --- !u!1 &6524498715487784519
 GameObject:
   m_ObjectHideFlags: 0
@@ -9960,6 +9960,7 @@ GameObject:
   m_Component:
   - component: {fileID: 5243169297250118815}
   - component: {fileID: 4951622387363842804}
+  - component: {fileID: 8623491027364501234}
   m_Layer: 0
   m_Name: BlastLight
   m_TagString: Untagged
@@ -10047,6 +10048,18 @@ Light:
   m_LightUnit: 1
   m_LuxAtDistance: 1
   m_EnableSpotReflector: 1
+--- !u!114 &8623491027364501234
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6524498715487784519}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 47a4a9aa2690a864bbf11f3801ce3d37, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::MazeLightCullIgnore
 --- !u!1 &7114532347760881637
 GameObject:
   m_ObjectHideFlags: 0
@@ -10163,8 +10176,8 @@ ParticleSystem:
     startLifetime:
       serializedVersion: 2
       minMaxState: 3
-      scalar: 3.2
-      minScalar: 1.8
+      scalar: 3.8
+      minScalar: 2.1
       maxCurve:
         serializedVersion: 2
         m_Curve:

@@ -18,14 +18,14 @@ public sealed class BomberExplosionFx : MonoBehaviour
 
     [Header("Flash")]
     [Tooltip("Seconds the blast light takes to fall away. The particles outlive it by design.")]
-    [SerializeField, Min(0.05f)] float lightSeconds = 0.75f;
+    [SerializeField, Min(0.05f)] float lightSeconds = 0.4f;
     [SerializeField, Min(0f)] float peakIntensity = 180f;
     [Tooltip("How hard the flash decays. Higher = a sharper pop.")]
     [SerializeField, Min(0.5f)] float lightFalloff = 3.4f;
 
     [Header("Lifetime")]
     [Tooltip("Seconds before the whole effect tears itself down. Must outlast the smoke and the bang.")]
-    [SerializeField, Min(0.5f)] float lifeSeconds = 4.5f;
+    [SerializeField, Min(0.5f)] float lifeSeconds = 5f;
 
     static readonly Color FireColor = new Color(1f, 0.62f, 0.22f);
 

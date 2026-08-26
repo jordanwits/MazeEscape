@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
@@ -48,6 +48,11 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
     [SerializeField, Range(10f, 360f)] float sightAngle = 120f;
     [Tooltip("Inside this radius he wakes regardless of facing or walls -- he hears you coming.")]
     [SerializeField, Min(0f)] float noticeRadius = 4f;
+    [Tooltip("Radius at which he HEARS an audibly-sprinting player and wakes toward them -- no vision cone or " +
+             "line of sight needed (heard from behind and through walls), same rule the maze zombies use. " +
+             "Walking stays silent; only sprinting is heard. 0 disables it. Unlike the Jailor/Clown, he does " +
+             "NOT hear voice chat.")]
+    [SerializeField, Min(0f)] float hearingRadius = 14f;
     [SerializeField] bool requireLineOfSight = true;
     [SerializeField] LayerMask lineOfSightMask = Physics.DefaultRaycastLayers;
     [Tooltip("Height above the pivot that the sight ray leaves from and aims at.")]
@@ -531,13 +536,20 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         return best;
     }
 
-    /// <summary>Close enough to hear, or ahead of him in plain sight.</summary>
+    /// <summary>Close enough to hear, sprinting within earshot, or ahead of him in plain sight.</summary>
     bool CanSense(PlayerHealth player, out float distance)
     {
         distance = Vector3.Distance(transform.position, player.transform.position);
 
         if (distance <= noticeRadius)
             return true;
+
+        // Heard-sprint acquisition: no vision cone or line-of-sight gate, exactly like ZombieAI -- a sprinting
+        // player is heard from any direction and through walls. Walking stays silent, and unlike the
+        // Jailor/Clown he never hears voice chat (he is not registered with ServerProximityVoiceNotifications).
+        if (distance <= hearingRadius && IsPlayerAudiblySprinting(player))
+            return true;
+
         if (distance > sightRadius)
             return false;
 
@@ -548,6 +560,19 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
             return false;
 
         return !requireLineOfSight || HasLineOfSight(transform.position + Vector3.up * lineOfSightHeight, player);
+    }
+
+    static bool IsPlayerAudiblySprinting(PlayerHealth playerHealth)
+    {
+        if (playerHealth == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = playerHealth.GetComponent<NetworkPlayerAvatar>();
+        if (avatar != null && avatar.IsSpawned)
+            return avatar.AudiblySprintingForAi;
+
+        PlayerController pc = playerHealth.GetComponent<PlayerController>();
+        return pc != null && pc.IsAudiblySprintingForAi;
     }
 
     PlayerHealth FindNearestLivingPlayer(out float nearestDistance)
