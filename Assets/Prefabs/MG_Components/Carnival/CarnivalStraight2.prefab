@@ -591,6 +591,52 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 1}
   m_Center: {x: 0, y: 0, z: 0}
+--- !u!1 &3555293670436091820
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2608704702704942677}
+  - component: {fileID: 1065197516609005021}
+  m_Layer: 0
+  m_Name: JugglingPinSpawn
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2608704702704942677
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3555293670436091820}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.6815192, y: -0.6977651, z: 0.11455995, w: -0.18849817}
+  m_LocalPosition: {x: 1.425, y: 2.2757, z: -0.49}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 3184276144942734634}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1065197516609005021
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3555293670436091820}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 950aa8bde28b01a4ab159fa38ec2a088, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CarnivalBasketballGameSpawnAnchor
+  prefab: {fileID: 8964159345517639155, guid: d43706c546773de479e2ecf026a26826, type: 3}
+  localScaleOverride: {x: 15.840443, y: 15.8404455, z: 15.840447}
 --- !u!1 &4167136047205927477
 GameObject:
   m_ObjectHideFlags: 0
@@ -2238,7 +2284,7 @@ Transform:
   - {fileID: 1445438803483265922}
   - {fileID: 497504271179210629}
   - {fileID: 4817189293809571894}
-  - {fileID: 3485510182732326763}
+  - {fileID: 2608704702704942677}
   - {fileID: 3465552868427883396}
   - {fileID: 3443952976680766637}
   m_Father: {fileID: 0}
@@ -2948,87 +2994,6 @@ PrefabInstance:
 Transform:
   m_CorrespondingSourceObject: {fileID: 8455484895060377685, guid: c9065994547e64b489903f04f19181e8, type: 3}
   m_PrefabInstance: {fileID: 5037616845803277175}
-  m_PrefabAsset: {fileID: 0}
---- !u!1001 &5148672971583752226
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 3184276144942734634}
-    m_Modifications:
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalScale.x
-      value: 15.840443
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalScale.y
-      value: 15.8404455
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalScale.z
-      value: 15.840447
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 1.425
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 2.2757
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: -0.49
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: -0.18849817
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0.6815192
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: -0.6977651
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0.11455995
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: -5.57
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: -204.91
-      objectReference: {fileID: 0}
-    - target: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: -87.419
-      objectReference: {fileID: 0}
-    - target: {fileID: 8964159345517639155, guid: d43706c546773de479e2ecf026a26826, type: 3}
-      propertyPath: m_Name
-      value: JugglingPin
-      objectReference: {fileID: 0}
-    m_RemovedComponents:
-    - {fileID: 7722098834412200105, guid: d43706c546773de479e2ecf026a26826, type: 3}
-    - {fileID: 7722098834412200108, guid: d43706c546773de479e2ecf026a26826, type: 3}
-    - {fileID: 7722098834412200107, guid: d43706c546773de479e2ecf026a26826, type: 3}
-    - {fileID: 7722098834412200109, guid: d43706c546773de479e2ecf026a26826, type: 3}
-    - {fileID: 7722098834412200110, guid: d43706c546773de479e2ecf026a26826, type: 3}
-    - {fileID: 7722098834412200101, guid: d43706c546773de479e2ecf026a26826, type: 3}
-    - {fileID: 7722098834412200104, guid: d43706c546773de479e2ecf026a26826, type: 3}
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: d43706c546773de479e2ecf026a26826, type: 3}
---- !u!4 &3485510182732326763 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 8587458228229762889, guid: d43706c546773de479e2ecf026a26826, type: 3}
-  m_PrefabInstance: {fileID: 5148672971583752226}
   m_PrefabAsset: {fileID: 0}
 --- !u!1001 &6163541046585214446
 PrefabInstance:
