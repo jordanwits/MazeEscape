@@ -154,6 +154,7 @@ public class FlareProjectile : NetworkBehaviour
         SkeletonHealth skeleton = hit.collider.GetComponentInParent<SkeletonHealth>();
         SecurityGuardHealth guard = hit.collider.GetComponentInParent<SecurityGuardHealth>();
         ClownHealth clown = hit.collider.GetComponentInParent<ClownHealth>();
+        BomberHealth bomber = hit.collider.GetComponentInParent<BomberHealth>();
 
         if (zombie != null && !zombie.IsDead)
         {
@@ -174,6 +175,16 @@ public class FlareProjectile : NetworkBehaviour
         {
             clown.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
             FlareBurnEffect.SpawnAttached(burnEffectPrefab, clown.transform, null, null, null, clown, _shooterRoot, _shooterHealth);
+        }
+        else if (bomber != null && !bomber.IsDead)
+        {
+            // Impact alone will not quite finish him; the burn does, which is why a flare across a corridor
+            // is the clean answer to a Bomber. If the impact IS lethal he cooks off right here, at range.
+            bomber.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
+            if (!bomber.IsDead)
+                FlareBurnEffect.SpawnAttached(burnEffectPrefab, bomber.transform, null, null, null, null, _shooterRoot, _shooterHealth, bomber);
+            else
+                FlareBurnEffect.SpawnWorld(burnEffectPrefab, point + normal * 0.05f);
         }
         else
         {

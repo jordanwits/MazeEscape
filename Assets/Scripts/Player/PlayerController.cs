@@ -326,6 +326,7 @@ public partial class PlayerController : MonoBehaviour
     readonly HashSet<SkeletonHealth> _meleeHitSkeletons = new();
     readonly HashSet<SecurityGuardHealth> _meleeHitGuards = new();
     readonly HashSet<ClownHealth> _meleeHitClowns = new();
+    readonly HashSet<BomberHealth> _meleeHitBombers = new();
     bool _meleeHitSkeletonThisSwing;
     const string EnemyLayerName = "Enemy";
     NetworkPlayerCombat _networkPlayerCombat;
@@ -664,8 +665,11 @@ public partial class PlayerController : MonoBehaviour
         if (_ragdollController != null && _ragdollController.IsGettingUp)
             return;
 
+        // The RPS gate tests ConsumesCancelInput, not IsInteractive: the panel closes on the same gamepad B press
+        // that is also the drop/crouch fallback binding, and this Update runs after the overlay's (execution order
+        // 100 vs 0) — the one extra blocked frame keeps that press from falling through to HandleDropInput.
         if (PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive
-            || SkeletonRpsOverlayController.IsInteractive || CarnivalStoreOverlayController.IsInteractive)
+            || SkeletonRpsOverlayController.ConsumesCancelInput || CarnivalStoreOverlayController.IsInteractive)
         {
             CancelThrowCharge();
             _moveInput = Vector2.zero;
@@ -1614,6 +1618,11 @@ public partial class PlayerController : MonoBehaviour
         // Directional melee recoil kick (fired from the hit-SFX methods on connect). Before the early-returns so
         // it always springs back to center even if control is momentarily lost mid-recovery.
         UpdateMeleeCameraKick();
+
+        // Single camera write for all three shake sources above, stamped on the neutral look pose the shake
+        // layer resolves itself — so it stays correct on frames where Update never wrote that pose (overlay
+        // open, paused, getting up). Must stay after every source that contributes an offset.
+        ApplyComposedViewShake();
 
         // Sprint / energy-drink FOV kick. Before the early-returns so the FOV still eases back to base
         // while control is lost (ragdoll/death); self-gates to the local player's enabled view camera.
@@ -2888,6 +2897,7 @@ public partial class PlayerController : MonoBehaviour
         _meleeHitSkeletons.Clear();
         _meleeHitGuards.Clear();
         _meleeHitClowns.Clear();
+        _meleeHitBombers.Clear();
         _meleeHitSkeletonThisSwing = false;
         for (int i = 0; i < hitCount; i++)
         {
@@ -2975,6 +2985,21 @@ public partial class PlayerController : MonoBehaviour
 
                 float damage = clownHealth.MaxHealth * damageFraction;
                 if (clownHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
+                    damagedAny = true;
+                continue;
+            }
+
+            // Bomber (Level02 suicide charger). Flimsy — 4 punches or 2 sword swings — but killing him cooks
+            // off the dynamite he is holding, and at melee range that blast is centred on you. Shooting him
+            // is the safe answer; this branch exists so the reckless one is at least available.
+            BomberHealth bomberHealth = col.GetComponentInParent<BomberHealth>();
+            if (bomberHealth != null && !bomberHealth.IsDead)
+            {
+                if (!_meleeHitBombers.Add(bomberHealth))
+                    continue;
+
+                float damage = bomberHealth.MaxHealth * damageFraction;
+                if (bomberHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                     damagedAny = true;
                 continue;
             }
