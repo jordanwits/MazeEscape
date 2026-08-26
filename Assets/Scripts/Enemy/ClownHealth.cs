@@ -12,6 +12,10 @@ using UnityEngine;
 /// Level02 — this pool is bigger than the Severance guard's — but he now goes down if a group commits to
 /// it, which is what makes the shop's weapons worth buying.
 ///
+/// Killing him does not clear the level: <see cref="Die"/> asks
+/// <see cref="ProceduralMazeCoordinator.TryServerScheduleMazeHunterRespawn{T}"/> for a replacement, placed
+/// well away from the players and out of their line of sight so the arrival is never witnessed.
+///
 /// Death is a full-body animation (no ragdoll — the Clown rig has none), driven by
 /// <see cref="ClownAI.HandleDeath"/> and replicated to clients through <see cref="NetworkClownAvatar"/>'s
 /// dead-state NetworkVariable.
@@ -31,6 +35,23 @@ public class ClownHealth : MonoBehaviour
              "or 5 sword swings, against the guard's 8 and 4 and a zombie's 4 and 2. Absolute damage is " +
              "deliberately unaffected — it already scales off the bigger pool.")]
     [SerializeField, Range(0.05f, 1f)] float meleeDamageScale = 0.4f;
+
+    [Header("Respawn")]
+    [Tooltip("Kill him and the carnival sends another one out — Level02 is never permanently cleared of its " +
+             "hunter. The replacement is placed by ProceduralMazeCoordinator at a cell that is both far from " +
+             "every player and out of their line of sight, so nobody watches him pop in. The type guard means " +
+             "this only ever spawns a Clown: on a level whose Enemy 2 slot holds something else it no-ops.")]
+    [SerializeField] bool respawnOnDeath = true;
+    [Tooltip("Seconds between his death and the replacement appearing. Long enough that the kill reads as won " +
+             "before the next one starts hunting — and long enough that the party has usually moved on from " +
+             "the body. The wait runs on the coordinator, not on the corpse, so it survives the despawn below.")]
+    [SerializeField] float respawnDelaySeconds = 45f;
+    [Tooltip("Hard floor on how far the replacement may spawn from the nearest player. Cells closer than this " +
+             "are only used when no out-of-sight cell in the maze is farther away.")]
+    [SerializeField] float respawnMinPlayerDistance = 25f;
+    [Tooltip("Preferred distance, taken whenever the maze offers it. Past WorldRenderCuller's 48m cut the " +
+             "spawn is not even drawn, so this sits just inside that — line of sight is checked either way.")]
+    [SerializeField] float respawnPreferredPlayerDistance = 45f;
 
     [Header("Death")]
     [SerializeField] ClownAI clownAI;
@@ -114,6 +135,15 @@ public class ClownHealth : MonoBehaviour
 
         if (clownAI != null)
             clownAI.HandleDeath();
+
+        // Queued on the coordinator (a DontDestroyOnLoad component on the NetworkManager object), NOT here:
+        // this corpse despawns itself a minute from now, which would cancel a coroutine started on it. The
+        // coordinator also drops the queued respawn if the level changes before it fires.
+        if (respawnOnDeath)
+        {
+            ProceduralMazeCoordinator.TryServerScheduleMazeHunterRespawn<ClownAI>(
+                respawnDelaySeconds, respawnMinPlayerDistance, respawnPreferredPlayerDistance);
+        }
 
         StartCoroutine(DeathCleanupRoutine());
     }

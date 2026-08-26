@@ -1953,6 +1953,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ClownHealth
   maxHealth: 400
   meleeDamageScale: 0.4
+  respawnOnDeath: 1
+  respawnDelaySeconds: 45
+  respawnMinPlayerDistance: 25
+  respawnPreferredPlayerDistance: 45
   clownAI: {fileID: 5039438277813972725}
   disableColliderDelay: 3
   destroyDelay: 60

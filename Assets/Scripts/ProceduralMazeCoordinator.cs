@@ -9,7 +9,7 @@ using UnityEngine.AI;
 using UnityEngine.SceneManagement;
 
 [DisallowMultipleComponent]
-public class ProceduralMazeCoordinator : MonoBehaviour
+public partial class ProceduralMazeCoordinator : MonoBehaviour
 {
     struct MazeCell
     {
@@ -501,6 +501,9 @@ public class ProceduralMazeCoordinator : MonoBehaviour
         _loggedMazeWarnings.Clear();
         _placedCellPrefabs.Clear();
         _exitHallCells.Clear();
+        // Invalidates any hunter respawn queued against the previous build (see the partial in
+        // ProceduralMazeCoordinator.HunterRespawn.cs).
+        ClearHunterRespawnContext();
         ValidateConfiguredPieceSetup();
 
         ServerDespawnAllLevelNetworkObjects();
@@ -3526,6 +3529,20 @@ public class ProceduralMazeCoordinator : MonoBehaviour
 
         Transform enemiesRoot = CreateChild(mazeRoot, "GeneratedEnemies");
         float yOffset = _config.MazeEnemySpawnHeight;
+
+        // Kept alive past this build so a killed hunter can be replaced without regenerating the maze
+        // (ProceduralMazeCoordinator.HunterRespawn.cs). The pool is EVERY candidate cell — otherCells plus the
+        // reserved hunterCells — not just the far-from-start subset the first hunter was restricted to. That
+        // rule exists to keep him off the party's starting doorstep; by the time one dies the party is
+        // somewhere else entirely, and what a respawn needs is distance from where they are NOW, which the
+        // picker measures for itself.
+        if (hunterPrefab != null)
+        {
+            CacheHunterRespawnContext(
+                hunterPrefab, otherCells, hunterCells, enemiesRoot, mazeRoot, start, exit,
+                cellSize, yOffset, seed, interiorPlan, mazeTrapRoots);
+        }
+
         bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
         List<Vector3> placedEnemyPositions = new(totalSpawns);
         float minSeparationXZ = ResolveMazeEnemyMinSeparationXZ(cellSize);
