@@ -2566,19 +2566,22 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             && _state != JailorState.JailDelivery)
             return;
 
-        PlayerHealth ph = _targetHealth;
-        if (ph == null)
-            return;
-
         ResumeNavObstacleAvoidanceAfterCarry();
 
-        NetworkObject playerNo = ph.GetComponent<NetworkObject>();
-        if (playerNo != null)
-            playerNo.TryRemoveParent(true);
+        // The prisoner's PlayerHealth can already be gone here (disconnect / despawn mid-carry). Only the pose
+        // restore below depends on it — clearing the carry flag must not, because leaving it set strands that
+        // player's NetworkTransform on server authority forever and their owner can never move again.
+        PlayerHealth ph = _targetHealth;
+        Transform pt = ph != null ? ph.transform : (_carriedAvatar != null ? _carriedAvatar.transform : null);
+        if (pt != null)
+        {
+            NetworkObject playerNo = pt.GetComponent<NetworkObject>();
+            if (playerNo != null)
+                playerNo.TryRemoveParent(true);
 
-        Transform pt = ph.transform;
-        if (pt != null && _carryPreservedPlayerLossyScale.sqrMagnitude > 1e-8f)
-            ApplyDesiredLossyScale(pt, _carryPreservedPlayerLossyScale);
+            if (_carryPreservedPlayerLossyScale.sqrMagnitude > 1e-8f)
+                ApplyDesiredLossyScale(pt, _carryPreservedPlayerLossyScale);
+        }
 
         if (_carriedAvatar != null)
         {

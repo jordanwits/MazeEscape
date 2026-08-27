@@ -18,7 +18,7 @@ public class PlayerFootIK : MonoBehaviour
     [SerializeField] PlayerHealth playerHealth;
 
     [Header("Ground probing")]
-    [Tooltip("Layers feet plant on. When zero, auto-built in Awake: everything except this object's layer, Ignore Raycast and Enemy.")]
+    [Tooltip("Layers feet plant on. When zero, auto-built in Awake: everything (this character's own colliders are filtered out per hit instead).")]
     [SerializeField] LayerMask groundMask;
     [SerializeField] float castUp = 0.45f;
     [SerializeField] float castDown = 0.85f;
@@ -48,6 +48,7 @@ public class PlayerFootIK : MonoBehaviour
     float _pelvisOffset;
     float _pelvisVelocity;
     Renderer _visibilityProbe;
+    readonly RaycastHit[] _groundHits = new RaycastHit[16];
 
     void Awake()
     {
@@ -61,16 +62,14 @@ public class PlayerFootIK : MonoBehaviour
             playerHealth = GetComponent<PlayerHealth>();
         _visibilityProbe = GetComponentInChildren<SkinnedMeshRenderer>();
 
+        // Everything, including the layers this used to exclude: a downed teammate's ragdoll (player layer),
+        // an enemy body (Enemy layer) and another player's blocking proxy capsule (Ignore Raycast) are all
+        // surfaces the feet must stand ON. Excluding them let the ray pass straight through and plant on the
+        // floor underneath, dropping the pelvis — and with it the first-person camera — by up to maxStepDown
+        // for as long as the player stood on the body. A layer mask cannot express "not me" (other players
+        // share this layer), so this character's own colliders are filtered per hit in SolveFoot instead.
         if (groundMask.value == 0)
-        {
-            int mask = ~0;
-            mask &= ~(1 << gameObject.layer);
-            mask &= ~(1 << 2); // Ignore Raycast
-            int enemyLayer = LayerMask.NameToLayer("Enemy");
-            if (enemyLayer >= 0)
-                mask &= ~(1 << enemyLayer);
-            groundMask = mask;
-        }
+            groundMask = ~0;
     }
 
     void OnAnimatorIK(int layerIndex)
@@ -116,8 +115,7 @@ public class PlayerFootIK : MonoBehaviour
         plant *= _masterWeight;
 
         if (plant <= 0.001f
-            || !Physics.Raycast(animatedPos + Vector3.up * castUp, Vector3.down, out RaycastHit hit,
-                castUp + castDown, groundMask, QueryTriggerInteraction.Ignore))
+            || !TryCastGroundBelow(animatedPos + Vector3.up * castUp, castUp + castDown, out RaycastHit hit))
         {
             animator.SetIKPositionWeight(goal, 0f);
             animator.SetIKRotationWeight(goal, 0f);
@@ -150,6 +148,41 @@ public class PlayerFootIK : MonoBehaviour
         animator.SetIKRotationWeight(goal, plant * rotationWeightScale * Mathf.InverseLerp(0f, maxSlopeDegrees, slope));
 
         return delta * plant;
+    }
+
+    /// <summary>
+    /// Nearest downward hit that is not part of this character (its own capsule, ragdoll bones, blocking
+    /// proxy or held items). Allocation-free: one reused hit buffer, no sorting.
+    /// </summary>
+    bool TryCastGroundBelow(Vector3 origin, float distance, out RaycastHit hit)
+    {
+        hit = default;
+
+        int count = Physics.RaycastNonAlloc(
+            origin, Vector3.down, _groundHits, distance, groundMask, QueryTriggerInteraction.Ignore);
+
+        bool found = false;
+        float nearest = float.PositiveInfinity;
+        for (int i = 0; i < count; i++)
+        {
+            Transform hitTransform = _groundHits[i].transform;
+            if (hitTransform == null || hitTransform.IsChildOf(transform))
+                continue;
+            // A near-vertical face is never something a sole rests on: with the mask now admitting other
+            // characters, the NEAREST hit under a foot can be the SIDE of a teammate's blocking capsule or an
+            // enemy's controller standing beside us, which hitched the pelvis whenever players crowded. Any
+            // genuine floor or step passes this; a capsule wall does not.
+            if (_groundHits[i].normal.y < 0.5f)
+                continue;
+            if (_groundHits[i].distance >= nearest)
+                continue;
+
+            nearest = _groundHits[i].distance;
+            hit = _groundHits[i];
+            found = true;
+        }
+
+        return found;
     }
 
     bool IsGated()

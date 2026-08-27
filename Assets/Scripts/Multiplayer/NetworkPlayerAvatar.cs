@@ -35,6 +35,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     [SerializeField] Transform flashlightAimPivot;
     [Tooltip("Local offset for the remote-only light proxy while another player is holding a flashlight.")]
     [SerializeField] Vector3 remoteFlashlightProxyLocalPosition = new Vector3(0f, 0f, 0.08f);
+    [Tooltip("Exponential smoothing applied to a remote player's replicated look pitch. Higher settles faster; 30 lands in roughly 0.1s.")]
+    [SerializeField] float remoteLookPitchSmoothSharpness = 30f;
 
     readonly NetworkVariable<float> _flashlightLookPitchDegrees = new NetworkVariable<float>(
         0f,
@@ -78,6 +80,14 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     OwnerNetworkAnimator _ownerNetworkAnimator;
     Light _remoteFlashlightProxyLight;
     Transform _blockingProxyRoot;
+    // Authored (standing) capsule metrics, captured before any crouch can shrink the CharacterController.
+    float _standingCapsuleHeight;
+    Vector3 _standingCapsuleCenter;
+    bool _blockingProxyCrouched;
+    float _smoothedLookPitchDegrees;
+    bool _hasSmoothedLookPitch;
+    bool _warnedParentedWorldScaleRepair;
+    Coroutine _carryReleaseObserverResyncRoutine;
 
     public bool HasHeldFlashlight => playerInventory != null
         && playerInventory.IsSpawned
@@ -155,6 +165,45 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         if (TryGetComponent(out OwnerNetworkTransform ownerNetworkTransform))
             ownerNetworkTransform.RefreshAuthorityAfterCarryStateChanged();
         ApplyPresentation(IsOwner);
+
+        if (!previousValue || newValue || IsOwner || !isActiveAndEnabled)
+            return;
+
+        if (_carryReleaseObserverResyncRoutine != null)
+            StopCoroutine(_carryReleaseObserverResyncRoutine);
+        _carryReleaseObserverResyncRoutine = StartCoroutine(ResnapObserverAfterCarryRelease());
+    }
+
+    /// <summary>
+    /// The carry-state flip re-initializes the NetworkTransform interpolators from this observer's CURRENT
+    /// transform, which is still the last carried pose under the Jailor — the released player then hangs at
+    /// that stale spot until they move again. Re-seat on the replicated state instead, but only once the
+    /// unparent has actually landed: the ParentSync message arrives separately from the NetworkVariable, and
+    /// SnapObserverToLatestNetworkState deliberately no-ops while parented under another NetworkObject.
+    /// </summary>
+    System.Collections.IEnumerator ResnapObserverAfterCarryRelease()
+    {
+        const float maxWaitSeconds = 1f;
+        float waited = 0f;
+        while (transform.parent != null && waited < maxWaitSeconds)
+        {
+            // Unscaled: the pause menu sets timeScale to 0, where deltaTime never advances and this bail-out
+            // would wait forever on an unparent that never lands.
+            waited += Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        if (TryGetComponent(out OwnerNetworkTransform ownerNetworkTransform))
+        {
+            // Repeat over a couple of frames so it also corrects a snap that settles a frame or two later.
+            for (int i = 0; i < 3; i++)
+            {
+                ownerNetworkTransform.SnapObserverToLatestNetworkState();
+                yield return null;
+            }
+        }
+
+        _carryReleaseObserverResyncRoutine = null;
     }
 
     void OnSealedInJailCellChanged(bool previousValue, bool newValue)
@@ -189,6 +238,12 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             avatarRenderers = GetComponentsInChildren<Renderer>(true);
         if (playerInventory == null)
             playerInventory = GetComponent<NetworkPlayerInventory>();
+
+        if (characterController != null)
+        {
+            _standingCapsuleHeight = characterController.height;
+            _standingCapsuleCenter = characterController.center;
+        }
 
         ResolveFlashlightAimPivot();
         EnsureAnimationSync();
@@ -260,14 +315,46 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         _flashlightLookPitchDegrees.Value = pitchDegrees;
     }
 
+    /// <summary>
+    /// Aims a remote player's pitch pivot (head / flashlight direction) at the replicated look pitch. The
+    /// NetworkVariable only changes on network ticks, so applying it raw made remote heads and beams step
+    /// visibly; ease toward it instead. Frame-rate independent, and it snaps on the first frame so a newly
+    /// visible avatar never sweeps up from zero.
+    /// </summary>
+    void UpdateRemoteLookPitch()
+    {
+        if (!IsSpawned || IsOwner || _isDormant || flashlightAimPivot == null)
+        {
+            _hasSmoothedLookPitch = false;
+            return;
+        }
+
+        float target = _flashlightLookPitchDegrees.Value;
+        if (!_hasSmoothedLookPitch)
+        {
+            _smoothedLookPitchDegrees = target;
+            _hasSmoothedLookPitch = true;
+        }
+        else
+        {
+            _smoothedLookPitchDegrees = Mathf.Lerp(
+                _smoothedLookPitchDegrees,
+                target,
+                1f - Mathf.Exp(-Mathf.Max(0.01f, remoteLookPitchSmoothSharpness) * Time.deltaTime));
+        }
+
+        flashlightAimPivot.localRotation = Quaternion.Euler(_smoothedLookPitchDegrees, 0f, 0f);
+    }
+
     void Update()
     {
-        if (IsSpawned && !IsOwner && !_isDormant && flashlightAimPivot != null)
-            flashlightAimPivot.localRotation = Quaternion.Euler(_flashlightLookPitchDegrees.Value, 0f, 0f);
+        UpdateRemoteLookPitch();
 
         UpdateRemoteFlashlightProxy();
 
-        EnforceUnitScaleWhenUnparented();
+        UpdateRemoteBlockingProxyCrouchFit();
+
+        EnforceUnitWorldScale();
 
         bool shouldBeDormant = ShouldBeDormant();
 
@@ -278,27 +365,63 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     }
 
     /// <summary>
-    /// Players are authored and simulated at root scale 1; the only legitimate exception is while parented
+    /// Players are authored and simulated at WORLD scale 1; the only legitimate exception is while parented
     /// under the scaled Jailor root during a carry, where localScale compensates so lossy scale stays 1.
     /// On client machines the carry release could strand a shrunken root scale (the ParentSync message,
     /// NetworkTransform scale interpolation and the carried-NetworkVariable authority flip race each other)
     /// and nothing ever restored it — the first-person camera then rides the shrunken head bone, which reads
     /// as "the POV sank to my chest". Scale sync is disabled on the player NetworkTransform now; this
     /// per-frame invariant repairs any residue, including corruption from before the fix.
+    ///
+    /// The parented branch is belt-and-braces, NOT the cure for a live "renders taller during the carry"
+    /// symptom: NGO applies the carry parenting client-side with worldPositionStays = true, which already
+    /// leaves the compensated localScale (≈0.58 under the Jailor's root, lossy ≈1), and nothing else writes
+    /// player scale. It exists to catch residue and reparenting races. If its warning ever fires, something
+    /// NEW is corrupting player scale — treat the log as the tripwire it is rather than expected noise.
     /// </summary>
-    void EnforceUnitScaleWhenUnparented()
+    void EnforceUnitWorldScale()
     {
-        if (transform.parent != null || IsCarriedByJailor)
+        Transform parent = transform.parent;
+        if (parent == null)
+        {
+            _warnedParentedWorldScaleRepair = false;
+
+            Vector3 localScale = transform.localScale;
+            if (IsUnitScale(localScale))
+                return;
+
+            transform.localScale = Vector3.one;
+            Debug.LogWarning(
+                $"[{nameof(NetworkPlayerAvatar)}] Repaired non-unit player root scale {localScale} -> (1,1,1) on '{name}'.",
+                this);
+            return;
+        }
+
+        Vector3 lossyScale = transform.lossyScale;
+        if (IsUnitScale(lossyScale))
             return;
 
-        Vector3 scale = transform.localScale;
-        if (Mathf.Abs(scale.x - 1f) < 0.001f && Mathf.Abs(scale.y - 1f) < 0.001f && Mathf.Abs(scale.z - 1f) < 0.001f)
+        Vector3 parentLossy = parent.lossyScale;
+        transform.localScale = new Vector3(
+            1f / Mathf.Max(Mathf.Abs(parentLossy.x), 1e-6f),
+            1f / Mathf.Max(Mathf.Abs(parentLossy.y), 1e-6f),
+            1f / Mathf.Max(Mathf.Abs(parentLossy.z), 1e-6f));
+
+        // Once per parenting episode: a parent whose own scale animates would otherwise log every frame.
+        if (_warnedParentedWorldScaleRepair)
             return;
 
-        transform.localScale = Vector3.one;
+        _warnedParentedWorldScaleRepair = true;
         Debug.LogWarning(
-            $"[{nameof(NetworkPlayerAvatar)}] Repaired non-unit player root scale {scale} -> (1,1,1) on '{name}'.",
+            $"[{nameof(NetworkPlayerAvatar)}] Repaired non-unit player world scale {lossyScale} -> (1,1,1) while parented under '{parent.name}' on '{name}'.",
             this);
+    }
+
+    static bool IsUnitScale(Vector3 scale)
+    {
+        return Mathf.Abs(scale.x - 1f) < 0.001f
+            && Mathf.Abs(scale.y - 1f) < 0.001f
+            && Mathf.Abs(scale.z - 1f) < 0.001f;
     }
 
     public override void OnNetworkSpawn()
@@ -469,11 +592,41 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         if (capsule == null)
             return;
 
-        capsule.center = characterController.center;
+        float height = _standingCapsuleHeight;
+        Vector3 center = _standingCapsuleCenter;
+
+        if (_blockingProxyCrouched && playerController != null)
+        {
+            // Same top-down shrink as PlayerController.ApplyCrouchCollider, so the feet stay planted.
+            float feetY = _standingCapsuleCenter.y - _standingCapsuleHeight * 0.5f;
+            height = Mathf.Min(playerController.CrouchColliderHeight, _standingCapsuleHeight);
+            center.y = feetY + height * 0.5f;
+        }
+
+        capsule.center = center;
         capsule.radius = characterController.radius;
         float minHeight = characterController.radius * 2f;
-        capsule.height = characterController.height < minHeight ? minHeight : characterController.height;
+        capsule.height = height < minHeight ? minHeight : height;
         capsule.direction = 1;
+    }
+
+    /// <summary>
+    /// Keeps the remote blocking capsule the same size as the player it stands in for while they crouch.
+    /// The crouch shrink is owner-local (it writes the owner's CharacterController) and a non-owner puppet's
+    /// CharacterController is disabled and never shrinks, so the proxy otherwise stayed at full standing
+    /// height around a crouched teammate. Reads the replicated Crouching animator bool.
+    /// </summary>
+    void UpdateRemoteBlockingProxyCrouchFit()
+    {
+        if (_blockingProxyRoot == null || playerController == null || !IsSpawned || IsOwner || _isDormant)
+            return;
+
+        bool crouched = playerController.IsCrouching;
+        if (crouched == _blockingProxyCrouched)
+            return;
+
+        _blockingProxyCrouched = crouched;
+        SyncBlockingProxyCapsuleToCharacterController();
     }
 
     void SetBlockingProxyActive(bool active)
@@ -562,6 +715,29 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         _remoteFlashlightProxyLight.shadowStrength = sourceLight.shadowStrength;
     }
 
+    /// <summary>
+    /// True when the flashlight named by this player's selected slot exists on THIS peer and is attached under
+    /// the avatar. The real item lights its own beam on every peer (the inventory view refresh is not
+    /// ownership-gated), so the proxy light exists only to cover the window where that item has not resolved
+    /// yet — e.g. a late joiner before the local level build registers the world pickup. Running both at once
+    /// gave observers two slightly diverging beams at double brightness.
+    /// </summary>
+    bool IsSelectedFlashlightItemAttachedLocally()
+    {
+        if (playerInventory == null || !playerInventory.IsSpawned)
+            return false;
+
+        ulong itemId = playerInventory.GetSlotItemId(playerInventory.SelectedSlotIndex);
+        if (itemId == 0UL
+            || !GrabbableInventoryItem.TryGetRegistered(itemId, out GrabbableInventoryItem item)
+            || item == null)
+        {
+            return false;
+        }
+
+        return item is FlashlightItem flashlight && flashlight.transform.IsChildOf(transform);
+    }
+
     void UpdateRemoteFlashlightProxy()
     {
         Transform holdPoint = null;
@@ -578,6 +754,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             && !_isDormant
             && hasFlashlight
             && lightOn
+            && !IsSelectedFlashlightItemAttachedLocally()
             && TryGetFlashlightAttachmentTargets(out holdPoint, out followTransform)
             && holdPoint != null;
 

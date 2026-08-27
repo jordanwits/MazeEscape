@@ -1339,16 +1339,41 @@ public class MultiplayerSessionController : MonoBehaviour
         }
         else
         {
-            playerObject.transform.SetPositionAndRotation(spawnPosition, spawnRotation);
+            ServerMoveSpawnedPlayerObject(playerObject, spawnPosition, spawnRotation);
         }
 
         NetworkPlayerRespawn playerRespawn = playerObject.GetComponent<NetworkPlayerRespawn>();
         if (playerRespawn != null)
             playerRespawn.ApplyInitialSpawn(spawnPosition, spawnRotation);
         else
-            playerObject.transform.SetPositionAndRotation(spawnPosition, spawnRotation);
+            ServerMoveSpawnedPlayerObject(playerObject, spawnPosition, spawnRotation);
 
         return true;
+    }
+
+    /// <summary>
+    /// Moves an already-spawned player object from the server. A client-owned player's transform is owner
+    /// authoritative, so writing it here fights that owner's interpolator (the host sees the player jump and
+    /// rubber-band straight back); the owner performs the move itself from
+    /// <see cref="NetworkPlayerRespawn.ApplyInitialSpawn"/>'s owner-targeted ClientRpc. Only the instance that
+    /// actually holds transform authority writes — that includes the host's own player and any player the
+    /// server is driving during a Jailor carry.
+    /// </summary>
+    static void ServerMoveSpawnedPlayerObject(NetworkObject playerObject, Vector3 position, Quaternion rotation)
+    {
+        if (playerObject == null)
+            return;
+
+        bool hasNetworkedTransform = playerObject.TryGetComponent(out OwnerNetworkTransform ownerNetTransform)
+            && ownerNetTransform.IsSpawned;
+
+        if (hasNetworkedTransform && !ownerNetTransform.CanCommitToTransform)
+            return;
+
+        playerObject.transform.SetPositionAndRotation(position, rotation);
+
+        if (hasNetworkedTransform)
+            ownerNetTransform.Teleport(position, rotation, Vector3.one);
     }
 
     /// <summary>The lobby-selected character prefab for a client; falls back to the default player prefab.</summary>

@@ -64,6 +64,7 @@ public class PlayerRagdollController : MonoBehaviour
     readonly List<Rigidbody> _ragdollBodies = new List<Rigidbody>();
     readonly List<Collider> _ragdollColliders = new List<Collider>();
     MovementViewBob _movementViewBob;
+    NetworkPlayerAvatar _networkPlayerAvatar;
 
     Coroutine _autoRecoverRoutine;
     Coroutine _landRecoverRoutine;
@@ -162,6 +163,7 @@ public class PlayerRagdollController : MonoBehaviour
             animator = GetComponentInChildren<Animator>();
 
         _movementViewBob = GetComponent<MovementViewBob>();
+        _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
 
         _getUpBackHash = Animator.StringToHash(getUpBackTrigger);
         _getUpFrontHash = Animator.StringToHash(getUpFrontTrigger);
@@ -929,6 +931,11 @@ public class PlayerRagdollController : MonoBehaviour
         if (!IsGettingUp || IsRagdolled)
             return;
         if (characterController != null && characterController.enabled)
+            return;
+        // A non-owner puppet keeps its CharacterController permanently disabled, so the guard above never
+        // catches it: planting the feet by writing the root Y there would fight the NetworkTransform
+        // interpolator for the whole remote get-up. Only the owner (and offline play) plants.
+        if (_networkPlayerAvatar != null && _networkPlayerAvatar.IsSpawned && !_networkPlayerAvatar.IsOwner)
             return;
 
         ApplyGetUpFootPlanting();

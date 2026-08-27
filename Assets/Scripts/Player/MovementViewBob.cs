@@ -37,11 +37,14 @@ public class MovementViewBob : MonoBehaviour
     int _speedParamHash;
     int _groundedParamHash;
     int _meleeLayerIndexCache = int.MinValue; // sentinel: layer not yet resolved
+    NetworkPlayerAvatar _avatar;
 
     void Awake()
     {
         if (animator == null)
             animator = GetComponentInChildren<Animator>();
+
+        _avatar = GetComponent<NetworkPlayerAvatar>();
 
         _speedParamHash = Animator.StringToHash(speedParameter);
         _groundedParamHash = Animator.StringToHash(groundedParameter);
@@ -74,6 +77,14 @@ public class MovementViewBob : MonoBehaviour
     /// </summary>
     public Vector3 ComputePendingBobWorldOffset()
     {
+        // Owner-only: the bob is a local presentation flourish driven by this machine's animator phase, and it
+        // is not replicated. Running it on a remote player's puppet lifts their hips out of sync with the pose
+        // the owner is actually broadcasting, which reads as the whole body bouncing vertically. Offline play
+        // (no spawned avatar) keeps the bob. PlayerItemHoldIK compensates through this same call, so the
+        // held-item anchor stays consistent either way.
+        if (_avatar != null && _avatar.IsSpawned && !_avatar.IsOwner)
+            return Vector3.zero;
+
         if (animator == null || !animator.isHuman || !animator.isInitialized)
             return Vector3.zero;
 

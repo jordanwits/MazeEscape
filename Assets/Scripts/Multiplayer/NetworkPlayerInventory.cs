@@ -378,8 +378,91 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         RaiseChangedAndRefresh();
     }
 
+    // A hotbar slot names an item by id, and that id only resolves once the matching world pickup exists on
+    // THIS peer. A joining client instantiates the deterministic maze pickups when it builds the level —
+    // after this inventory spawned and ran its first refresh — and nothing re-ran the refresh afterwards, so
+    // late joiners saw teammates empty-handed for the rest of the run. Retry briefly while anything is
+    // unresolved, then give up with one warning.
+    const float UnresolvedSlotRetryIntervalSeconds = 0.5f;
+    const float UnresolvedSlotRetryWindowSeconds = 15f;
+    float _unresolvedSlotRetryUntil;
+    float _nextUnresolvedSlotRetryTime;
+
+    /// <summary>
+    /// Re-applies the held-item view after this peer finishes building its local level geometry, which is
+    /// when the deterministic world pickups finally register. Safe to call on any peer.
+    /// </summary>
+    public void RefreshHeldItemViewAfterLocalWorldBuild()
+    {
+        if (!IsSpawned)
+            return;
+
+        RaiseChangedAndRefresh();
+    }
+
+    void ArmUnresolvedHeldItemRetry()
+    {
+        // Arm once per episode. The retry itself refreshes the view, and on the server that writes the
+        // per-slot charge NetworkVariables, whose change callbacks land straight back here — re-arming on
+        // every call slid the deadline forever, so a permanently unresolvable slot retried for the rest of
+        // the session and the give-up warning never printed. Cleared (below) the moment everything resolves.
+        if (_unresolvedSlotRetryUntil > 0f)
+            return;
+
+        if (!IsSpawned || !HasUnresolvedHeldItemSlot())
+            return;
+
+        _unresolvedSlotRetryUntil = Time.time + UnresolvedSlotRetryWindowSeconds;
+        _nextUnresolvedSlotRetryTime = Time.time + UnresolvedSlotRetryIntervalSeconds;
+    }
+
+    bool HasUnresolvedHeldItemSlot()
+    {
+        for (int i = 0; i < MaxSlotCount; i++)
+        {
+            ulong id = GetSlotItemId(i);
+            if (id == 0UL)
+                continue;
+            if (!GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) || g == null)
+                return true;
+        }
+
+        return false;
+    }
+
+    void TickUnresolvedHeldItemRetry()
+    {
+        if (_unresolvedSlotRetryUntil <= 0f)
+            return;
+
+        if (!IsSpawned || !HasUnresolvedHeldItemSlot())
+        {
+            _unresolvedSlotRetryUntil = 0f;
+            return;
+        }
+
+        if (Time.time < _nextUnresolvedSlotRetryTime)
+            return;
+
+        if (Time.time >= _unresolvedSlotRetryUntil)
+        {
+            _unresolvedSlotRetryUntil = 0f;
+            Debug.LogWarning(
+                $"[{nameof(NetworkPlayerInventory)}] Gave up resolving a held item for '{name}': a hotbar slot"
+                + $" names an item that never registered on this peer within {UnresolvedSlotRetryWindowSeconds:0}s.",
+                this);
+            return;
+        }
+
+        _nextUnresolvedSlotRetryTime = Time.time + UnresolvedSlotRetryIntervalSeconds;
+        if (playerController != null)
+            playerController.RefreshInventoryViewFromNetwork();
+    }
+
     void Update()
     {
+        TickUnresolvedHeldItemRetry();
+
         if (!IsServer || !IsSpawned)
             return;
         float dt = Time.deltaTime;
@@ -432,6 +515,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
     {
         OnInventoryChanged?.Invoke();
         playerController?.RefreshInventoryViewFromNetwork();
+        ArmUnresolvedHeldItemRetry();
     }
 
     public bool CanPickup(GrabbableInventoryItem item)
@@ -1543,6 +1627,62 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             gun.PlayFireEffects();
     }
 
+    /// <summary>
+    /// Owner-side: the empty-chamber click. Purely cosmetic and owner-predicted, so it never went through the
+    /// server at all — which made it inaudible to anyone else. Same narrowcast as the fire FX above.
+    /// </summary>
+    public void NotifyFlareDryFire()
+    {
+        if (!IsSpawned)
+            return;
+
+        if (IsServer)
+        {
+            PlayFlareDryFireFxForNonOwnerClients();
+            return;
+        }
+
+        RequestFlareDryFireFxServerRpc();
+    }
+
+    [ServerRpc]
+    void RequestFlareDryFireFxServerRpc(ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+
+        PlayFlareDryFireFxForNonOwnerClients();
+    }
+
+    void PlayFlareDryFireFxForNonOwnerClients()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null)
+            return;
+
+        s_FlareFxObserverClientIds.Clear();
+        foreach (ulong id in nm.ConnectedClientsIds)
+        {
+            if (id != OwnerClientId)
+                s_FlareFxObserverClientIds.Add(id);
+        }
+
+        if (s_FlareFxObserverClientIds.Count == 0)
+            return;
+
+        PlayFlareDryFireFxClientRpc(new ClientRpcParams
+        {
+            Send = new ClientRpcSendParams { TargetClientIds = s_FlareFxObserverClientIds.ToArray() }
+        });
+    }
+
+    [ClientRpc]
+    void PlayFlareDryFireFxClientRpc(ClientRpcParams clientRpcParams = default)
+    {
+        if (ServerTryResolveSelectedFlareGunLocalView(out FlareGunItem gun))
+            gun.PlayDryFireSfx();
+    }
+
     /// <summary>Client-side resolve of this inventory's selected flare gun (replicated slot data + local registry).</summary>
     bool ServerTryResolveSelectedFlareGunLocalView(out FlareGunItem gun)
     {
@@ -2178,6 +2318,93 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
         door.ApplyProceduralRemoteOpenState(open);
         DoorNetworkStateStore.ServerPublish(door);
+    }
+
+    // ----- Locked-door rattle (bystanders) -----
+
+    static readonly List<ulong> s_LockedRattleObserverClientIds = new List<ulong>(16);
+
+    /// <summary>Server-side rate limit per player, so a mashed interact key can't flood the rattle.</summary>
+    const float LockedRattleServerCooldownSeconds = 0.5f;
+
+    float _serverNextLockedRattleTime;
+
+    /// <summary>
+    /// Owner-side: the interactor's own door already rattled locally (an instant cosmetic). Trying a locked
+    /// door is a real noise in the corridor though, so tell the other peers to rattle their copy of it. Keyed
+    /// like every other procedural-door relay — DoorId plus an identity hint — because these doors aren't
+    /// spawned NetworkObjects.
+    /// </summary>
+    public void NotifyLockedDoorRattle(HingeInteractDoor door)
+    {
+        if (door == null || !IsSpawned)
+            return;
+
+        ulong doorId = door.DoorId;
+        Vector3 hintPosition = door.IdentityHintPosition;
+
+        if (IsServer)
+        {
+            ServerBroadcastLockedDoorRattle(doorId, hintPosition, OwnerClientId);
+            return;
+        }
+
+        RequestLockedDoorRattleServerRpc(doorId, hintPosition);
+    }
+
+    [ServerRpc]
+    void RequestLockedDoorRattleServerRpc(ulong doorId, Vector3 hintPosition, ServerRpcParams serverRpcParams = default)
+    {
+        if (serverRpcParams.Receive.SenderClientId != OwnerClientId)
+            return;
+
+        ServerBroadcastLockedDoorRattle(doorId, hintPosition, serverRpcParams.Receive.SenderClientId);
+    }
+
+    void ServerBroadcastLockedDoorRattle(ulong doorId, Vector3 hintPosition, ulong senderClientId)
+    {
+        if (!IsServer)
+            return;
+
+        float now = Time.time;
+        if (now < _serverNextLockedRattleTime)
+            return;
+        _serverNextLockedRattleTime = now + LockedRattleServerCooldownSeconds;
+
+        if (!HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door)
+            || door == null
+            || !door.IsLocked)
+            return;
+        if (!TryGetConnectedPlayerPosition(senderClientId, out Vector3 playerPosition))
+            return;
+        if (!door.IsInInteractRange(playerPosition))
+            return;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null)
+            return;
+
+        s_LockedRattleObserverClientIds.Clear();
+        foreach (ulong id in nm.ConnectedClientsIds)
+        {
+            if (id != senderClientId)
+                s_LockedRattleObserverClientIds.Add(id);
+        }
+
+        if (s_LockedRattleObserverClientIds.Count == 0)
+            return;
+
+        PlayLockedDoorRattleClientRpc(doorId, hintPosition, new ClientRpcParams
+        {
+            Send = new ClientRpcSendParams { TargetClientIds = s_LockedRattleObserverClientIds.ToArray() }
+        });
+    }
+
+    [ClientRpc]
+    void PlayLockedDoorRattleClientRpc(ulong doorId, Vector3 hintPosition, ClientRpcParams clientRpcParams = default)
+    {
+        if (HingeInteractDoor.TryResolveForSync(doorId, hintPosition, out HingeInteractDoor door) && door != null)
+            door.PlayLockedNoKeyFeedback();
     }
 
     // Procedural maze HingeInteractDoors are built locally on every peer from the deterministic seed and are not

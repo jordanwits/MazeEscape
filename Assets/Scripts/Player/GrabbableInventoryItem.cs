@@ -486,23 +486,45 @@ public class GrabbableInventoryItem : MonoBehaviour
         return false;
     }
 
+    /// <summary>
+    /// Exact-id resolution for replicated item state that does not carry a type id (the untyped state Rpc,
+    /// the server's per-slot charge refresh). Has no nearest-match fallback for exactly the reason spelled out
+    /// on <see cref="TryResolveForStateByType"/>: an unresolved id means the real item has not registered on
+    /// this peer yet, and "nearest registered item within 8m" captured an unrelated world item and then
+    /// overwrote its id through <see cref="AssignNetworkItemId"/>. Failing is correct — the caller skips, and
+    /// <see cref="NetworkPlayerInventory"/> retries the refresh until the real item registers.
+    /// <paramref name="hintPosition"/> is retained for signature stability but no longer used.
+    /// </summary>
     public static bool TryResolveForState(ulong itemId, Vector3 hintPosition, out GrabbableInventoryItem item)
     {
         if (TryGetRegistered(itemId, out item) && item != null)
             return true;
 
-        return TryFindNearestRegistered(hintPosition, null, out item);
+        item = null;
+        return false;
     }
 
+    /// <summary>
+    /// Exact-id resolution for replicated item STATE (held / stashed / world pose). Like
+    /// <see cref="TryResolveForPickup"/> this has no nearest-match fallback by design: while an id is still
+    /// unresolved — a joining client before its local level build registers the maze pickups — "nearest item
+    /// of this type within 8m" cheerfully picked up an unrelated world item (a teammate's glowstick lying
+    /// nearby), yanked it into a remote player's hand and overwrote its id through
+    /// <see cref="AssignNetworkItemId"/>. Failing is the correct outcome: <see cref="NetworkPlayerInventory"/>
+    /// retries the refresh until the real item registers. <paramref name="hintPosition"/> is retained for
+    /// signature stability but no longer used.
+    /// </summary>
     public static bool TryResolveForStateByType(ulong itemId, Vector3 hintPosition, byte itemTypeId, out GrabbableInventoryItem item)
     {
-        if (TryGetRegistered(itemId, out item) && item != null)
+        if (TryGetRegistered(itemId, out item)
+            && item != null
+            && (itemTypeId == TypeIdNone || item.ItemTypeId == itemTypeId))
         {
-            if (itemTypeId == TypeIdNone || item.ItemTypeId == itemTypeId)
-                return true;
+            return true;
         }
 
-        return TryFindNearestRegisteredByType(hintPosition, null, itemTypeId, out item);
+        item = null;
+        return false;
     }
 
     public void AssignNetworkItemId(ulong itemId)
@@ -861,59 +883,6 @@ public class GrabbableInventoryItem : MonoBehaviour
         }
 
         AttachToHoldPoint(holdPoint, followTransform);
-    }
-
-    static bool TryFindNearestRegistered(Vector3 hintPosition, bool? requireHeldState, out GrabbableInventoryItem item)
-    {
-        const float maxMatchDistance = 8f;
-        item = null;
-        float bestDistanceSquared = maxMatchDistance * maxMatchDistance;
-
-        foreach (GrabbableInventoryItem candidate in Registered.Values)
-        {
-            if (candidate == null)
-                continue;
-
-            if (requireHeldState.HasValue && candidate.IsHeld != requireHeldState.Value)
-                continue;
-
-            float distanceSquared = (candidate.transform.position - hintPosition).sqrMagnitude;
-            if (distanceSquared > bestDistanceSquared)
-                continue;
-
-            bestDistanceSquared = distanceSquared;
-            item = candidate;
-        }
-
-        return item != null;
-    }
-
-    static bool TryFindNearestRegisteredByType(Vector3 hintPosition, bool? requireHeldState, byte itemTypeId, out GrabbableInventoryItem item)
-    {
-        const float maxMatchDistance = 8f;
-        item = null;
-        float bestDistanceSquared = maxMatchDistance * maxMatchDistance;
-
-        foreach (GrabbableInventoryItem candidate in Registered.Values)
-        {
-            if (candidate == null)
-                continue;
-
-            if (itemTypeId != TypeIdNone && candidate.ItemTypeId != itemTypeId)
-                continue;
-
-            if (requireHeldState.HasValue && candidate.IsHeld != requireHeldState.Value)
-                continue;
-
-            float distanceSquared = (candidate.transform.position - hintPosition).sqrMagnitude;
-            if (distanceSquared > bestDistanceSquared)
-                continue;
-
-            bestDistanceSquared = distanceSquared;
-            item = candidate;
-        }
-
-        return item != null;
     }
 
     ulong ComputeStableItemId()

@@ -400,11 +400,33 @@ public partial class PlayerController
     // =========================================================================================
     const string SeatedAnimatorParameter = "Seated";
     bool _blackjackSeated;
+    bool _pendingBlackjackSeatExit;
     Vector3 _preSeatPosition;
     Quaternion _preSeatRotation;
 
-    void TeleportPlayer(Vector3 worldPos, Quaternion worldRot)
+    OwnerNetworkTransform _ownerNetworkTransformCache;
+    OwnerNetworkTransform SelfOwnerNetworkTransform => _ownerNetworkTransformCache != null
+        ? _ownerNetworkTransformCache
+        : (_ownerNetworkTransformCache = GetComponent<OwnerNetworkTransform>());
+
+    /// <summary>
+    /// Moves the player and flags the jump as a teleport for observers. Returns false when the move was NOT
+    /// applied because this peer is not the transform authority — a caller must not book its pose state as
+    /// done in that case.
+    /// </summary>
+    bool TeleportPlayer(Vector3 worldPos, Quaternion worldRot)
     {
+        OwnerNetworkTransform netTransform = SelfOwnerNetworkTransform;
+        bool hasNetworkedTransform = netTransform != null && netTransform.IsSpawned;
+
+        if (hasNetworkedTransform && !netTransform.CanCommitToTransform)
+        {
+            // Not the transform authority (the server drives the pose while the Jailor carries this player),
+            // so a direct write here would only fight the interpolator.
+            netTransform.SnapObserverToLatestNetworkState();
+            return false;
+        }
+
         // Briefly disable the CharacterController so its solver doesn't fight the direct position write.
         bool reenable = characterController != null && characterController.enabled;
         if (reenable)
@@ -412,22 +434,35 @@ public partial class PlayerController
         transform.SetPositionAndRotation(worldPos, worldRot);
         if (reenable)
             characterController.enabled = true;
+
+        // Sitting down / standing up is a jump, not motion: without the teleport flag observers interpolate
+        // it and see the player slide across the floor onto the stool.
+        if (hasNetworkedTransform)
+            netTransform.Teleport(worldPos, worldRot, Vector3.one);
+
+        return true;
     }
 
     /// <summary>Teleport the player onto the stool and start the sitting animation.</summary>
     public void EnterBlackjackSeat(Vector3 worldPos, Quaternion worldRot)
     {
-        if (!_blackjackSeated)
-        {
-            // Remember where we stood so we can stand back up there (the seated root is raised onto the stool).
-            _preSeatPosition = transform.position;
-            _preSeatRotation = transform.rotation;
-            _blackjackSeated = true;
-        }
+        // Captured before the move; only committed once it actually lands. A dropped teleport must not mark
+        // the player seated — the body never reached the stool, and the sit pose would play on their feet.
+        Vector3 preSeatPosition = transform.position;
+        Quaternion preSeatRotation = transform.rotation;
 
         _horizontalVelocity = Vector3.zero;
         CancelThrowCharge();
-        TeleportPlayer(worldPos, worldRot);
+        if (!TeleportPlayer(worldPos, worldRot))
+            return;
+
+        if (!_blackjackSeated)
+        {
+            // Remember where we stood so we can stand back up there (the seated root is raised onto the stool).
+            _preSeatPosition = preSeatPosition;
+            _preSeatRotation = preSeatRotation;
+            _blackjackSeated = true;
+        }
 
         if (driveAnimator && animator != null)
             animator.SetBool(SeatedAnimatorParameter, true);
@@ -444,11 +479,41 @@ public partial class PlayerController
 
         if (_blackjackSeated)
         {
-            TeleportPlayer(_preSeatPosition, _preSeatRotation);
-            _blackjackSeated = false;
+            // Give up the seat state only once the restoring move lands. Clearing it after a dropped teleport
+            // (the server owns the pose while the Jailor carries this player) consumed the pre-seat restore
+            // and left the player pinned at the stool pose with movement locked, with nothing to retry from —
+            // the overlay drives this exit exactly once.
+            if (TeleportPlayer(_preSeatPosition, _preSeatRotation))
+            {
+                _blackjackSeated = false;
+                _pendingBlackjackSeatExit = false;
+            }
+            else
+            {
+                _pendingBlackjackSeatExit = true;
+            }
         }
 
         // Restore the hold pose for whatever is selected now that we're standing again.
         ApplyHoldPoseAnimatorParameter();
+    }
+
+    /// <summary>
+    /// Re-attempts a seat exit whose restoring teleport was dropped for lack of transform authority. Ticked
+    /// from Update ahead of the local-control gate, because the drop happens precisely while control is off
+    /// (the Jailor carry) — the retry lands on the first frame authority comes back.
+    /// </summary>
+    void TickPendingBlackjackSeatExit()
+    {
+        if (!_pendingBlackjackSeatExit)
+            return;
+
+        if (!_blackjackSeated)
+        {
+            _pendingBlackjackSeatExit = false;
+            return;
+        }
+
+        ExitBlackjackSeat();
     }
 }

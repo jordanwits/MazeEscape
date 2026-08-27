@@ -23,6 +23,8 @@ public class NetworkPlayerRespawn : NetworkBehaviour
 
     MultiplayerProjectSettings _projectSettings;
     Coroutine _respawnRoutine;
+    Coroutine _remoteRespawnResyncRoutine;
+    OwnerNetworkTransform _ownerNetworkTransform;
     float _ignorePitKillsUntil;
 
     void Awake()
@@ -37,6 +39,8 @@ public class NetworkPlayerRespawn : NetworkBehaviour
             _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
         if (ragdollController == null)
             ragdollController = GetComponent<PlayerRagdollController>();
+        if (_ownerNetworkTransform == null)
+            _ownerNetworkTransform = GetComponent<OwnerNetworkTransform>();
 
         _projectSettings = Resources.Load<MultiplayerProjectSettings>("MultiplayerProjectSettings");
     }
@@ -221,6 +225,31 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     void HandleDeadStateChanged(bool previousValue, bool currentValue)
     {
         ApplyHealthState(_currentHealth.Value, currentValue);
+
+        // A REMOTE player's respawn only reaches this machine as the dead flag clearing plus a teleported
+        // transform state; the local sweep below never runs for them (it is owner-gated). Re-seat this one
+        // avatar's observer transform so it does not stay parked at the death spot until they move again.
+        if (!previousValue || currentValue || IsOwner || !isActiveAndEnabled)
+            return;
+
+        if (_remoteRespawnResyncRoutine != null)
+            StopCoroutine(_remoteRespawnResyncRoutine);
+        _remoteRespawnResyncRoutine = StartCoroutine(ResyncThisObserverTransformAfterRemoteRespawn());
+    }
+
+    IEnumerator ResyncThisObserverTransformAfterRemoteRespawn()
+    {
+        // Same repeat as the owner-side sweep: the respawn settles over a couple of frames (ragdoll exit,
+        // life-state replication, the teleported transform state landing).
+        for (int i = 0; i < 3; i++)
+        {
+            if (_ownerNetworkTransform != null)
+                _ownerNetworkTransform.SnapObserverToLatestNetworkState();
+            yield return null;
+        }
+
+        Physics.SyncTransforms();
+        _remoteRespawnResyncRoutine = null;
     }
 
     void HandleCurrentHealthChanged(float previousValue, float currentValue)
@@ -241,16 +270,33 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     {
         ragdollController?.ForceExitRagdollWithoutGroundSnap();
 
-        bool wasCharacterControllerEnabled = characterController != null && characterController.enabled;
+        bool hasNetworkedTransform = _ownerNetworkTransform != null && _ownerNetworkTransform.IsSpawned;
 
-        if (characterController != null && wasCharacterControllerEnabled)
-            characterController.enabled = false;
+        if (hasNetworkedTransform && !_ownerNetworkTransform.CanCommitToTransform)
+        {
+            // Not the transform authority for this player — this is the server's copy of a client-owned
+            // avatar. That owner applies the very same move through the owner-targeted ClientRpc and
+            // replicates it here; writing the transform locally as well only fights the interpolator, which
+            // is the visible "teleport, then rubber-band back" on the host.
+            _ownerNetworkTransform.SnapObserverToLatestNetworkState();
+        }
+        else
+        {
+            bool wasCharacterControllerEnabled = characterController != null && characterController.enabled;
 
-        transform.SetPositionAndRotation(respawnPosition, respawnRotation);
+            if (characterController != null && wasCharacterControllerEnabled)
+                characterController.enabled = false;
 
-        bool isDead = playerHealth != null ? playerHealth.IsDead : _isDead.Value;
-        if (characterController != null && !isDead)
-            characterController.enabled = true;
+            transform.SetPositionAndRotation(respawnPosition, respawnRotation);
+
+            // Flag the jump as a teleport, otherwise observers interpolate it as a streak across the level.
+            if (hasNetworkedTransform)
+                _ownerNetworkTransform.Teleport(respawnPosition, respawnRotation, Vector3.one);
+
+            bool isDead = playerHealth != null ? playerHealth.IsDead : _isDead.Value;
+            if (characterController != null && !isDead)
+                characterController.enabled = true;
+        }
 
         // After THIS client's own player respawns (ragdoll exit + CharacterController teleport above), the
         // OwnerNetworkTransform interpolators for every OTHER (remote) player on this client can be left seated at a
