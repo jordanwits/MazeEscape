@@ -83,7 +83,7 @@ public class RagdollTrap : MonoBehaviour
     void AutoAssignTrapHitClipInEditor()
     {
         if (trapHitMetallicClip == null)
-            trapHitMetallicClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/MetalicWack.wav");
+            trapHitMetallicClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Dungeon/MetalicWack.wav");
     }
 #endif
 
