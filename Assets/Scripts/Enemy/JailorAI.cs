@@ -320,6 +320,9 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
     ObstacleAvoidanceType _resumeObstacleAvoidanceAfterCarry;
     bool _suspendedAvoidanceDuringCarry;
     float _suppressChaseUntil;
+    /// <summary>Set when a grab wind-up ends out of reach, so he closes the distance again before re-lunging.</summary>
+    float _nextGrabAllowedTime;
+    const float GrabAbortRetryDelaySeconds = 0.6f;
     float _carryPhaseStartedTime;
     Vector3 _carryPreservedPlayerLossyScale = Vector3.one;
     bool _isTraversingOffMeshJump;
@@ -844,6 +847,20 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
         RecoverNavMeshIfOffMesh();
         UpdatePitStuckWatchdog();
+
+        // A prisoner who dies in his arms (skeleton bash, pit, teammate friendly fire) has to be released HERE.
+        // The state dispatch below only runs the Grabbing/Carrying cases while the target is ALIVE, so a death
+        // drops him straight into patrol — and ReleaseCarriedPlayerIfNeeded stops answering the moment that
+        // happens, because its own guard requires one of those states. The body would stay parented under him
+        // with IsCarriedByJailor stuck true, which keeps the owner's transform server-authoritative and their
+        // controller disabled: no movement for the rest of the section, even after respawning.
+        // This runs BEFORE the sensing scan on purpose — that scan starts acquiring again the instant the
+        // target reads dead, and a new live target landing in _targetHealth while the carry state was still
+        // set would make the next UpdateCarrying treat a never-grabbed player as the cargo.
+        // JailDelivery is deliberately excluded: it owns its own drop through UpdateJailDelivery.
+        if ((_state == JailorState.Grabbing || _state == JailorState.Carrying)
+            && (_targetHealth == null || _targetHealth.IsDead))
+            ReleaseCarriedPlayerIfNeeded();
 
         // Throttle the acquisition scan. RefreshTargetFromSightAndHearing() already no-ops once a target is
         // held, so this only paces the expensive search-phase OverlapSphere/rays; chase/grab/carry stay per-frame.
@@ -1605,10 +1622,27 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (Time.time < _suppressChaseUntil)
             return false;
 
+        if (Time.time < _nextGrabAllowedTime)
+            return false; // a wind-up just missed: chase back into reach before lunging again
+
         if (carryAttach == null)
             return false;
 
         if (_targetHealth != null && ShouldJailorIgnorePlayer(_targetHealth))
+            return false;
+
+        return IsTargetWithinGrabReach();
+    }
+
+    /// <summary>
+    /// Range + vertical + forward-cone test against the target's CURRENT position. Checked when the grab starts
+    /// and again when the hands close (<see cref="TryAttachCarriedPlayer"/>): the wind-up runs for
+    /// <see cref="attachFallbackDelay"/> and a sprinting player crosses several metres in that window, so the
+    /// attach must not parent someone who has already broken away.
+    /// </summary>
+    bool IsTargetWithinGrabReach()
+    {
+        if (_target == null)
             return false;
 
         Vector3 to = _target.position - transform.position;
@@ -1731,6 +1765,18 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             return;
         if (carryAttach == null)
             return;
+
+        // Nothing between ShouldStartGrab and here re-checks reach, and the attach below teleports the player
+        // into the carry pose from wherever they now are — so without this a player who sprinted clear during
+        // the ~1 s wind-up gets yanked backwards into his arms and an initiated grab is unmissable. Let them go
+        // and give chase instead; the retry delay stops a target hovering at the range edge from locking him
+        // into a wind-up/abort stutter on the spot.
+        if (!IsTargetWithinGrabReach())
+        {
+            _nextGrabAllowedTime = Time.time + GrabAbortRetryDelaySeconds;
+            EnterChase();
+            return;
+        }
 
         NetworkObject playerNo = _targetHealth.GetComponent<NetworkObject>();
         if (playerNo == null)

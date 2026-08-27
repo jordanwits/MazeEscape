@@ -216,6 +216,8 @@ public class MultiplayerSessionController : MonoBehaviour
         _networkManager.OnServerStarted += HandleServerStarted;
         _networkManager.OnClientConnectedCallback += HandleClientConnected;
         _networkManager.OnClientDisconnectCallback += HandleClientDisconnected;
+        _networkManager.OnServerStopped += HandleNetworkManagerStopped;
+        _networkManager.OnClientStopped += HandleNetworkManagerStopped;
         SceneManager.sceneLoaded += HandleSceneLoaded;
 
         if (_steamLobby == null)
@@ -235,6 +237,8 @@ public class MultiplayerSessionController : MonoBehaviour
         _networkManager.OnServerStarted -= HandleServerStarted;
         _networkManager.OnClientConnectedCallback -= HandleClientConnected;
         _networkManager.OnClientDisconnectCallback -= HandleClientDisconnected;
+        _networkManager.OnServerStopped -= HandleNetworkManagerStopped;
+        _networkManager.OnClientStopped -= HandleNetworkManagerStopped;
         SceneManager.sceneLoaded -= HandleSceneLoaded;
         UnregisterLobbyMessageHandlers();
 
@@ -844,6 +848,12 @@ public class MultiplayerSessionController : MonoBehaviour
 
         if (clientId == _networkManager.LocalClientId && !_networkManager.IsServer)
         {
+            // Release the Steam lobby too, exactly as ShutdownSession does. That path is unreachable here (NGO
+            // has already dropped IsListening, so IsSessionActive is false), and SteamLobbyService.OnDisable
+            // never runs on the DontDestroyOnLoad bootstrap — so a dropped client stayed a member of the host's
+            // dead lobby, kept reporting a live lobby id it does not own, and leaked that membership outright
+            // once it next hosted or joined and overwrote the handle.
+            _steamLobby?.LeaveLobby();
             ClearLobbyState();
             UpdateStatus("Disconnected from host.");
             return;
@@ -855,6 +865,18 @@ public class MultiplayerSessionController : MonoBehaviour
             UpdateStatus($"Client {clientId} disconnected.");
         }
     }
+
+    /// <summary>
+    /// Clear the lobby-handler bookkeeping in lock-step with NGO shutdown. <see cref="NetworkManager.Shutdown"/>
+    /// destroys the <see cref="Unity.Netcode.CustomMessagingManager"/> and the next <c>StartHost</c>/<c>StartClient</c>
+    /// builds a fresh one, so handlers registered on the old manager are gone. Without this, a client dropped by
+    /// the host (host quit, kick, transport drop) keeps <c>_lobbyMessageHandlersRegistered</c> stuck true —
+    /// <see cref="EnsureLobbyMessageHandlersRegistered"/> then short-circuits on it for the rest of the process and
+    /// the next lobby that player hosts or joins registers nothing: ready-ups are dropped so START never enables,
+    /// and a joiner's crew roster never populates. <see cref="ProximityVoiceSession"/> guards the identical hazard
+    /// the same way. Safe to run after teardown: the unregister resets both flags when the manager is already gone.
+    /// </summary>
+    void HandleNetworkManagerStopped(bool _) => UnregisterLobbyMessageHandlers();
 
     void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
     {

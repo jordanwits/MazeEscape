@@ -384,6 +384,13 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
             RefreshTarget();
         }
 
+        // A player in the Jailor's arms is off the table for every other damage source on the level (ZombieAI,
+        // SecurityGuardAI, RagdollTrap, PitKillZone, TripwireZone all reject them) — they have no control and no
+        // counter-play. Drop them here too: the retention test below only looks at IsDead, so a skeleton that was
+        // already chasing would otherwise follow the Jailor and bash his cargo to death.
+        if (IsPlayerCarriedByJailor(_targetHealth))
+            ClearTarget();
+
         Vector3 desiredHorizontalVelocity = Vector3.zero;
         bool inHitReaction = _state == SkeletonState.HitReaction && Time.time < _hitReactionEndTime;
 
@@ -391,11 +398,16 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
         {
             if (inHitReaction)
                 UpdateHitReaction();
-            else
+            else if (_actionRoutine == null)
             {
                 ClearTarget();
                 desiredHorizontalVelocity = UpdatePatrol();
             }
+            // else: a bash or throw is still committed — its own tail picks the next state a moment from now.
+            // Falling into UpdatePatrol here would overwrite _state (its first statement), which is exactly what
+            // ApplyMovement reads to keep the body planted during Bash/Throw, so the skeleton would glide off
+            // down the corridor with the swing still playing. That happens on the most ordinary path there is:
+            // the bash that lands the killing blow, which leaves ~0.6 s of recovery running against a dead target.
         }
         else
         {
@@ -429,7 +441,14 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
     /// <summary>Pick throw vs bash vs chase based on range and lane clearance. Returns desired move velocity.</summary>
     Vector3 UpdateCombat(float distanceToTarget)
     {
-        if (distanceToTarget <= bashRange)
+        // The bash needs line of sight for the same reason the throw below does. Without it a target held through
+        // a thin wall or a closed door — legal, since heard-sprint acquisition needs no sight at all — parks the
+        // skeleton against that wall swinging on cooldown forever: CanLandBash suppresses the damage but only
+        // after the wind-up, and neither recovery path can fire (UpdateAntiStuck needs a live path, which
+        // StopNavigation just cleared; TrackChaseStall only runs in Chase). Falling through repaths it instead.
+        bool bashLos = !bashRequiresLineOfSight
+            || HasLineOfSight(_targetHealth, detectionLineOfSightMask, detectionLineOfSightHeight, Vector3.zero);
+        if (distanceToTarget <= bashRange && bashLos)
         {
             FaceTarget();
             StopNavigation();
@@ -902,6 +921,8 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
     {
         if (targetHealth == null || targetHealth.IsDead)
             return false;
+        if (IsPlayerCarriedByJailor(targetHealth))
+            return false; // grabbed mid-swing: the bash whiffs rather than hitting a defenceless prisoner
 
         Vector3 toTarget = targetHealth.transform.position - transform.position;
         toTarget.y = 0f;
@@ -958,6 +979,8 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
 
         if (attackerHealth == null || attackerHealth.IsDead)
             return;
+        if (IsPlayerCarriedByJailor(attackerHealth))
+            return; // being hauled to the cells: never retaliate onto a target that cannot fight back
 
         _targetHealth = attackerHealth;
         _target = attackerHealth.transform;
@@ -1160,6 +1183,8 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
             PlayerHealth candidate = hit.GetComponentInParent<PlayerHealth>();
             if (candidate == null || candidate.IsDead)
                 continue;
+            if (IsPlayerCarriedByJailor(candidate))
+                continue;
             if (IsUnreachableSuppressed(candidate))
                 continue;
             if (!IsWithinDetectionCone(candidate.transform.position))
@@ -1182,6 +1207,8 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
             {
                 PlayerHealth candidate = players[i];
                 if (candidate == null || candidate.IsDead)
+                    continue;
+                if (IsPlayerCarriedByJailor(candidate))
                     continue;
                 if (IsUnreachableSuppressed(candidate))
                     continue;
@@ -1208,6 +1235,8 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
             {
                 PlayerHealth candidate = players[i];
                 if (candidate == null || candidate.IsDead)
+                    continue;
+                if (IsPlayerCarriedByJailor(candidate))
                     continue;
                 if (IsUnreachableSuppressed(candidate))
                     continue;
@@ -1241,6 +1270,20 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
 
         PlayerController pc = playerHealth.GetComponent<PlayerController>();
         return pc != null && pc.IsAudiblySprintingForAi;
+    }
+
+    /// <summary>
+    /// True while the Jailor has this player in his arms. Carried players are input-locked with no collider, so
+    /// every damage source on the level excludes them — see <c>ZombieAI.IsPlayerCarriedByJailor</c>,
+    /// <c>SecurityGuardAI.IsPlayerCarriedByJailor</c>, <c>PitKillZone</c>, <c>RagdollTrap</c>, <c>TripwireZone</c>.
+    /// </summary>
+    static bool IsPlayerCarriedByJailor(PlayerHealth playerHealth)
+    {
+        if (playerHealth == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = playerHealth.GetComponent<NetworkPlayerAvatar>();
+        return avatar != null && avatar.IsCarriedByJailor;
     }
 
     /// <summary>True while a target we just gave up on (because it was unreachable) is still being ignored.</summary>
