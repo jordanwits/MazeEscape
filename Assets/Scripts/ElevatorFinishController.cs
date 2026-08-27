@@ -535,16 +535,48 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
     /// <inheritdoc />
     public bool ServerValidateClose(HingeInteractDoor door, ulong senderClientId)
     {
+        if (!IsSpawned)
+        {
+            // Offline play mode: the replicated counters are not running and there is exactly one player, so
+            // their own position is the whole answer — the same rule GetOccupancyForPrompt already uses for the
+            // local prompt.
+            return IsOfflineSession
+                && TryGetOfflineLocalPlayerFeetPosition(out Vector3 feetPosition)
+                && IsPositionInsideInterior(feetPosition);
+        }
+
         if (!IsServer)
             return false;
 
         return _livingInside.Value == _livingRequired.Value && _livingRequired.Value > 0;
     }
 
+    /// <summary>Offline there is one living player; find them so the close gate has a position to test.</summary>
+    static bool TryGetOfflineLocalPlayerFeetPosition(out Vector3 feetPosition)
+    {
+        feetPosition = Vector3.zero;
+
+        IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
+        for (int i = 0; i < players.Count; i++)
+        {
+            PlayerHealth player = players[i];
+            if (player == null || player.IsDead)
+                continue;
+
+            feetPosition = player.transform.position;
+            return true;
+        }
+
+        return false;
+    }
+
     /// <inheritdoc />
     public void ServerOnCloseAuthorized(HingeInteractDoor door, ulong senderClientId)
     {
-        if (!IsServer)
+        // Offline counts as authority here, exactly as Update's own gate does — otherwise the single-player
+        // finish elevator arms nothing, and CompleteElevatorSequenceAfterDoorsIdle's !IsSpawned branch (written
+        // for precisely this case) is unreachable.
+        if (!HasElevatorAuthority)
             return;
 
         if (_pendingSceneAfterDoorsIdle)

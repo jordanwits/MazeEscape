@@ -307,6 +307,26 @@ public class FlareGunItem : GrabbableInventoryItem
         _reloadRoutine = null;
     }
 
+    /// <summary>
+    /// The reload animation parents <see cref="handShell"/> onto the holder's left-hand bone, i.e. inside the
+    /// avatar. A section switch parks only the GUN in the carry-over pen and destroys the avatar, so a reload
+    /// still running at that moment took the shell down with it — and every later reload silently skipped the
+    /// shell for the rest of the run, on every peer, because it is guarded on the now-null reference.
+    /// </summary>
+    protected override void OnBeforeLevelCarryOver()
+    {
+        if (_reloadRoutine != null)
+        {
+            StopCoroutine(_reloadRoutine);
+            _reloadRoutine = null;
+        }
+
+        if (chamberShell != null)
+            chamberShell.SetActive(false);
+
+        ReturnHandShell();
+    }
+
     void ReturnHandShell()
     {
         if (handShell == null)

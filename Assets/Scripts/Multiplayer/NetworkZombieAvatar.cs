@@ -1,3 +1,4 @@
+using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
@@ -78,10 +79,28 @@ public class NetworkZombieAvatar : NetworkBehaviour
 
     void ApplyDeadState(bool isDead)
     {
-        if (!isDead || zombieAI == null)
+        if (!isDead)
             return;
 
-        zombieAI.HandleDeath();
+        if (zombieAI != null)
+            zombieAI.HandleDeath();
+
+        // ZombieHealth disables the corpse's colliders after its own delay, but that routine is server-only
+        // (Die() early-returns off-server), so observers keep the mirrored kinematic capsule standing where the
+        // zombie fell — an invisible body-block in the corridor on clients only, while the host walks straight
+        // through it, until the object despawns. Drop the stand-in on the SAME beat the server drops the real
+        // collider. Matches NetworkClownAvatar / NetworkSecurityGuardAvatar.
+        if (characterController != null && !IsServer)
+            StartCoroutine(DropCollisionProxyRoutine());
+    }
+
+    IEnumerator DropCollisionProxyRoutine()
+    {
+        float delay = zombieHealth != null ? zombieHealth.DisableColliderDelay : 0f;
+        if (delay > 0f)
+            yield return new WaitForSeconds(delay);
+
+        EnemyClientCollisionProxy.Deactivate(characterController);
     }
 
     void EnsureAnimationSync()

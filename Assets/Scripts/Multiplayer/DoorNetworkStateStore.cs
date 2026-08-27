@@ -158,14 +158,43 @@ public sealed class DoorNetworkStateStore : NetworkBehaviour
             return;
 
         ulong doorId = door.DoorId;
+        int bestIndex = -1;
+        float bestDistanceSquared = float.MaxValue;
+
         for (int i = 0; i < Instance._doors.Count; i++)
         {
             DoorNetState state = Instance._doors[i];
-            if (state.DoorId != doorId)
+            if (state.DoorId == doorId)
+            {
+                bestIndex = i;
+                break; // exact id — nothing beats it
+            }
+
+            // Id rescue. DoorId folds each ancestor's sibling index into its hash, and the maze root's index
+            // among scene roots legitimately differs per peer: a client receives the dynamically spawned
+            // NetworkObjects (enemies, traps, the elevator sync) as scene roots BEFORE it builds its own maze,
+            // while the host created the maze root first. So a late joiner's ids do not match the host's, and an
+            // exact-id-only lookup silently leaves every door at its build default — an unlocked, open jail cell
+            // on the joiner while the host has a prisoner sealed in. Every other consumer already survives this
+            // through TryResolveForSync's hint-position fallback; this path is the joiner's only chance to see
+            // the state at all, so it gets the same rescue. Nearest hint wins if several entries resolve here,
+            // which can happen while a paired leaf is still being built.
+            if (!HingeInteractDoor.TryResolveForSync(state.DoorId, state.HintPosition, out HingeInteractDoor resolved)
+                || resolved != door)
                 continue;
 
-            door.ApplyReplicatedDoorState(state.Locked, state.Open, animate: false);
-            return;
+            float distanceSquared = (state.HintPosition - door.IdentityHintPosition).sqrMagnitude;
+            if (distanceSquared >= bestDistanceSquared)
+                continue;
+
+            bestIndex = i;
+            bestDistanceSquared = distanceSquared;
         }
+
+        if (bestIndex < 0)
+            return;
+
+        DoorNetState chosen = Instance._doors[bestIndex];
+        door.ApplyReplicatedDoorState(chosen.Locked, chosen.Open, animate: false);
     }
 }

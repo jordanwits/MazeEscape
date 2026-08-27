@@ -338,6 +338,8 @@ public partial class PlayerController : MonoBehaviour
     const string ClownLayerName = "Clown";
     NetworkPlayerCombat _networkPlayerCombat;
     NetworkPlayerAvatar _networkPlayerAvatar;
+    /// <summary>True only for the machine-local player's avatar; gates writes to the global cursor state.</summary>
+    bool _isLocalAvatar = true;
     PlayerRagdollController _ragdollController;
     RagdollCameraCollision _ragdollCameraCollision;
     RagdollCameraDamper _ragdollCameraDamper;
@@ -508,6 +510,14 @@ public partial class PlayerController : MonoBehaviour
         _networkPlayerCombat = GetComponent<NetworkPlayerCombat>();
         _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
         _networkPlayerInventory = GetComponent<NetworkPlayerInventory>();
+
+        // Cursor lock/visibility is process-global, so only the LOCAL player's controller may write it. Ownership
+        // is not known until OnNetworkSpawn (NGO instantiates the prefab — running Awake/OnEnable — first), so in
+        // a live session start as "not mine" and let NetworkPlayerAvatar hand this over; a teammate's avatar must
+        // never free the local cursor on its way in or out. Offline, and on any rig without an avatar to tell us
+        // (dev scenes), this controller IS the local one.
+        bool inNetSession = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+        _isLocalAvatar = !inNetSession || _networkPlayerAvatar == null;
         _ragdollController = GetComponent<PlayerRagdollController>();
         _ragdollCameraCollision = GetComponent<RagdollCameraCollision>();
         _ragdollCameraDamper = GetComponent<RagdollCameraDamper>();
@@ -603,6 +613,33 @@ public partial class PlayerController : MonoBehaviour
             Destroy(_runtimeInputActions);
         UnhookCarnivalTickets();
         DestroyFlashbangOverlay();
+        DestroyOwnedHudRoots();
+    }
+
+    /// <summary>
+    /// Every instance builds these in Awake and parents them to the SHARED HUD canvas, which outlives the avatar
+    /// (it is a scene-level object, and avatars are destroyed on disconnect and on every section switch). Without
+    /// this they pile up: a departed teammate's crosshair and frozen hotbar row stay drawn on top of the surviving
+    /// players' own HUD. PlayerVitalsHud already cleans up its own roots the same way.
+    /// </summary>
+    void DestroyOwnedHudRoots()
+    {
+        if (_crosshairRoot != null)
+            Destroy(_crosshairRoot);
+        if (_inventorySlotsRoot != null)
+            Destroy(_inventorySlotsRoot);
+        if (_throwChargeBarRoot != null)
+            Destroy(_throwChargeBarRoot);
+        if (_ticketCounterRoot != null)
+            Destroy(_ticketCounterRoot);
+        if (_hudPrompt != null)
+            Destroy(_hudPrompt.gameObject);
+
+        _crosshairRoot = null;
+        _inventorySlotsRoot = null;
+        _throwChargeBarRoot = null;
+        _ticketCounterRoot = null;
+        _hudPrompt = null;
     }
 
     void Update()
@@ -742,6 +779,10 @@ public partial class PlayerController : MonoBehaviour
         {
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
+
+            // That click bought the cursor back; it must not also swing. Every attack — the punch, the flare
+            // shot, and the start of a throw charge — keys off the press, so dropping it here is enough.
+            attackPressed = false;
         }
 
         if (firstPersonLook)
@@ -1301,6 +1342,24 @@ public partial class PlayerController : MonoBehaviour
         ApplyLocalControlState();
     }
 
+    /// <summary>
+    /// Told by <see cref="NetworkPlayerAvatar"/> once ownership is resolved: is this the machine-local player's
+    /// own avatar? Gates every write to the process-global cursor state, which otherwise gets clobbered by
+    /// teammates' controllers spawning, despawning, or being told they have no local control.
+    /// </summary>
+    public void SetIsLocalAvatar(bool isLocal)
+    {
+        if (_isLocalAvatar == isLocal)
+            return;
+
+        _isLocalAvatar = isLocal;
+
+        // Awake deliberately left the cursor alone until it knew whose avatar this is; now that it is ours,
+        // apply the state this controller should already have been in.
+        if (isLocal)
+            ApplyLocalControlState();
+    }
+
     public void OnClientMazeCollidersBecameReady()
     {
         if (isActiveAndEnabled)
@@ -1452,6 +1511,8 @@ public partial class PlayerController : MonoBehaviour
 
     void ApplyCursorLock()
     {
+        if (!_isLocalAvatar)
+            return; // a teammate's avatar never writes the local cursor — see SetIsLocalAvatar
         if (!firstPersonLook || !lockCursor || PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive
             || SkeletonRpsOverlayController.IsInteractive || CarnivalStoreOverlayController.IsInteractive)
             return;
@@ -1462,6 +1523,8 @@ public partial class PlayerController : MonoBehaviour
 
     void ReleaseCursor()
     {
+        if (!_isLocalAvatar)
+            return; // ditto: a remote avatar spawning, despawning or losing control must not free our mouse
         if (!firstPersonLook || !lockCursor)
             return;
 

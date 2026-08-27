@@ -129,7 +129,19 @@ public sealed class PauseMenuController : MonoBehaviour
             Destroy(_ownEventSystem);
             _ownEventSystem = null;
         }
-        // PlayerController re-locks the cursor on its own once BlocksGameplayInput is false.
+
+        // Re-lock the cursor here, exactly as every other blocking overlay does on close (blackjack, skeleton
+        // RPS, prize counter). The old note claimed PlayerController picks this up once BlocksGameplayInput
+        // clears, but nothing watches that flag: ApplyCursorLock only runs on a local-control transition, which
+        // pausing never causes. So the cursor stayed free after unpausing until the player clicked — and that
+        // recapture click fell straight through into an unintended punch or throw.
+        if (!BlackjackOverlayController.IsInteractive
+            && !SkeletonRpsOverlayController.IsInteractive
+            && !CarnivalStoreOverlayController.IsInteractive)
+        {
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+        }
     }
 
     void EnsureEventSystem()

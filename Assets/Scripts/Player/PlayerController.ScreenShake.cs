@@ -119,12 +119,16 @@ public partial class PlayerController
     }
 
     /// <summary>
-    /// Writes the hunter-proximity ramp into the level's chromatic aberration. Gated to the locally-controlled
-    /// player so the remote-player PlayerController instances on this machine can never stomp the value.
+    /// Writes the hunter-proximity ramp into the level's chromatic aberration. Gated to the LOCAL PLAYER'S
+    /// controller — not to whether it currently has control — so remote-player instances on this machine can
+    /// never stomp the value, while the zero-clear above still lands when control is temporarily suspended.
+    /// Gating on control instead made the clear a no-op on the two paths that always fire at point-blank range
+    /// (death and a Jailor grab), freezing the smear at near-maximum through the ragdoll, the whole respawn wait
+    /// and the entire carry — nothing else writes or decays this value.
     /// </summary>
     void PushChasePanicAberration(float ramp01)
     {
-        if (!_hasLocalControl || chasePanicChromaticAberrationMax <= 0f)
+        if (!_isLocalAvatar || chasePanicChromaticAberrationMax <= 0f)
             return;
 
         MazePostFx fx = MazePostFx.Active;

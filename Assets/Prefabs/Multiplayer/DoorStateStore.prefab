@@ -14,6 +14,7 @@ GameObject:
   - component: {fileID: 5017289509900665114}
   - component: {fileID: 2432557601850032537}
   - component: {fileID: 514028271001183220}
+  - component: {fileID: 6426588097594826769}
   m_Layer: 0
   m_Name: DoorStateStore
   m_TagString: Untagged
@@ -112,4 +113,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: db80a8591a2779246b828b0a99eaf17a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CarnivalStoreNetworkStore
+  ShowTopMostFoldoutHeaderGroup: 1
+--- !u!114 &6426588097594826769
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1894828846414958821}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 92a74838de007544cbc11b378ce8c268, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::StackedDropNetworkStore
   ShowTopMostFoldoutHeaderGroup: 1

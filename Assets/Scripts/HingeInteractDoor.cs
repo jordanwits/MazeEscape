@@ -142,8 +142,12 @@ public class HingeInteractDoor : NetworkBehaviour
         if (validator == null)
             return true;
 
+        // With no session there is no server, but there is exactly one peer holding all authority — the same
+        // case ElevatorFinishController.HasElevatorAuthority accepts. Refusing it here left the offline close
+        // gate unreachable, so a single-player run could shut the finish elevator's doors and nothing happened.
         NetworkManager nm = NetworkManager.Singleton;
-        if (nm == null || !nm.IsListening || !nm.IsServer)
+        bool inSession = nm != null && nm.IsListening;
+        if (inSession && !nm.IsServer)
             return false;
 
         if (!validator.ServerValidateClose(this, senderClientId))
@@ -544,6 +548,14 @@ public class HingeInteractDoor : NetworkBehaviour
         {
             if (!_isOpenOffline && useKeyToUnlock && Time.unscaledTime < _mayOpenUnlockedTime)
                 return;
+
+            // A close offline has to run the same gate the networked path does. ServerOnCloseAuthorized is what
+            // arms the level advance, and only the networked path ever reached it — so offline the exit
+            // elevator's doors swung shut and the section never ended. Doors with no validator (every ordinary
+            // maze door) are unaffected: ServerInvokeCloseValidator returns true when there is nothing to ask.
+            if (_isOpenOffline && !ServerInvokeCloseValidator(closing: true, NetworkManager.ServerClientId))
+                return;
+
             bool wasOpen = _isOpenOffline;
             _isOpenOffline = !_isOpenOffline;
             if (wasOpen != _isOpenOffline)

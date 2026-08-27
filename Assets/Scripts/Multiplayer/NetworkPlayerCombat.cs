@@ -32,11 +32,36 @@ public class NetworkPlayerCombat : NetworkBehaviour
 
         if (IsServer)
         {
-            ServerApplyMeleeWithObserverSwoosh();
+            // Same adjudication the remote path gets. The host used to skip it entirely, so a host who died
+            // during the melee hit-delay still landed the blow (the swing coroutine keeps running — death only
+            // flips control flags, it does not disable PlayerController) and never advanced the server cooldown,
+            // while a client in the identical situation was rejected.
+            ServerTryApplyMelee();
             return;
         }
 
         RequestMeleeAttackServerRpc();
+    }
+
+    /// <summary>
+    /// Server-side alive + cooldown gate, then the swing. Shared by the host's direct call and the remote
+    /// <see cref="RequestMeleeAttackServerRpc"/> so both attackers are adjudicated identically.
+    /// </summary>
+    void ServerTryApplyMelee()
+    {
+        if (playerHealth != null && playerHealth.IsDead)
+            return;
+
+        float now = Time.time;
+        if (now < _serverNextMeleeTime)
+            return;
+
+        // Whichever weapon the attacker has selected — the sword's cooldown is longer than the punch's, and
+        // gating a sword swing on the punch value would let it be spammed.
+        float cooldown = playerController != null ? playerController.ActiveMeleeCooldownForServer : 0.8f;
+        _serverNextMeleeTime = now + cooldown;
+
+        ServerApplyMeleeWithObserverSwoosh();
     }
 
     [ServerRpc]
@@ -48,17 +73,7 @@ public class NetworkPlayerCombat : NetworkBehaviour
         // Server-side cooldown + alive gate. The client's TryMelee already gates these for fairness, but
         // those checks are bypassable; without enforcing them here, a client could spam melee or attack
         // while dead. Cooldown uses the same value the client uses so legitimate attacks always pass.
-        if (playerHealth != null && playerHealth.IsDead)
-            return;
-        float now = Time.time;
-        if (now < _serverNextMeleeTime)
-            return;
-        // Whichever weapon the attacker has selected — the sword's cooldown is longer than the punch's, and
-        // gating a sword swing on the punch value would let it be spammed.
-        float cooldown = playerController != null ? playerController.ActiveMeleeCooldownForServer : 0.8f;
-        _serverNextMeleeTime = now + cooldown;
-
-        ServerApplyMeleeWithObserverSwoosh();
+        ServerTryApplyMelee();
     }
 
     void ServerApplyMeleeWithObserverSwoosh()

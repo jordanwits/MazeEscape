@@ -322,10 +322,16 @@ public class RagdollTrap : MonoBehaviour
             return;
 
         TryPlayTrapHitMetallic(other);
-        health?.TakeDamage(TrapDamageAmount);
 
+        // Ragdoll before damage, for the same reason as the networked path above (see
+        // NetworkPlayerRagdoll.RequestTrapHitFromServer): PlayerHealth raises Died synchronously and
+        // PlayerRagdollController's offline death hook starts a ZERO-force ragdoll, so damaging first made this
+        // call a no-op against the already-ragdolled guard and a lethal trap dropped the body on the spot.
+        bool lethal = health != null && health.CurrentHealth <= TrapDamageAmount;
         if (ragdoll != null)
-            ragdoll.ActivateRagdoll(force, hitPoint, forceMode);
+            ragdoll.ActivateRagdoll(force, hitPoint, forceMode, allowAutoRecovery: !lethal);
+
+        health?.TakeDamage(TrapDamageAmount);
     }
 
     static bool IsCarriedByJailor(PlayerHealth player)

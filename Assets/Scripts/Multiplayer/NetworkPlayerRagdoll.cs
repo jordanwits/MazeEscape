@@ -272,8 +272,16 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             return;
 
         s_TrapRagdollNextAllowedTime[id] = now + TrapRagdollServerCooldownSeconds;
+
+        // Ragdoll FIRST, damage second. TakeDamage raises Died synchronously, and the death path immediately
+        // starts its own ZERO-force ragdoll; whichever ActivateRagdoll arrives first wins, because the second is
+        // dropped by the already-ragdolled guard. Damaging first therefore threw the trap's knockback away on
+        // exactly the hits that should look most violent — a lethal trap collapsed the body straight down on the
+        // spot instead of batting it down the corridor. A hit that will kill must still not auto-recover, so
+        // decide that here instead of relying on the death path's flag, which now loses the race.
+        bool lethal = playerHealth.CurrentHealth <= damageAmount;
+        BeginRagdollFromServer(worldForce, worldForcePosition, forceMode, allowAutoRecovery: !lethal, impactSfxKind: impactSfxKind);
         playerHealth.TakeDamage(damageAmount);
-        BeginRagdollFromServer(worldForce, worldForcePosition, forceMode, allowAutoRecovery: true, impactSfxKind: impactSfxKind);
     }
 
     // NOTE: trap hits are now adjudicated server-only (see RagdollTrap.TryHit). The former owner-invoke

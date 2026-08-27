@@ -56,6 +56,9 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Owner);
 
+    /// <summary>Ownership captured while genuinely spawned, so teardown can tell whose avatar this was.</summary>
+    bool _isLocalOwnerCached;
+
     readonly NetworkVariable<bool> _carriedByJailor = new NetworkVariable<bool>(
         false,
         NetworkVariableReadPermission.Everyone,
@@ -457,9 +460,13 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         _carriedByJailor.OnValueChanged -= OnCarriedByJailorChanged;
         _sealedInJailCell.OnValueChanged -= OnSealedInJailCellChanged;
         PlanarMirror.ReflectionPass -= OnMirrorReflectionPass;
+
+        // Resolve BEFORE dropping the manager reference — it is what distinguishes "the session ended, hand this
+        // player back its local presentation" from "a teammate left, leave ours alone".
+        bool wasLocalOwner = ResolveLocalOwnerForPresentation();
         _networkManager = null;
         SetDormant(false);
-        ApplyPresentation(true);
+        ApplyPresentation(wasLocalOwner);
         SetRemoteFlashlightProxyEnabled(false);
     }
 
@@ -783,7 +790,25 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
     void ApplyOwnershipState()
     {
+        _isLocalOwnerCached = IsOwner;
         ApplyPresentation(IsOwner);
+    }
+
+    /// <summary>
+    /// Ownership for presentation applied outside the ownership callbacks — teardown above all, where
+    /// <see cref="NetworkBehaviour.IsSpawned"/> has already gone false and must NOT be read as "this one is
+    /// mine". A teammate's avatar despawns on our machine too (disconnect, section switch), and presenting it
+    /// as the local owner switches its PlayerView camera and AudioListener back on, re-acquires input, and
+    /// redraws its HUD over ours. Falls back to local only when there is genuinely no session left (offline or
+    /// full shutdown), where this object really is the only player.
+    /// </summary>
+    bool ResolveLocalOwnerForPresentation()
+    {
+        NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening)
+            return true;
+
+        return IsSpawned ? IsOwner : _isLocalOwnerCached;
     }
 
     bool ShouldBeDormant()
@@ -819,6 +844,10 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
         if (playerController != null)
         {
+            // Hand over cursor authority BEFORE the control flip below: SetLocalControl(false) on a remote
+            // avatar would otherwise release the process-global cursor out from under the local player.
+            playerController.SetIsLocalAvatar(isLocalOwner);
+
             bool lookOnlyWhileCarried = isLocalOwner && _isAlive && jailorCarried;
             playerController.SetAllowLookWhileMovementLocked(lookOnlyWhileCarried);
             playerController.SetLocalControl(isLocalOwner && _isAlive && !jailorCarried);
@@ -1099,7 +1128,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             }
         }
 
-        ApplyPresentation(!IsSpawned || IsOwner);
+        ApplyPresentation(ResolveLocalOwnerForPresentation());
     }
 
     public void SetLifeState(bool isAlive)

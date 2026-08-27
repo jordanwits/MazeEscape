@@ -699,9 +699,21 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         // nothing. Re-apply it now that the ids resolve, or teammates stay empty-handed for the whole run.
         foreach (NetworkPlayerInventory inventory in FindObjectsByType<NetworkPlayerInventory>(FindObjectsSortMode.None))
         {
-            if (inventory != null)
-                inventory.RefreshHeldItemViewAfterLocalWorldBuild();
+            if (inventory == null)
+                continue;
+
+            inventory.RefreshHeldItemViewAfterLocalWorldBuild();
+
+            // Held items are only half of it: the world items' POSES also arrived before this maze existed, so
+            // every one of them was dropped and this peer still has them sitting at their spawn markers rather
+            // than wherever the party actually left them. Ask the server to replay the snapshot now that the ids
+            // resolve. Self-gating — only the local owner's inventory sends, and only on a client.
+            inventory.RequestWorldItemSnapshotAfterLocalWorldBuild();
         }
+
+        // Same ordering problem, different source: a stack unit a teammate peeled off and dropped is replicated
+        // as a record whose template only resolves once this peer's pickups exist, which is now.
+        StackedDropNetworkStore.ReplayPendingAfterLocalWorldBuild();
 
         Physics.SyncTransforms();
     }
@@ -1114,6 +1126,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         // infrastructure NetworkObject as the door store, so they are already spawned by the block above; just
         // scope their per-level state to this level.
         ConsumedItemNetworkStore.ServerClear();
+        StackedDropNetworkStore.ServerClear();
         CarnivalRadioNetworkStore.ServerClear();
         CarnivalStoreNetworkStore.ServerClear();
     }
@@ -2257,6 +2270,18 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             }
         }
 
+        // The start and finish pieces are matched by EXACT face mask (MazePieceDefinition.TryMatch), and both
+        // cells are chosen before any room is stamped. The reconciliation above hands a neighbouring cell an
+        // extra opening whenever a room's authored doorway points at it — and nothing so far protects the two
+        // reserved cells: IsRectangleStampable only refuses footprints that COVER them, and the connectivity
+        // check below only cares that the exit keeps an opening, not that it gained one. If the exit picks up a
+        // second face, MG_Finish can no longer match it, the Special pool falls through to an ordinary corridor
+        // piece, and the level builds with no elevator and no ElevatorFinishSpawnMarker — the run becomes
+        // unfinishable, on every peer, with nothing logged. The same strips the forced start, which on Level01
+        // carries the only MultiplayerSpawnPoints. Reject the placement; the room can land somewhere else.
+        if (StampWouldChangeCellMask(grid, proposed, start) || StampWouldChangeCellMask(grid, proposed, exit))
+            return false;
+
         if (!IsConnectivityPreservedAfterStamp(grid, proposed, start, exit, width, height, out orphanedCells))
             return false;
 
@@ -2269,6 +2294,18 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             return false;
 
         return true;
+    }
+
+    /// <summary>
+    /// True when a proposed stamp would leave <paramref name="cell"/> with a different set of open faces than the
+    /// grid already has. Used to keep the exact-mask-matched start and finish cells untouched by room stamping.
+    /// </summary>
+    static bool StampWouldChangeCellMask(
+        MazeCell[,] grid,
+        Dictionary<Vector2Int, MazeFaceMask> proposed,
+        Vector2Int cell)
+    {
+        return proposed.TryGetValue(cell, out MazeFaceMask next) && next != grid[cell.x, cell.y].Openings;
     }
 
     static bool TryAddAuthoredDoorway(
@@ -2433,7 +2470,15 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
 
             for (int turn = 0; turn < quarterTurns; turn++)
             {
-                cell = new Vector2Int(currentHeight - 1 - cell.y, cell.x);
+                // Clockwise, to match how the piece is actually placed. The prefab is instantiated with
+                // Quaternion.Euler(0, quarterTurns * 90, 0) about the footprint centre, and a +90 deg Y rotation
+                // sends a local offset (u, v) in (X, Z) to (v, -u) — so cell (lx, ly) lands at
+                // (ly, currentWidth - 1 - lx). This used to apply the INVERSE (counter-clockwise) map while
+                // rotating the direction clockwise, which put every authored doorway on a footprint edge its
+                // direction did not point at. TryComputeStampPlan drops those, the room stamped with no exterior
+                // opening and was rejected, so no room larger than one cell could ever be placed at 90 or 270 deg
+                // — only 0 and 180 worked, halving the orientations the level builder had to work with.
+                cell = new Vector2Int(cell.y, currentWidth - 1 - cell.x);
                 direction = MazeFaceMaskUtility.Rotate(direction, 1);
                 int nextWidth = currentHeight;
                 currentHeight = currentWidth;
@@ -2554,6 +2599,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             MazePieceMatch forcedMatch = interiorRoomEntry.Match;
             GameObject forcedPiece = Instantiate(forcedMatch.Prefab, parent.position, forcedMatch.Rotation, parent);
             _placedCellPrefabs[cellCoordinates] = forcedMatch.Prefab;
+            WarnIfExitCellHasNoElevator(forcedPiece, isExit, cellCoordinates);
             TrySpawnElevatorFinishSyncIfPresent(forcedPiece);
             TrySpawnUseKeyHingeNetworkObjectsIfPresent(forcedPiece);
             TrySpawnMazeNetworkRigidbodyPropsIfPresent(forcedPiece);
@@ -2633,6 +2679,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
 
         GameObject matchPiece = Instantiate(match.Prefab, parent.position, match.Rotation, parent);
         _placedCellPrefabs[cellCoordinates] = match.Prefab;
+        WarnIfExitCellHasNoElevator(matchPiece, isExit, cellCoordinates);
         TrySpawnElevatorFinishSyncIfPresent(matchPiece);
         TrySpawnUseKeyHingeNetworkObjectsIfPresent(matchPiece);
         TrySpawnMazeNetworkRigidbodyPropsIfPresent(matchPiece);
@@ -2676,6 +2723,29 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The exit cell is the only way out of the section, and it only carries an elevator if the piece that
+    /// resolved there has an <see cref="ElevatorFinishSpawnMarker"/>. When it does not — the exit's face mask no
+    /// longer matched the finish piece, or the pool is misconfigured — the party can search the whole maze for an
+    /// exit that was never built. That used to happen in silence; say so loudly instead.
+    /// </summary>
+    void WarnIfExitCellHasNoElevator(GameObject pieceRoot, bool isExit, Vector2Int cellCoordinates)
+    {
+        if (!isExit || pieceRoot == null)
+            return;
+
+        if (pieceRoot.GetComponentInChildren<ElevatorFinishSpawnMarker>(true) != null)
+            return;
+
+        LogMazeErrorOnce(
+            "exit-cell-without-elevator",
+            $"[Maze] The exit cell ({cellCoordinates.x}, {cellCoordinates.y}) resolved to \"{pieceRoot.name}\", which has no "
+            + "ElevatorFinishSpawnMarker — this level has NO exit elevator and cannot be completed. The finish piece is "
+            + "matched on an exact open-face mask, so this means the exit cell's openings changed after it was chosen "
+            + "(interior-room stamping is the usual cause) or no finish piece in the config matches its mask.",
+            pieceRoot);
     }
 
     /// <summary>

@@ -94,6 +94,9 @@ public class ZombieHealth : MonoBehaviour
         StartCoroutine(DeathCleanupRoutine());
     }
 
+    /// <summary>Read by <see cref="NetworkZombieAvatar"/> so observers drop their collision proxy on the same beat.</summary>
+    public float DisableColliderDelay => disableColliderDelay;
+
     void CacheReferences()
     {
         if (animator == null)

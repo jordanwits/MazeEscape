@@ -602,11 +602,19 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             int empty = GetFirstEmptySlot();
             if (empty < 0)
                 return;
+
+            // Publish the picked-up torch's OWN beam state before the slot/selection writes below. Those writes
+            // raise NGO's OnValueChanged synchronously, and the refresh they trigger applies whatever
+            // _selectedFlashlightLightOn currently holds to whatever is now selected — which, with this line in
+            // its old place after them, was the previously-held flashlight's state. Grabbing a second torch
+            // while yours was lit therefore switched the new one on by itself and started draining it, and the
+            // read-back that used to live here then agreed with the wrong state so nothing corrected it.
+            _selectedFlashlightLightOn.Value = f0.IsLightOn;
+
             _selectedSlot.Value = (byte)empty;
             SetSlotItemId(empty, item.ItemId);
             SetSlotItemTypeId(empty, item.ItemTypeId);
             SetSlotStackCount(empty, 1);
-            _selectedFlashlightLightOn.Value = f0.IsLightOn;
             ApplyItemStateWithTypeClientRpc(item.ItemId, item.ItemTypeId, true, NetworkObjectId, item.transform.position, item.transform.rotation, default);
             return;
         }
@@ -727,9 +735,22 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             SetSlotStackCount(sel, (byte)next);
             ulong templateId = item.ItemId;
             ulong droppedItemId = ComputeRuntimeDroppedItemId(templateId, ++_runtimeDropSequence);
-            SpawnSingleStackedDropClientRpc(templateId, droppedItemId, finalDropPosition, finalDropRotation, throwImpulse);
+
+            // Recorded rather than broadcast one-shot: the peeled unit is neither Netcode-spawned nor derivable
+            // from the maze seed, so a peer that missed the message could never reconstruct it. The store
+            // delivers it to everyone connected now AND to late joiners, and retries for a client whose level
+            // build has not registered the template yet.
+            StackedDropNetworkStore.ServerRecordPeeledDrop(
+                item, droppedItemId, finalDropPosition, finalDropRotation, throwImpulse);
             return;
         }
+
+        // Capture the beam state BEFORE the slot writes below. NGO raises OnValueChanged synchronously on the
+        // writer, so SetSlotItemId cascades straight into PlayerController's detach pass, which world-states this
+        // very flashlight with lightEnabled=false. Reading IsLightOn afterwards therefore returned false every
+        // time, and a flashlight dropped while lit — deliberately, as a corridor landmark, or scattered from a
+        // dying player — always landed dark on every peer.
+        bool droppedFlashlightLightOn = item is FlashlightItem preDropFlashlight && preDropFlashlight.IsLightOn;
 
         SetSlotItemId(sel, 0UL);
         SetSlotItemTypeId(sel, GrabbableInventoryItem.TypeIdNone);
@@ -739,13 +760,18 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
         if (item is FlashlightItem flashlight)
         {
-            bool lightOn = flashlight.IsLightOn;
+            bool lightOn = droppedFlashlightLightOn;
             if (IsServer && !IsClient)
                 flashlight.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, lightOn, throwImpulse);
             else
                 flashlight.ApplyNetworkWorldState(finalDropPosition, finalDropRotation, lightOn, default);
 
             ApplyItemStateWithTypeClientRpc(flashlight.ItemId, flashlight.ItemTypeId, false, 0UL, finalDropPosition, finalDropRotation, throwImpulse);
+
+            // The shared world-state RPC carries no beam state, and every peer just switched its own copy off
+            // when the slot emptied — so the lit/dark decision has to be replicated explicitly or observers
+            // always see a dark torch on the floor.
+            ApplyDroppedFlashlightLightClientRpc(flashlight.ItemId, lightOn);
         }
         else
         {
@@ -760,29 +786,17 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
     }
 
     /// <summary>
-    /// Every peer clones one unit out of the still-held stack (glowstick, flare round) and drops it in the
-    /// world under a runtime id they all derive identically.
+    /// Replicates the beam state of a just-dropped flashlight. Separate from the shared world-state RPC, which
+    /// every item type uses and which carries no light information.
     /// </summary>
     [ClientRpc]
-    void SpawnSingleStackedDropClientRpc(ulong templateItemId, ulong droppedItemId, Vector3 worldPosition, Quaternion worldRotation, Vector3 throwImpulse)
+    void ApplyDroppedFlashlightLightClientRpc(ulong itemId, bool lightOn)
     {
-        if (!GrabbableInventoryItem.TryGetRegistered(templateItemId, out GrabbableInventoryItem template)
-            || template == null || !template.IsStackable)
+        if (!GrabbableInventoryItem.TryGetRegistered(itemId, out GrabbableInventoryItem g) || g == null)
             return;
 
-        GameObject d = Object.Instantiate(template.gameObject, worldPosition, worldRotation);
-        d.transform.SetParent(null, true);
-        if (!d.TryGetComponent(out GrabbableInventoryItem dropped) || dropped == null)
-        {
-            Object.Destroy(d);
-            return;
-        }
-
-        dropped.AssignNetworkItemId(droppedItemId);
-        dropped.SetStackCount(1);
-        dropped.ApplyNetworkWorldState(worldPosition, worldRotation, throwImpulse);
-        if (dropped is GlowstickItem droppedGlow)
-            droppedGlow.SetWorldDroppedVisual();
+        if (g is FlashlightItem dropped)
+            dropped.SetLightEnabled(lightOn);
     }
 
     ulong ComputeRuntimeDroppedItemId(ulong templateItemId, uint sequence)
@@ -856,16 +870,23 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         // Clamp first: if selection was already parked on a slot that is now out of capacity, wrapping a
         // larger index through the smaller modulus would jump somewhere arbitrary.
         int wrapped = ((next % n) + n) % n;
+
+        // Publish the INCOMING slot's beam state before moving the selection, for the same reason as the pickup
+        // path: the selection write refreshes synchronously and hands the outgoing torch's state to the newly
+        // selected one, so scrolling off a lit flashlight onto a dark one switched the dark one on.
+        UpdateFlashlightSyncForSlot(wrapped);
         _selectedSlot.Value = (byte)wrapped;
-        UpdateFlashlightSyncFromSelected();
     }
 
-    void UpdateFlashlightSyncFromSelected()
+    void UpdateFlashlightSyncFromSelected() => UpdateFlashlightSyncForSlot(SelectedSlotIndex);
+
+    /// <summary>Publishes the beam state of the flashlight in <paramref name="slotIndex"/> (false if it holds none).</summary>
+    void UpdateFlashlightSyncForSlot(int slotIndex)
     {
         if (!IsServer)
             return;
 
-        ulong id = GetSlotItemId(SelectedSlotIndex);
+        ulong id = GetSlotItemId(slotIndex);
         if (id == 0UL
             || !GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g)
             || !(g is FlashlightItem f))
@@ -1207,6 +1228,34 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         }
 
         playerController?.RefreshInventoryViewFromNetwork();
+    }
+
+    /// <summary>
+    /// Client-side: ask the server to re-send the world-item snapshot now that this peer's local level build has
+    /// registered the deterministic pickups.
+    /// </summary>
+    /// <remarks>
+    /// The spawn-time snapshot (<see cref="OnNetworkSpawn"/>) cannot work for a joiner: it is sent the instant the
+    /// player object spawns, and the joiner only requests the maze seed AFTER that, so its pickups do not exist for
+    /// at least a round trip plus a full level build. Every entry therefore hits the exact-id lookup, finds nothing
+    /// and is dropped, and the only retry that exists covers hotbar SLOTS — an item lying in the world belongs to no
+    /// slot, so nothing ever re-applied its pose. The joiner was left looking at every item still sitting at its
+    /// original spawn marker while the real ones had been carried elsewhere: invisible where they actually are, and
+    /// unpickable where they appear (the server range-checks against the true position).
+    /// </remarks>
+    public void RequestWorldItemSnapshotAfterLocalWorldBuild()
+    {
+        // The server owns the authoritative item state, so it has nothing to ask for.
+        if (!IsSpawned || !IsOwner || IsServer)
+            return;
+
+        RequestItemSnapshotServerRpc();
+    }
+
+    [ServerRpc]
+    void RequestItemSnapshotServerRpc()
+    {
+        SendItemSnapshotToOwner();
     }
 
     void SendItemSnapshotToOwner()

@@ -61,6 +61,16 @@ public class SkeletonThrownObject : NetworkBehaviour
     bool _initialized;
     Vector3 _prevPosition;
     Phase _phase;
+
+    /// <summary>
+    /// Replicated flight/rolling phase. <see cref="_phase"/> is written only inside authority-gated code, so on an
+    /// observer it stays at its default (Flight) forever — and the cosmetic spin below runs on every peer,
+    /// deliberately, so it can be seen in flight. Without this the skull went on spinning at 540°/s where it lay
+    /// for the whole roll on every client, while the host watched it tumble to a stop. Replicated rather than
+    /// timed locally so a late joiner also sees an already-landed skull at rest.
+    /// </summary>
+    readonly NetworkVariable<bool> _rollingReplicated = new(false);
+
     float _rollEndTime;
     Rigidbody _rigidbody;
     Collider _collider;
@@ -130,7 +140,10 @@ public class SkeletonThrownObject : NetworkBehaviour
 
     void Update()
     {
-        if (_phase == Phase.Flight && visualToSpin != null && visualSpinDegPerSec != Vector3.zero)
+        // Runs on every peer (before the authority gate) so observers see the spin during flight — hence the
+        // replicated phase rather than the local one, which never leaves Flight off-authority.
+        bool stillFlying = IsAuthority ? _phase == Phase.Flight : !_rollingReplicated.Value;
+        if (stillFlying && visualToSpin != null && visualSpinDegPerSec != Vector3.zero)
             visualToSpin.Rotate(visualSpinDegPerSec * Time.deltaTime, Space.Self);
 
         if (!IsAuthority || !_launched || _consumed)
@@ -177,6 +190,9 @@ public class SkeletonThrownObject : NetworkBehaviour
     void StartRolling(Vector3 position, Vector3 handoffVelocity)
     {
         _phase = Phase.Rolling;
+        if (IsSpawned && IsServer)
+            _rollingReplicated.Value = true; // stops the cosmetic spin on observers too
+
         _rollEndTime = Time.time + Mathf.Max(0.2f, rollDurationSeconds);
         transform.position = position;
 

@@ -371,6 +371,15 @@ public class GrabbableInventoryItem : MonoBehaviour
     }
 
     /// <summary>
+    /// Last chance to reclaim anything this item parented onto the avatar that is about to be destroyed. Only
+    /// the item root is moved into the carry-over pen, so a child left on a hand bone (the flare gun's shell)
+    /// would be destroyed with the avatar and never come back. Override to take it home first.
+    /// </summary>
+    protected virtual void OnBeforeLevelCarryOver()
+    {
+    }
+
+    /// <summary>
     /// Detaches this held item from the avatar that is about to be destroyed by a section switch and parks it
     /// in the carry-over pen (see <see cref="LevelCarryOverStore"/>), keeping it alive — and registered under
     /// the same item id — across the scene load. Stays in the inert held/stashed state (no colliders, no
@@ -381,6 +390,8 @@ public class GrabbableInventoryItem : MonoBehaviour
     {
         if (penRoot == null)
             return;
+
+        OnBeforeLevelCarryOver();
 
         StashOverrideParent = null;
         _heldAnchor = null;

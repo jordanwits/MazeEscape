@@ -158,7 +158,15 @@ public class WorldRenderCuller : MonoBehaviour
             // re-bucketing a stable scene every interval.
             int count = Object.FindObjectsByType<MeshRenderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None).Length;
             if (count != _lastRendererCount)
+            {
                 Rescan();
+                // Rescan re-enables every managed renderer and marks every bucket On, so the level is fully
+                // drawn right now. Force the visibility pass to run this same frame — OnEnable already does
+                // this before its own Rescan. Without it a stationary player (neither throttle nor the
+                // turn/move triggers due) presents the whole maze, shadow casters included, for up to
+                // updateInterval, which reads as a periodic hitch whenever the renderer count shifts.
+                _nextUpdate = 0f;
+            }
         }
 
         Camera cam = ResolveViewpoint();

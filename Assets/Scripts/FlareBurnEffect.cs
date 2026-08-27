@@ -38,6 +38,8 @@ public class FlareBurnEffect : NetworkBehaviour
     PlayerHealth _attackerHealth;
     float _baseLightIntensity;
     bool _authorityInitialized;
+    /// <summary>True only for a burn planted on an enemy, which must end when that enemy is destroyed.</summary>
+    bool _followsEnemy;
 
     static bool NetworkActive => NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
 
@@ -52,6 +54,7 @@ public class FlareBurnEffect : NetworkBehaviour
             return null;
 
         fx._followRoot = enemyRoot;
+        fx._followsEnemy = true;
         fx._zombie = zombie;
         fx._skeleton = skeleton;
         fx._guard = guard;
@@ -131,7 +134,11 @@ public class FlareBurnEffect : NetworkBehaviour
         {
             yield return null;
 
-            if (_followRoot == null)
+            // Only an ATTACHED burn dies with its host. A burn resting in the world never had a follow root, so
+            // testing the root alone ended a missed flare's fire on its first frame — it stopped emitting a frame
+            // after landing and faded out in the 1.5 s linger instead of burning for its full duration, which is
+            // exactly the case the flare is used for: lighting a dark corridor.
+            if (_followsEnemy && _followRoot == null)
                 break;
 
             if (Time.time >= nextTick)
