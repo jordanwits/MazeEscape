@@ -43,11 +43,7 @@ public partial class PlayerController
     /// </summary>
     public void OnSwordSwingWhoosh()
     {
-        AudioClip clip = swordSwooshClip != null ? swordSwooshClip : meleeSwooshClip;
-        if (clip == null || footstepAudioSource == null)
-            return;
-
-        footstepAudioSource.PlayOneShot(clip, Mathf.Max(0f, meleeSwooshVolume));
+        PlaySelfOrBodyOneShot(swordSwooshClip != null ? swordSwooshClip : meleeSwooshClip, meleeSwooshVolume);
     }
 
     /// <summary>
@@ -64,7 +60,7 @@ public partial class PlayerController
                 if (_networkPlayerInventory == null)
                     return false;
                 int selected = _networkPlayerInventory.SelectedSlotIndex;
-                if (selected < 0 || selected >= 3)
+                if (selected < 0 || selected >= InventorySlotCapacity)
                     return false;
                 if (IsHeavyThrowableForcingInventoryStash(
                         SelfNetworkObject != null ? SelfNetworkObject.NetworkObjectId : 0UL))
@@ -124,13 +120,6 @@ public partial class PlayerController
     {
         TriggerMeleeCameraKick(meleeKickSkeletonScale);   // a blade lands heavier than a fist
 
-        if (footstepAudioSource == null)
-            return;
-
-        AudioClip clip = swordHitClip != null ? swordHitClip : PickRandomMeleeHitClip();
-        if (clip == null)
-            return;
-
-        footstepAudioSource.PlayOneShot(clip, Mathf.Max(0f, meleeHitPunchVolume));
+        PlaySelfOrBodyOneShot(swordHitClip != null ? swordHitClip : PickRandomMeleeHitClip(), meleeHitPunchVolume);
     }
 }

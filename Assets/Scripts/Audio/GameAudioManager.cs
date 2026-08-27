@@ -24,12 +24,19 @@ public sealed class GameAudioManager : MonoBehaviour
     /// </summary>
     const string AmbientBedObjectName = "AmbientAudio";
 
+    /// <summary>Round-robin pool behind <see cref="PlaySfxAtPoint"/>.</summary>
+    const int PointSfxPoolSize = 8;
+    const string PointSfxPoolObjectName = "GameAudioPointSfxPool";
+
     const string PrefsMaster = "GameAudio.MasterLinear";
     const string PrefsMusic = "GameAudio.MusicLinear";
     const string PrefsSfx = "GameAudio.SfxLinear";
     const string PrefsVoice = "GameAudio.VoiceLinear";
 
     public static GameAudioManager Instance { get; private set; }
+
+    static AudioSource[] s_pointSfxPool;
+    static int s_pointSfxPoolCursor;
 
     [Tooltip("If set, used instead of Resources.Load(GameAudio/MainMixer).")]
     [SerializeField] AudioMixer mainMixerOverride;
@@ -251,6 +258,71 @@ public sealed class GameAudioManager : MonoBehaviour
             return;
 
         source.outputAudioMixerGroup = Instance._voiceGroup;
+    }
+
+    /// <summary>
+    /// Fire-and-forget positional one-shot for a sound whose emitter is not a persistent object — e.g. an
+    /// impact resolved from an RPC where the thing that made it has no audio source of its own.
+    ///
+    /// Backed by a small round-robin pool of persistent, pre-routed sources rather than a per-shot temporary
+    /// GameObject: <see cref="AudioOcclusionManager"/> holds a registered source until its GameObject dies, so
+    /// a temp-object-per-shot would churn that registry. A reused source simply moves and plays again — a rare
+    /// overlapping tail can be cut, which is acceptable for short impact cues.
+    /// </summary>
+    public static void PlaySfxAtPoint(AudioClip clip, Vector3 worldPos, float volume = 1f,
+        float minDistance = 1.5f, float maxDistance = 22f)
+    {
+        if (clip == null || !Application.isPlaying)
+            return;
+
+        AudioSource source = NextPooledPointSource();
+        if (source == null)
+            return;
+
+        // The pool can be built before the manager comes up, in which case the mixer group never landed.
+        if (source.outputAudioMixerGroup == null && Instance != null && Instance._sfxGroup != null)
+            source.outputAudioMixerGroup = Instance._sfxGroup;
+
+        source.transform.position = worldPos;
+        source.minDistance = Mathf.Max(0.1f, minDistance);
+        source.maxDistance = Mathf.Max(source.minDistance + 0.1f, maxDistance);
+        source.PlayOneShot(clip, Mathf.Clamp01(volume));
+    }
+
+    static AudioSource NextPooledPointSource()
+    {
+        // Rebuild on first use, and again if the holder was torn down (play-mode exit / domain reload).
+        if (s_pointSfxPool == null || s_pointSfxPool.Length == 0 || s_pointSfxPool[0] == null)
+            BuildPointSfxPool();
+
+        s_pointSfxPoolCursor = (s_pointSfxPoolCursor + 1) % s_pointSfxPool.Length;
+        return s_pointSfxPool[s_pointSfxPoolCursor];
+    }
+
+    static void BuildPointSfxPool()
+    {
+        var holder = new GameObject(PointSfxPoolObjectName);
+        DontDestroyOnLoad(holder);
+
+        s_pointSfxPool = new AudioSource[PointSfxPoolSize];
+        s_pointSfxPoolCursor = 0;
+        for (int i = 0; i < PointSfxPoolSize; i++)
+        {
+            var go = new GameObject("PointSfx" + i);
+            go.transform.SetParent(holder.transform, false);
+
+            AudioSource source = go.AddComponent<AudioSource>();
+            source.playOnAwake = false;
+            source.loop = false;
+            source.spatialBlend = 1f;
+            source.dopplerLevel = 0f;
+            source.rolloffMode = AudioRolloffMode.Linear;
+            source.minDistance = 1.5f;
+            source.maxDistance = 22f;
+            RouteSfxSource(source); // registered once, for the life of the pool
+
+            s_pointSfxPool[i] = source;
+        }
     }
 
     /// <summary>Routes UI click/hover sounds through the Ui bus so the editor's UI Sound Volume slider affects them.</summary>

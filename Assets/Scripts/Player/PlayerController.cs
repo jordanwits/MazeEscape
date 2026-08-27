@@ -226,6 +226,9 @@ public partial class PlayerController : MonoBehaviour
         animator != null && !string.IsNullOrEmpty(crouchParameter)
             ? animator.GetBool(crouchParameter)
             : _isCrouching;
+
+    /// <summary>Authored crouched capsule height, so a remote puppet's blocking proxy can match it.</summary>
+    public float CrouchColliderHeight => crouchHeight;
     float _standingHeight;
     Vector3 _standingCenter;
     int _standUpMaskFallback = Physics.DefaultRaycastLayers;
@@ -315,6 +318,8 @@ public partial class PlayerController : MonoBehaviour
     HudPrompt _hudPrompt;
     float _footstepTimer;
     bool _playFootstep1Next = true;
+    const string BodyAudioChildName = "BodyAudio";
+    AudioSource _bodyAudioSource;
     bool _hasLocalControl = true;
     bool _allowLookWhileMovementLocked;
     float _smoothedStrafeDirection;
@@ -499,6 +504,7 @@ public partial class PlayerController : MonoBehaviour
             footstepAudioSource = gameObject.AddComponent<AudioSource>();
 
         ConfigureFootstepAudioSource();
+        EnsureBodyAudioSource();
         _networkPlayerCombat = GetComponent<NetworkPlayerCombat>();
         _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
         _networkPlayerInventory = GetComponent<NetworkPlayerInventory>();
@@ -615,6 +621,10 @@ public partial class PlayerController : MonoBehaviour
 
         // Show the carnival ticket counter only while standing inside the Carnival Main room.
         TickCarnivalRoomPresence();
+
+        // Both before the local-control gate below: a blackjack seat exit is dropped exactly when control is
+        // off (Jailor carry), so its retry has to keep running there.
+        TickPendingBlackjackSeatExit();
 
         if (!_hasLocalControl && !ShouldRunDeadRagdollCameraUpdate())
         {
@@ -1191,6 +1201,84 @@ public partial class PlayerController : MonoBehaviour
     }
 
     /// <summary>
+    /// The 3D counterpart to <see cref="footstepAudioSource"/> (which is deliberately 2D — it is the local
+    /// player's own head-level sound). Every body noise another peer is meant to hear — punches, item use,
+    /// hurt thuds, a remote player's footsteps — plays through this one instead, so it attenuates with
+    /// distance and gets wall-occluded like an enemy does. Created on every instance; only the observer
+    /// paths use it. Distances mirror the enemy footstep house values (see <see cref="ZombieAI"/>).
+    /// </summary>
+    void EnsureBodyAudioSource()
+    {
+        if (_bodyAudioSource != null)
+            return;
+
+        Transform existing = transform.Find(BodyAudioChildName);
+        GameObject go = existing != null ? existing.gameObject : new GameObject(BodyAudioChildName);
+        if (existing == null)
+        {
+            go.transform.SetParent(transform, false);
+            go.transform.localPosition = new Vector3(0f, 1.1f, 0f); // chest height, not the feet
+        }
+
+        _bodyAudioSource = go.GetComponent<AudioSource>();
+        if (_bodyAudioSource == null)
+            _bodyAudioSource = go.AddComponent<AudioSource>();
+
+        _bodyAudioSource.playOnAwake = false;
+        _bodyAudioSource.loop = false;
+        _bodyAudioSource.spatialBlend = 1f;
+        _bodyAudioSource.rolloffMode = AudioRolloffMode.Linear;
+        _bodyAudioSource.dopplerLevel = 0f;
+        _bodyAudioSource.minDistance = 1.5f;
+        _bodyAudioSource.maxDistance = 25f;
+        GameAudioManager.RouteSfxSource(_bodyAudioSource);
+    }
+
+    void PlayBodyOneShot(AudioClip clip, float volume)
+    {
+        if (clip == null)
+            return;
+
+        EnsureBodyAudioSource();
+        if (_bodyAudioSource == null)
+            return;
+
+        _bodyAudioSource.PlayOneShot(clip, Mathf.Max(0f, volume));
+    }
+
+    /// <summary>
+    /// True on a spawned avatar this peer does NOT own — someone else's body, standing in our world. Every
+    /// sound that reaches such an instance came from an RPC and is meant to be heard coming from over there.
+    /// </summary>
+    bool IsObserverPuppet
+    {
+        get
+        {
+            NetworkObject self = SelfNetworkObject;
+            return self != null && self.IsSpawned && !self.IsOwner;
+        }
+    }
+
+    /// <summary>
+    /// Plays a body sound on the right source: 2D on our own player (it is our own noise, in our own head),
+    /// 3D from the body on somebody else's avatar.
+    /// </summary>
+    void PlaySelfOrBodyOneShot(AudioClip clip, float volume)
+    {
+        if (clip == null)
+            return;
+
+        if (IsObserverPuppet)
+        {
+            PlayBodyOneShot(clip, volume);
+            return;
+        }
+
+        if (footstepAudioSource != null)
+            footstepAudioSource.PlayOneShot(clip, Mathf.Max(0f, volume));
+    }
+
+    /// <summary>
     /// When false, normal movement/input is off but first-person look can still run (e.g. Jailor carry).
     /// Must be set before <see cref="SetLocalControl"/> when entering that state so input bindings apply correctly.
     /// </summary>
@@ -1612,6 +1700,10 @@ public partial class PlayerController : MonoBehaviour
         // Taking-damage feedback (hurt jolt + thud + low-health heartbeat). Watches replicated health, so it
         // must tick before the kick pump below applies this frame's offsets.
         TickHurtFeedback();
+
+        // Footsteps for a remote teammate's body, derived from its replicated motion. Self-gates to puppets,
+        // so it has to sit above the local-control early-return like the hurt feedback does.
+        TickObserverFootsteps();
 
         // Flashbang whiteout. Beside the hurt feedback for the same reason: it is a screen effect that has to
         // keep running while control is lost (ragdolled, carried), not something gated on being able to move.
@@ -2810,11 +2902,7 @@ public partial class PlayerController : MonoBehaviour
 
     public void PlayMeleeSwooshSfx()
     {
-        AudioClip clip = ActiveMeleeSwooshClip;
-        if (clip == null || footstepAudioSource == null)
-            return;
-
-        footstepAudioSource.PlayOneShot(clip, Mathf.Max(0f, meleeSwooshVolume));
+        PlaySelfOrBodyOneShot(ActiveMeleeSwooshClip, meleeSwooshVolume);
     }
 
     /// <summary>
@@ -3034,18 +3122,11 @@ public partial class PlayerController : MonoBehaviour
 
     public void PlayMeleeHitSfx()
     {
-        // Recoil kick on the puncher's own view (self-gates to local control; observers hearing this as 3D audio
-        // for another player's hit won't kick).
+        // Recoil kick on the puncher's own view (self-gates to local control; an observer instance running
+        // this for somebody else's hit won't kick).
         TriggerMeleeCameraKick(1f);
 
-        if (footstepAudioSource == null)
-            return;
-
-        AudioClip clip = PickRandomMeleeHitClip();
-        if (clip == null)
-            return;
-
-        footstepAudioSource.PlayOneShot(clip, Mathf.Max(0f, meleeHitPunchVolume));
+        PlaySelfOrBodyOneShot(PickRandomMeleeHitClip(), meleeHitPunchVolume);
     }
 
     /// <summary>Impact sound when the melee connects with a Skeleton (replaces the punch impact for that hit).</summary>
@@ -3053,10 +3134,7 @@ public partial class PlayerController : MonoBehaviour
     {
         TriggerMeleeCameraKick(meleeKickSkeletonScale); // heavier kick against the tankier skeleton
 
-        if (footstepAudioSource == null || skeletonHitClip == null)
-            return;
-
-        footstepAudioSource.PlayOneShot(skeletonHitClip, Mathf.Max(0f, meleeHitPunchVolume));
+        PlaySelfOrBodyOneShot(skeletonHitClip, meleeHitPunchVolume);
     }
 
     /// <summary>Which punch clip slot (0–2) to play; same value must be used on all clients for a given hit.</summary>
@@ -3064,18 +3142,13 @@ public partial class PlayerController : MonoBehaviour
     {
         TriggerMeleeCameraKick(1f);
 
-        if (footstepAudioSource == null)
-            return;
-
         AudioClip c = clipSlot0To2 == 0
             ? meleeHitPunch1
             : clipSlot0To2 == 1
                 ? meleeHitPunch2
                 : meleeHitPunch3;
-        if (c == null)
-            return;
 
-        footstepAudioSource.PlayOneShot(c, Mathf.Max(0f, meleeHitPunchVolume));
+        PlaySelfOrBodyOneShot(c, meleeHitPunchVolume);
     }
 
     public byte PickRandomMeleeHitClipIndex()

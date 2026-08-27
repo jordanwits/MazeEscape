@@ -41,9 +41,15 @@ public partial class PlayerController
         if (rounds <= 0)
         {
             if (HasFlareAmmoInInventory())
+            {
                 RequestFlareReloadFromInput();
+            }
             else if (gun != null)
+            {
                 gun.PlayDryFireSfx();
+                if (IsUsingNetworkedInventory)
+                    _networkPlayerInventory.NotifyFlareDryFire();
+            }
             return true;
         }
 
@@ -245,7 +251,7 @@ public partial class PlayerController
             if (IsHeavyThrowableForcingInventoryStash(holderId))
                 return false;
             int selected = _networkPlayerInventory.SelectedSlotIndex;
-            if (selected < 0 || selected >= 3
+            if (selected < 0 || selected >= InventorySlotCapacity
                 || _networkPlayerInventory.GetSlotItemTypeId(selected) != GrabbableInventoryItem.TypeIdFlareGun)
                 return false;
             normalized = Mathf.Clamp01(_networkPlayerInventory.GetSlotFlareRoundsForHud(selected) / (float)FlareGunItem.MaxRounds);
@@ -254,7 +260,7 @@ public partial class PlayerController
 
         if (NetworkHeavyThrowableHold.FindOfflineHeldBy(this) != null)
             return false;
-        if (_localSelectedSlot < 0 || _localSelectedSlot >= 3
+        if (_localSelectedSlot < 0 || _localSelectedSlot >= InventorySlotCapacity
             || _localInventorySlots[_localSelectedSlot] is not FlareGunItem gun)
             return false;
         normalized = Mathf.Clamp01(gun.LoadedRounds / (float)FlareGunItem.MaxRounds);

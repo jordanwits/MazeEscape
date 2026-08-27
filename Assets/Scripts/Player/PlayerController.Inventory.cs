@@ -626,8 +626,11 @@ public partial class PlayerController
                 }
                 else
                 {
-                    // No key: the door answers with a handle rattle + tiny hinge jitter (local cosmetic).
+                    // No key: the door answers with a handle rattle + tiny hinge jitter. Instant locally, then
+                    // relayed so teammates in the corridor hear it come from the door too.
                     hingeDoor.PlayLockedNoKeyFeedback();
+                    if (IsUsingNetworkedInventory && _networkPlayerInventory != null)
+                        _networkPlayerInventory.NotifyLockedDoorRattle(hingeDoor);
                 }
                 return;
             }
@@ -871,26 +874,17 @@ public partial class PlayerController
 
     public void PlayFlashlightClickSfx()
     {
-        if (flashlightClickClip == null || footstepAudioSource == null)
-            return;
-
-        footstepAudioSource.PlayOneShot(flashlightClickClip, Mathf.Max(0f, flashlightClickVolume));
+        PlaySelfOrBodyOneShot(flashlightClickClip, flashlightClickVolume);
     }
 
     public void PlayBandageUseSfx()
     {
-        if (bandageUseClip == null || footstepAudioSource == null)
-            return;
-
-        footstepAudioSource.PlayOneShot(bandageUseClip, Mathf.Max(0f, bandageUseVolume));
+        PlaySelfOrBodyOneShot(bandageUseClip, bandageUseVolume);
     }
 
     public void PlayEnergyDrinkUseSfx()
     {
-        if (energyDrinkUseClip == null || footstepAudioSource == null)
-            return;
-
-        footstepAudioSource.PlayOneShot(energyDrinkUseClip, Mathf.Max(0f, energyDrinkUseVolume));
+        PlaySelfOrBodyOneShot(energyDrinkUseClip, energyDrinkUseVolume);
     }
 
     void TryUnlockHingeDoorWithKeyLocal(HingeInteractDoor door)
@@ -1056,7 +1050,7 @@ public partial class PlayerController
             if (IsHeavyThrowableForcingInventoryStash(holderId))
                 return false;
             int selected = _networkPlayerInventory.SelectedSlotIndex;
-            if (selected < 0 || selected >= 3)
+            if (selected < 0 || selected >= InventorySlotCapacity)
                 return false;
             ulong id = _networkPlayerInventory.GetSlotItemId(selected);
             if (id == 0UL
@@ -1070,7 +1064,7 @@ public partial class PlayerController
 
         if (NetworkHeavyThrowableHold.FindOfflineHeldBy(this) != null)
             return false;
-        if (_localSelectedSlot < 0 || _localSelectedSlot >= 3
+        if (_localSelectedSlot < 0 || _localSelectedSlot >= InventorySlotCapacity
             || _localInventorySlots[_localSelectedSlot] is not FlashlightItem f)
             return false;
         flashlight = f;

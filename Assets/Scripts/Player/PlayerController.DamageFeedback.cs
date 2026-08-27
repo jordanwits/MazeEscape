@@ -43,9 +43,17 @@ public partial class PlayerController
         if (_lastSeenHealthForHurtFeedback < 0f)
             _lastSeenHealthForHurtFeedback = health;
 
-        if (health < _lastSeenHealthForHurtFeedback - 0.01f && hurtFeedbackEnabled && _hasLocalControl)
+        if (health < _lastSeenHealthForHurtFeedback - 0.01f && hurtFeedbackEnabled)
         {
-            TriggerHurtCameraKick();
+            // View-level feedback is the local player's alone. The thud is a body sound and belongs on every
+            // instance that can see the body, so it is deliberately NOT gated on _hasLocalControl — that goes
+            // false while the Jailor carries the owner (and through the ragdoll presentation states), which
+            // left the victim hearing nothing while every other peer heard their thud. PlaySelfOrBodyOneShot
+            // routes it 2D on our own player and 3D from the body on somebody else's, so no instance can play
+            // it twice. A dead player never reaches here: health clamps at 0 and stops decreasing.
+            if (_hasLocalControl)
+                TriggerHurtCameraKick();
+
             PlayHurtSfx();
         }
         _lastSeenHealthForHurtFeedback = health;
@@ -56,10 +64,7 @@ public partial class PlayerController
     /// <summary>Universal "you got hit" thud — one clip for zombies, skeletons, clowns and traps alike.</summary>
     void PlayHurtSfx()
     {
-        if (zombieHitClip == null || footstepAudioSource == null)
-            return;
-
-        footstepAudioSource.PlayOneShot(zombieHitClip, Mathf.Max(0f, zombieHitVolume));
+        PlaySelfOrBodyOneShot(zombieHitClip, zombieHitVolume);
     }
 
     void TickHeartbeat()
