@@ -40,13 +40,8 @@ public sealed class CarnivalTicketBundle : NetworkBehaviour
     }
 #endif
 
-    public override void OnNetworkSpawn()
-    {
-        base.OnNetworkSpawn();
-        // The spawn itself replicates to every connected peer, so this fires once per machine near the
-        // booth — no extra RPC needed. It's the moment the minigame "prints" the ticket roll.
-        PlayPrintSfx();
-    }
+    [ClientRpc]
+    void PlayPrintSfxClientRpc() => PlayPrintSfx();
 
     void PlayPrintSfx()
     {
@@ -71,12 +66,19 @@ public sealed class CarnivalTicketBundle : NetworkBehaviour
         _printAudio.PlayOneShot(printClip, Mathf.Clamp01(printVolume));
     }
 
-    /// <summary>Server-only. Call after <see cref="NetworkObject.Spawn"/> so the change replicates to all connected clients.</summary>
+    /// <summary>
+    /// Server-only. Call after <see cref="NetworkObject.Spawn"/> so the change replicates to all connected clients.
+    /// Doubles as the "just printed" signal: the booth calls it once, on a bundle it created this instant, so the
+    /// print one-shot rides here instead of <c>OnNetworkSpawn</c>. A ClientRpc reaches only the peers connected when
+    /// it is sent, which is the point — a joining client spawns every bundle already lying around the midway and
+    /// would otherwise hear all of them print at once on connect.
+    /// </summary>
     public void ServerSetValue(int v)
     {
         if (!IsServer || !IsSpawned)
             return;
         _value.Value = Mathf.Max(0, v);
+        PlayPrintSfxClientRpc();
     }
 
     /// <summary>Called from <see cref="PlayerController"/> when the player presses E while aiming at this bundle.</summary>

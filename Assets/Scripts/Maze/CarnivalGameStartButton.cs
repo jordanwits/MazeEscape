@@ -67,7 +67,6 @@ public sealed class CarnivalGameStartButton : MonoBehaviour
 
     public void RequestStart(PlayerController interactor)
     {
-        Debug.Log($"[CarnivalGameStartButton] RequestStart called on {name}", this);
         if (interactor == null)
         {
             Debug.LogWarning($"[CarnivalGameStartButton] interactor is null", this);
@@ -80,10 +79,7 @@ public sealed class CarnivalGameStartButton : MonoBehaviour
             return;
         }
         if (!host.CanStartNow)
-        {
-            Debug.Log($"[CarnivalGameStartButton] host says CanStartNow = false (round already active)", this);
             return;
-        }
         host.ProcessStartRequest(interactor);
     }
 

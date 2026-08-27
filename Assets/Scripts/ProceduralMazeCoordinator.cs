@@ -694,6 +694,15 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
                 ownerNetTransform.SnapObserverToLatestNetworkState();
         }
 
+        // The maze's local pickups only registered a moment ago (TrySpawnMazeItemPickups above), so every
+        // player's held-item view — which resolves items by id — ran too early on this client and found
+        // nothing. Re-apply it now that the ids resolve, or teammates stay empty-handed for the whole run.
+        foreach (NetworkPlayerInventory inventory in FindObjectsByType<NetworkPlayerInventory>(FindObjectsSortMode.None))
+        {
+            if (inventory != null)
+                inventory.RefreshHeldItemViewAfterLocalWorldBuild();
+        }
+
         Physics.SyncTransforms();
     }
 
@@ -2771,6 +2780,56 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         return _elevatorFinishSyncPrefab;
     }
 
+    /// <summary>
+    /// Reports (once per hash) a server spawn whose <see cref="NetworkObject.PrefabIdHash"/> no client can resolve.
+    ///
+    /// A dynamic spawn travels as that hash; the receiver looks it up in its registered prefabs and, on a miss, drops
+    /// the spawn SILENTLY. The host is then the only peer with a live NetworkObject and every client keeps an
+    /// unspawned local copy running its own authority — state forks with no error anywhere. Unity gives every
+    /// <see cref="NetworkObject"/> nested inside another prefab its own auto-generated hash, which is never in
+    /// Resources/DefaultNetworkPrefabs, so nested maze-piece objects land in exactly that hole.
+    ///
+    /// The caller still spawns on a miss: refusing here would change host and single-player behavior, which is not
+    /// this check's job. The fix is always at the authoring end — spawn a registered ROOT prefab at an anchor (see
+    /// <see cref="TrySpawnElevatorFinishSyncIfPresent"/>), or drop the NetworkObject and use the procedural
+    /// <see cref="DoorNetworkStateStore"/> / Rpc path.
+    /// </summary>
+    void ReportIfMazeSpawnHashUnregistered(NetworkObject netObj, GameObject pieceRoot)
+    {
+        if (netObj == null || _networkManager == null)
+            return;
+
+        NetworkConfig config = _networkManager.NetworkConfig;
+        if (config == null || config.Prefabs == null)
+            return;
+
+        // NetworkPrefabOverrideLinks is keyed by the hash the spawn message carries (plain entries by prefab
+        // hash, Hash-override entries by SourceHashToOverride), which is the same lookup the receiving client
+        // performs. NetworkPrefabHandler registrations would also satisfy a client, but NGO keeps its
+        // ContainsHandler internal and this project registers no handlers.
+        uint hash = netObj.PrefabIdHash;
+        if (config.Prefabs.NetworkPrefabOverrideLinks.ContainsKey(hash))
+            return;
+
+        string pieceName = pieceRoot != null ? pieceRoot.name : "<unknown piece>";
+        LogMazeErrorOnce(
+            $"maze-spawn-unregistered-hash:{hash}",
+            $"[Maze] \"{netObj.name}\" in piece \"{pieceName}\" is being spawned with GlobalObjectIdHash {hash}, which "
+            + "is not registered in Resources/DefaultNetworkPrefabs. Clients cannot resolve it, drop the spawn without "
+            + "an error, and keep an unspawned local copy that runs its own authority — its state forks from the host's. "
+            + "Spawn a registered root prefab at an anchor instead (see TrySpawnElevatorFinishSyncIfPresent), or remove "
+            + "the NetworkObject and replicate through DoorNetworkStateStore / the procedural Rpcs.",
+            netObj);
+    }
+
+    void LogMazeErrorOnce(string key, string message, UnityEngine.Object context)
+    {
+        if (!_loggedMazeWarnings.Add(key))
+            return;
+
+        Debug.LogError(message, context);
+    }
+
     void TrySpawnMazeNetworkRigidbodyPropsIfPresent(GameObject pieceRoot)
     {
         if (pieceRoot == null || !IsServerListening() || _networkManager == null)
@@ -2791,15 +2850,21 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             if (netObj.gameObject.scene != pieceRoot.scene)
                 SceneManager.MoveGameObjectToScene(netObj.gameObject, pieceRoot.scene);
 
+            ReportIfMazeSpawnHashUnregistered(netObj, pieceRoot);
             netObj.Spawn();
         }
     }
 
     /// <summary>
-    /// Nested <see cref="HingeInteractDoor"/> with <c>Use Key To Unlock</c> may carry a <see cref="NetworkObject"/> (e.g. Door_A in Jail).
-    /// Server-spawn those objects so lock/open state replicates; doors without <see cref="NetworkObject"/> stay on the procedural Rpc path.
-    /// Double doors: every leaf in the <see cref="HingeInteractDoor.PairedLeaf"/> loop for a keyed door is included so both
-    /// NetworkObjects spawn when the prefab has them (purely keyed mates do not need their own Use Key flag).
+    /// Server-spawns the <see cref="NetworkObject"/> of a nested <c>Use Key To Unlock</c> <see cref="HingeInteractDoor"/>,
+    /// so its lock/open state replicates through its own NetworkVariables. Double doors: every leaf in the
+    /// <see cref="HingeInteractDoor.PairedLeaf"/> loop for a keyed door is included so both NetworkObjects spawn when
+    /// the prefab has them (purely keyed mates do not need their own Use Key flag).
+    ///
+    /// No shipping maze piece takes this path any more — every keyed door (jail cell, MG_Start, SeveranceStart, the
+    /// carnival StartGate leaves) is deliberately unspawned and replicates through <see cref="DoorNetworkStateStore"/>
+    /// instead, because a nested NetworkObject's hash is unregistered and its spawn drops silently on clients.
+    /// Kept as the mechanism for a future keyed door authored as a registered root prefab.
     /// </summary>
     void TrySpawnUseKeyHingeNetworkObjectsIfPresent(GameObject pieceRoot)
     {
@@ -2837,6 +2902,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         if (netObj.gameObject.scene != pieceRoot.scene)
             SceneManager.MoveGameObjectToScene(netObj.gameObject, pieceRoot.scene);
 
+        ReportIfMazeSpawnHashUnregistered(netObj, pieceRoot);
         netObj.Spawn();
     }
 

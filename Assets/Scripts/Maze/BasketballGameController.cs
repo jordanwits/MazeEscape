@@ -60,6 +60,8 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
 
     NetworkObject _spawnedBallNet;
     float _scoreCooldownAccumulator;
+    /// <summary>Server's un-quantized countdown; <see cref="_timeRemaining"/> only publishes whole seconds.</summary>
+    float _serverTimeRemaining;
 
     public bool IsActive => _isActive.Value;
     public float TimeRemaining => _timeRemaining.Value;
@@ -74,7 +76,6 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
     /// <summary>Called by <see cref="CarnivalGameStartButton"/> when a player presses E. Routes to a ServerRpc as needed.</summary>
     public void ProcessStartRequest(PlayerController interactor)
     {
-        Debug.Log($"[BasketballGameController] ProcessStartRequest on {name}, CanStartNow={CanStartNow}", this);
         if (interactor == null || !CanStartNow)
             return;
 
@@ -173,7 +174,6 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
 
     void ServerStartRound(ulong startingPlayerNetObjId)
     {
-        Debug.Log($"[BasketballGameController] ServerStartRound on {name}, IsServer={IsServer}, IsActive={_isActive.Value}", this);
         if (!IsServer || _isActive.Value)
             return;
         if (basketballPrefab == null)
@@ -197,10 +197,10 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
         }
         ballNet.Spawn();
         _spawnedBallNet = ballNet;
-        Debug.Log($"[BasketballGameController] Ball spawned at {ballSpawnAnchor.position} with NetId={ballNet.NetworkObjectId}", this);
 
         _score.Value = 0;
-        _timeRemaining.Value = roundDurationSeconds;
+        _serverTimeRemaining = roundDurationSeconds;
+        _timeRemaining.Value = Mathf.Ceil(roundDurationSeconds);
         _scoreCooldownAccumulator = 0f;
         _isActive.Value = true;
     }
@@ -237,14 +237,20 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
 
         ServerTickBallSafety();
 
-        float remaining = _timeRemaining.Value - Time.fixedDeltaTime;
-        if (remaining <= 0f)
+        _serverTimeRemaining -= Time.fixedDeltaTime;
+        if (_serverTimeRemaining <= 0f)
         {
+            _serverTimeRemaining = 0f;
             _timeRemaining.Value = 0f;
             ServerEndRound();
             return;
         }
-        _timeRemaining.Value = remaining;
+
+        // The only reader (CarnivalWorldNumberDisplay) ceils this to whole seconds, so writing every
+        // fixed step dirtied the variable ~50x per displayed change for nothing.
+        float wholeSeconds = Mathf.Ceil(_serverTimeRemaining);
+        if (_timeRemaining.Value != wholeSeconds)
+            _timeRemaining.Value = wholeSeconds;
     }
 
     void ServerTickBallSafety()

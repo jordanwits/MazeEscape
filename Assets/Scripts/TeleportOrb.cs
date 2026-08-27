@@ -54,11 +54,19 @@ public class TeleportOrb : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
+    /// <summary>Sentinel for "nobody is charging this orb" (client 0 is a real id — the host).</summary>
+    const ulong NoChargeHolderClientId = ulong.MaxValue;
+
+    /// <summary>Hard stop for a relayed charge hum, in case the matching End never arrives.</summary>
+    const float ChargeHumMaxSeconds = 10f;
+
     bool _offlineConsumed;
     float _serverCooldownUntil;
     float _offlineCooldownUntil;
     AudioSource _ambienceSource;
     AudioSource _interactSource;
+    ulong _serverChargeHolderClientId = NoChargeHolderClientId;
+    float _serverChargeAutoStopTime;
 
     public bool IsConsumed => IsSpawned ? _consumed.Value : _offlineConsumed;
 
@@ -268,6 +276,19 @@ public class TeleportOrb : NetworkBehaviour
     /// <summary>Called by the interacting player's controller when the hold-charge begins (plays the interact SFX from the start).</summary>
     public void BeginInteractCharge()
     {
+        PlayInteractChargeLocal();
+        RequestChargeHumBroadcast(true);
+    }
+
+    /// <summary>Called when the hold ends (release / look away / complete) — stops the interact SFX so it only sounds while held.</summary>
+    public void EndInteractCharge()
+    {
+        StopInteractChargeLocal();
+        RequestChargeHumBroadcast(false);
+    }
+
+    void PlayInteractChargeLocal()
+    {
         EnsureAudioSources();
         if (_interactSource == null || interactClip == null)
             return;
@@ -277,11 +298,87 @@ public class TeleportOrb : NetworkBehaviour
         _interactSource.Play();
     }
 
-    /// <summary>Called when the hold ends (release / look away / complete) — stops the interact SFX so it only sounds while held.</summary>
-    public void EndInteractCharge()
+    void StopInteractChargeLocal()
     {
         if (_interactSource != null && _interactSource.isPlaying)
             _interactSource.Stop();
+    }
+
+    /// <summary>
+    /// The charge hum is a real sound coming off the orb, so everyone standing near it should hear a teammate
+    /// winding it up — not just the person holding E. Only the local interactor ever reaches here; the peers
+    /// that receive the fan-out drive their source through the Local helpers directly.
+    /// </summary>
+    void RequestChargeHumBroadcast(bool charging)
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !IsSpawned)
+            return;
+
+        RequestChargeHumRpc(charging);
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    void RequestChargeHumRpc(bool charging, RpcParams rpcParams = default)
+    {
+        ulong senderId = rpcParams.Receive.SenderClientId;
+
+        if (charging)
+        {
+            if (!TryGetConnectedPlayerPosition(senderId, out Vector3 playerPosition)
+                || !IsInInteractRange(playerPosition))
+                return;
+
+            _serverChargeHolderClientId = senderId;
+            _serverChargeAutoStopTime = Time.time + ChargeHumMaxSeconds;
+        }
+        else
+        {
+            // A stale End from somebody who isn't the current holder must not cut their hum short.
+            if (_serverChargeHolderClientId != senderId)
+                return;
+
+            _serverChargeHolderClientId = NoChargeHolderClientId;
+        }
+
+        PlayChargeHumRpc(charging, RpcTarget.Not(senderId, RpcTargetUse.Temp));
+    }
+
+    [Rpc(SendTo.SpecifiedInParams)]
+    void PlayChargeHumRpc(bool charging, RpcParams rpcParams = default)
+    {
+        if (charging)
+            PlayInteractChargeLocal();
+        else
+            StopInteractChargeLocal();
+    }
+
+    /// <summary>Safety net: a dropped End (disconnect, level switch mid-hold) must not leave the hum looping forever.</summary>
+    void Update()
+    {
+        if (!IsSpawned || !IsServer || _serverChargeHolderClientId == NoChargeHolderClientId)
+            return;
+        if (Time.time < _serverChargeAutoStopTime)
+            return;
+
+        ulong holder = _serverChargeHolderClientId;
+        _serverChargeHolderClientId = NoChargeHolderClientId;
+        PlayChargeHumRpc(false, RpcTarget.Not(holder, RpcTargetUse.Temp));
+    }
+
+    static bool TryGetConnectedPlayerPosition(ulong clientId, out Vector3 playerPosition)
+    {
+        playerPosition = Vector3.zero;
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null
+            || !nm.ConnectedClients.TryGetValue(clientId, out NetworkClient client)
+            || client.PlayerObject == null)
+        {
+            return false;
+        }
+
+        playerPosition = client.PlayerObject.transform.position;
+        return true;
     }
 
     void OnConsumedChanged(bool previous, bool current)

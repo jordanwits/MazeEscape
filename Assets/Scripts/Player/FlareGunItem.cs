@@ -111,6 +111,10 @@ public class FlareGunItem : GrabbableInventoryItem
         if (_slotIcon != null)
             SharedHudSlotIcon = _slotIcon;
 
+        // Puts the gun on the Sfx bus and opts it into wall occlusion (it is a 3D source on the held prop).
+        if (gunAudioSource != null)
+            GameAudioManager.RouteSfxSource(gunAudioSource);
+
         if (muzzleLight != null)
             muzzleLight.enabled = false;
         if (chamberShell != null)

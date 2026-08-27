@@ -68,6 +68,9 @@ public sealed class CarnivalBottleKnockdown : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
+    /// <summary>How far a settled bottle must be pushed before the server re-opens the knock state (metres).</summary>
+    const float RearmMoveDistance = 0.05f;
+
     Rigidbody _rb;
     bool _knockedDown;
     bool _serverSettled;
@@ -246,8 +249,14 @@ public sealed class CarnivalBottleKnockdown : NetworkBehaviour
 
     void FixedUpdate()
     {
-        if (!IsServer || !_knockedDown || _serverSettled || _rb == null || _rb.isKinematic)
+        if (!IsServer || !_knockedDown || _rb == null || _rb.isKinematic)
             return;
+
+        if (_serverSettled)
+        {
+            ServerTryRearmAfterRestPose();
+            return;
+        }
 
         bool slow = _rb.IsSleeping() || _rb.linearVelocity.sqrMagnitude <= settleSpeedThreshold * settleSpeedThreshold;
         if (slow)
@@ -271,6 +280,29 @@ public sealed class CarnivalBottleKnockdown : NetworkBehaviour
         {
             Knocked = 1,
             Settled = 1,
+            RestPosition = _rb.position,
+            RestRotation = _rb.rotation,
+        };
+    }
+
+    /// <summary>
+    /// A later ball can shove a bottle that already published its rest pose — the server's body is still dynamic,
+    /// but clients froze kinematic on that pose. Without clearing the latch the new motion never replicates and the
+    /// bottle ends up somewhere else on the host than on everyone else. Re-arming republishes an unsettled state,
+    /// which releases the clients' bodies again, and the ordinary settle path then publishes the new rest pose.
+    /// </summary>
+    void ServerTryRearmAfterRestPose()
+    {
+        BottleKnockState published = _knockState.Value;
+        if ((_rb.position - published.RestPosition).sqrMagnitude <= RearmMoveDistance * RearmMoveDistance)
+            return;
+
+        _serverSettled = false;
+        _serverSettleTimer = 0f;
+        _knockState.Value = new BottleKnockState
+        {
+            Knocked = 1,
+            Settled = 0,
             RestPosition = _rb.position,
             RestRotation = _rb.rotation,
         };
@@ -306,15 +338,14 @@ public sealed class CarnivalBottleKnockdown : NetworkBehaviour
 
         // Knocked but not yet settled: release to dynamic so local physics is live. A late joiner that
         // missed the impulse broadcast may not topple on its own, but the impending settle publish will
-        // snap it into agreement. Connected peers that already fell are guarded by _knockedDown.
-        if (!_knockedDown)
+        // snap it into agreement. This also covers a re-arm (see ServerTryRearmAfterRestPose): a peer that
+        // froze on an earlier rest pose is already _knockedDown, so the release must key off the frozen
+        // body rather than that flag or the bottle would stay stuck where it used to lie.
+        _knockedDown = true;
+        if (_rb != null && _rb.isKinematic)
         {
-            _knockedDown = true;
-            if (_rb != null)
-            {
-                _rb.isKinematic = false;
-                _rb.useGravity = true;
-            }
+            _rb.isKinematic = false;
+            _rb.useGravity = true;
         }
     }
 }

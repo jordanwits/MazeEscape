@@ -103,6 +103,7 @@ public sealed class BlackjackTableView : MonoBehaviour
         _audio.minDistance = 1f;
         _audio.maxDistance = 45f;
         _audio.rolloffMode = AudioRolloffMode.Linear;
+        GameAudioManager.RouteSfxSource(_audio);
     }
 
     void PlayCardSfx()

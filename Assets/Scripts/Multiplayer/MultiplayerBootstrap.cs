@@ -121,10 +121,18 @@ public class MultiplayerBootstrap : MonoBehaviour
     static void EnsureNestedPrefabHashOverrides(NetworkPrefabsList defaults)
     {
         // Intentionally empty. The previous BasketballGame nested-override hashes (2806273795 /
-        // 1843502869) no longer exist anywhere in the project (verified by grepping every .prefab
-        // and .unity); leaving them in would only hide a real regression. If nested NetworkObject
-        // hashes ever need mapping again, add a new EnsureHashOverrideEntry call here. See
-        // [[ngo-prefab-hash-gotcha]] for why the runtime override is necessary in the first place.
+        // 1843502869) no longer exist; the nested hashes that DO remain in maze piece prefabs are all
+        // cases an override cannot fix, so mapping them here would only paper over the bug:
+        //   - the Jail door (3896871295) and the two CarnivalStart gates (3284113694 / 2801997722) are
+        //     built locally on every peer, so a resolving hash would instantiate a SECOND door leaf on
+        //     clients on top of the one the maze already made — and the Jail instance overrides
+        //     useKeyToUnlock/jailCellStartUnlocked, which the root Door_A prefab does not carry;
+        //   - the MG_Finish / SeveranceFinishHall1 elevator copies are authoring records that are never
+        //     spawned (ProceduralMazeCoordinator spawns the registered Resources/ElevatorFinishSync).
+        // ProceduralMazeCoordinator.ReportIfMazeSpawnHashUnregistered reports any unregistered hash the
+        // server actually spawns, so a new offender surfaces as an error instead of a silent client drop.
+        // Add an EnsureHashOverrideEntry call here only for a nested object that clients do NOT build
+        // locally. See [[ngo-prefab-hash-gotcha]] for why the runtime override exists at all.
     }
 
     static GameObject FindPrefabByBaseHash(NetworkPrefabsList list, uint baseHash)

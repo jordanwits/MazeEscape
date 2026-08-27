@@ -41,6 +41,7 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
     HingeInteractDoor _doorA;
     HingeInteractDoor _doorB;
     ElevatorSlidingDoors _slidingDoors;
+    ElevatorCallButton[] _callButtons;
     bool _pendingSceneAfterDoorsIdle;
     /// <summary>Set once a close has been authorized: the run is committed and the pads stop answering.</summary>
     bool _runCommitted;
@@ -212,6 +213,8 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
             if (buttons[i] != null)
                 buttons[i].AssignController(this);
         }
+        // Kept so the press fan-out can find this peer's copy of the pad somebody else pushed.
+        _callButtons = buttons;
 
         // A peer that binds late (maze built after this spawn arrived) has to adopt the state as it stands now.
         if (_slidingDoors != null && IsSpawned)
@@ -447,6 +450,7 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
             return;
 
         _doorsOpen.Value = true;
+        FanOutCallButtonPress(ElevatorCallButton.ElevatorButtonAction.OpenDoors, rpcParams.Receive.SenderClientId);
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -464,6 +468,37 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
             return;
 
         AuthorizeDoorsClose();
+        FanOutCallButtonPress(ElevatorCallButton.ElevatorButtonAction.CloseDoors, rpcParams.Receive.SenderClientId);
+    }
+
+    /// <summary>
+    /// The pad's press feedback for everyone except the person who pressed it (they already ran it locally the
+    /// moment they hit interact). Server-only; fired from the two pad entry points once the press is validated.
+    /// </summary>
+    void FanOutCallButtonPress(ElevatorCallButton.ElevatorButtonAction action, ulong presserClientId)
+    {
+        if (!IsSpawned || !IsServer)
+            return;
+
+        PlayCallButtonPressRpc((byte)action, RpcTarget.Not(presserClientId, RpcTargetUse.Temp));
+    }
+
+    [Rpc(SendTo.SpecifiedInParams)]
+    void PlayCallButtonPressRpc(byte buttonAction, RpcParams rpcParams = default)
+    {
+        if (_callButtons == null)
+            return;
+
+        var action = (ElevatorCallButton.ElevatorButtonAction)buttonAction;
+        for (int i = 0; i < _callButtons.Length; i++)
+        {
+            ElevatorCallButton button = _callButtons[i];
+            if (button != null && button.Action == action)
+            {
+                button.PlayPressFeedback();
+                return;
+            }
+        }
     }
 
     void AuthorizeDoorsClose()

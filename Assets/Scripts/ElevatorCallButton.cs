@@ -144,8 +144,7 @@ public class ElevatorCallButton : MonoBehaviour
         {
             if (TryGetDetachedCabDoors(out ElevatorSlidingDoors detached))
             {
-                _pressTime = 0f;
-                PlayPressSfx();
+                PlayPressFeedback();
                 detached.SetOpen(action == ElevatorButtonAction.OpenDoors, immediate: false);
 
                 if (!_loggedDetachedCab)
@@ -171,13 +170,23 @@ public class ElevatorCallButton : MonoBehaviour
             return;
         }
 
-        _pressTime = 0f;
-        PlayPressSfx();
+        PlayPressFeedback();
 
         if (action == ElevatorButtonAction.OpenDoors)
             _controller.RequestDoorsOpenFromButton(interactorPosition);
         else
             _controller.RequestDoorsCloseFromButton(interactorPosition);
+    }
+
+    /// <summary>
+    /// The pad sinking plus its click, with no door request attached. The presser runs it immediately from
+    /// <see cref="Press"/>; every other peer gets it from the controller's fan-out, so a pad someone else
+    /// pushed is seen and heard being pushed rather than silently opening the doors.
+    /// </summary>
+    public void PlayPressFeedback()
+    {
+        _pressTime = 0f;
+        PlayPressSfx();
     }
 
     void Update()
