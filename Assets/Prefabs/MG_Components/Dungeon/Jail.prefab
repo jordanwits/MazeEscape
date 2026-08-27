@@ -69,6 +69,8 @@ MonoBehaviour:
   jailDoor: {fileID: 1774313027956928139}
   occupantZone: {fileID: 8715474695291466458}
   closeDelaySeconds: 2
+  jailorClearSettleSeconds: 0.75
+  closeSafetyCapSeconds: 8
   onlyWhenDoorOpen: 1
   addKinematicRigidbody: 1
 --- !u!1 &2016965480074763567
@@ -1142,11 +1144,8 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 6410702932482852043, guid: dee34535483383c47afc68b37e75da8d, type: 3}
-      propertyPath: GlobalObjectIdHash
-      value: 3896871295
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
+    m_RemovedComponents:
+    - {fileID: 6410702932482852043, guid: dee34535483383c47afc68b37e75da8d, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
     m_AddedComponents: []

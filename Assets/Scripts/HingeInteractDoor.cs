@@ -83,7 +83,9 @@ public class HingeInteractDoor : NetworkBehaviour
     AudioSource _sfx;
     static readonly Dictionary<AudioClip, AudioClip> s_reversedClipCache = new();
     static readonly Dictionary<ulong, HingeInteractDoor> s_registeredDoors = new();
-    static readonly HashSet<ulong> s_warnedUnspawnedJailStyleDoorIds = new();
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+    static bool s_warnedMissingDoorStateStore;
+#endif
     ulong _cachedDoorId;
     bool _hasCachedDoorId;
     Vector3 _identityHintPosition;
@@ -347,7 +349,7 @@ public class HingeInteractDoor : NetworkBehaviour
     void Start()
     {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-        StartCoroutine(WarnOnceIfUnspawnedJailStyleDoorCoroutine());
+        StartCoroutine(WarnOnceIfKeyedDoorHasNoStateStoreCoroutine());
 #endif
         EnsureInitialVisualAlignedWithDoorState();
     }
@@ -397,11 +399,14 @@ public class HingeInteractDoor : NetworkBehaviour
     }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-    IEnumerator WarnOnceIfUnspawnedJailStyleDoorCoroutine()
+    /// <summary>
+    /// Keyed maze doors are deliberately NOT Netcode-spawned: every peer builds them from the seed and their
+    /// lock/open state rides <see cref="DoorNetworkStateStore"/>'s NetworkList. An unspawned keyed door is therefore
+    /// correct, not a fault — what still silently breaks replication is the store never coming online, which leaves
+    /// every peer running its own door authority.
+    /// </summary>
+    IEnumerator WarnOnceIfKeyedDoorHasNoStateStoreCoroutine()
     {
-        yield return null;
-        yield return null;
-
         if (!useKeyToUnlock)
             yield break;
 
@@ -409,23 +414,29 @@ public class HingeInteractDoor : NetworkBehaviour
         if (nm == null || !nm.IsListening)
             yield break;
 
-        // Key doors without a NetworkObject rely on DoorId + NetworkPlayerInventory procedural Rpcs (MG_Start, etc.).
-        if (!TryGetComponent(out NetworkObject networkObject))
-            yield break;
+        // The store is a replicated spawn racing the local maze build, so it is given a window before being judged.
+        float deadline = Time.unscaledTime + MissingStateStoreGraceSeconds;
+        while (Time.unscaledTime < deadline)
+        {
+            // IsSpawned: a keyed door that IS networked carries its own NetworkVariables and needs no store.
+            if (DoorNetworkStateStore.Instance != null || IsSpawned)
+                yield break;
+            yield return null;
+        }
 
-        if (networkObject.IsSpawned)
+        if (s_warnedMissingDoorStateStore)
             yield break;
-
-        ulong id = DoorId;
-        if (!s_warnedUnspawnedJailStyleDoorIds.Add(id))
-            yield break;
+        s_warnedMissingDoorStateStore = true;
 
         Debug.LogWarning(
-            "[HingeInteractDoor] This door has Use Key To Unlock and a NetworkObject but is not Netcode-spawned while networking. "
-            + "Lock/open state will not replicate until the server spawns it (e.g. ProceduralMazeCoordinator.TrySpawnUseKeyHingeNetworkObjectsIfPresent for maze pieces). "
-            + "If you intend procedural replication only, remove NetworkObject and use the DoorId / NetworkPlayerInventory Rpcs.",
+            "[HingeInteractDoor] A Use Key To Unlock door is running in a session with no DoorNetworkStateStore. "
+            + "Procedural keyed doors replicate their lock/open state through that store, so without it each peer "
+            + "keeps its own. Check DoorStateStore.prefab is registered in Resources/DefaultNetworkPrefabs and that "
+            + "ProceduralMazeCoordinator.EnsureDoorStateStoreSpawnedAndCleared spawned it.",
             this);
     }
+
+    const float MissingStateStoreGraceSeconds = 5f;
 #endif
 
     public static bool TryResolveForSync(ulong doorId, Vector3 hintPosition, out HingeInteractDoor door)
