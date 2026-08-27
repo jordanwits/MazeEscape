@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 #if UNITY_EDITOR
@@ -43,6 +44,13 @@ public class RagdollTrap : MonoBehaviour
     [Tooltip("Min seconds between hit sounds for the same collider (OnTriggerStay spam).")]
     [SerializeField, Min(0.05f)] float trapHitSoundSameColliderCooldown = 0.32f;
 
+    /// <summary>
+    /// Every live trap, so the replicated hit path can resolve which one made a clank from the hit position
+    /// alone (see <see cref="PlayNearestTrapImpactSfx"/>). Traps are deterministic local maze geometry, so the
+    /// same trap exists at the same place on every peer — no networked identity is needed.
+    /// </summary>
+    static readonly List<RagdollTrap> s_ActiveTraps = new();
+
     AudioSource _hitAudio;
     EntityId _lastMetallicColliderEntity;
     float _nextMetallicSoundTime;
@@ -78,6 +86,71 @@ public class RagdollTrap : MonoBehaviour
             trapHitMetallicClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/MetalicWack.wav");
     }
 #endif
+
+    void OnEnable()
+    {
+        s_ActiveTraps.Add(this);
+    }
+
+    void OnDisable()
+    {
+        s_ActiveTraps.Remove(this);
+    }
+
+    /// <summary>
+    /// Plays the trap clank for a replicated hit: finds the live trap nearest the hit point and sounds it from
+    /// the trap itself. Called on every peer from <see cref="NetworkPlayerRagdoll"/>'s hit RPC, so the impact is
+    /// heard once, positionally, by everyone — instead of only by whoever's local trigger happened to fire.
+    /// </summary>
+    public static void PlayNearestTrapImpactSfx(Vector3 worldPosition, float maxDistance = 6f)
+    {
+        RagdollTrap nearest = null;
+        float bestSqr = maxDistance * maxDistance;
+
+        for (int i = s_ActiveTraps.Count - 1; i >= 0; i--)
+        {
+            RagdollTrap trap = s_ActiveTraps[i];
+            if (trap == null)
+            {
+                s_ActiveTraps.RemoveAt(i); // level unload destroyed it without OnDisable running
+                continue;
+            }
+
+            float sqr = (trap.transform.position - worldPosition).sqrMagnitude;
+            if (sqr > bestSqr)
+                continue;
+
+            bestSqr = sqr;
+            nearest = trap;
+        }
+
+        if (nearest != null)
+            nearest.PlayTrapHitMetallicFromRelay();
+    }
+
+    /// <summary>
+    /// The relay counterpart of <see cref="TryPlayTrapHitMetallic"/>: no victim collider to key the cooldown on,
+    /// so it gates purely on time.
+    /// </summary>
+    void PlayTrapHitMetallicFromRelay()
+    {
+        if (trapHitMetallicClip == null)
+            return;
+
+        EnsureHitAudioSource();
+        if (_hitAudio == null)
+            return;
+
+        float now = Time.time;
+        if (now < _nextMetallicSoundTime)
+            return;
+        _nextMetallicSoundTime = now + trapHitSoundSameColliderCooldown;
+
+        if (GameAudioManager.Instance != null)
+            GameAudioManager.RouteSfxSource(_hitAudio);
+
+        _hitAudio.PlayOneShot(trapHitMetallicClip, Mathf.Max(0f, trapHitMetallicVolume));
+    }
 
     void EnsureHitAudioSource()
     {
@@ -183,15 +256,15 @@ public class RagdollTrap : MonoBehaviour
         // Server-authoritative hit detection. In multiplayer ONLY the server detects and applies trap hits, tested
         // against its authoritative collider poses. A client's late/interpolated blade collider must never author or
         // request a hit — that let the non-authoritative victim's own diverged collider decide the hit and was the
-        // host/client hitbox inconsistency. Clients still play a local impact cue for responsiveness (the blade they
-        // see is within interpolation of the server's) but apply nothing.
+        // host/client hitbox inconsistency.
         if (networked && !nm.IsServer)
         {
+            // A PLAYER hit's clank now rides the server's hit RPC (see NetworkPlayerRagdoll.StartRagdollClientRpc),
+            // which lands on every peer — playing one here too would double it up for whoever's local trigger fired.
+            // Enemy kills have no such RPC, so those still cue from local detection.
             ZombieHealth zClient = other.GetComponentInParent<ZombieHealth>();
             SkeletonHealth sClient = other.GetComponentInParent<SkeletonHealth>();
-            if ((playerHealth != null && !playerHealth.IsDead)
-                || (zClient != null && !zClient.IsDead)
-                || (sClient != null && !sClient.IsDead))
+            if ((zClient != null && !zClient.IsDead) || (sClient != null && !sClient.IsDead))
                 TryPlayTrapHitMetallic(other);
             return;
         }
@@ -234,8 +307,10 @@ public class RagdollTrap : MonoBehaviour
         if (networked && netRagdoll != null)
         {
             // networked here implies IsServer (clients returned above); the server relays the ragdoll to the owner.
-            TryPlayTrapHitMetallic(other);
-            netRagdoll.RequestTrapHitFromServer(force, hitPoint, TrapDamageAmount, forceMode);
+            // The clank rides that same RPC — which loops back to the host — so there is exactly one positional
+            // clank per hit on every peer and none played locally here.
+            netRagdoll.RequestTrapHitFromServer(force, hitPoint, TrapDamageAmount, forceMode,
+                NetworkPlayerRagdoll.TrapImpactSfxKind.TrapMetallic);
             return;
         }
 

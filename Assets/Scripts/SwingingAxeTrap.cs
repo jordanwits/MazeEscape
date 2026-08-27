@@ -72,6 +72,9 @@ public class SwingingAxeTrap : NetworkBehaviour
     [Header("Audio")]
     [SerializeField] AudioClip swingSwooshClip;
     [SerializeField, Range(0f, 1f)] float swingSwooshVolume = 0.7f;
+    [Tooltip("Metallic wack when the blade connects with a player. Broadcast from the server so every peer hears the same hit.")]
+    [SerializeField] AudioClip impactClip;
+    [SerializeField, Range(0f, 1f)] float impactVolume = 0.9f;
 
     const float TwoPi = Mathf.PI * 2f;
     const int OverlapBufferSize = 32;
@@ -185,6 +188,8 @@ public class SwingingAxeTrap : NetworkBehaviour
     {
         if (swingSwooshClip == null)
             swingSwooshClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Swoosh.wav");
+        if (impactClip == null)
+            impactClip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/Audio/SFX/Dungeon/MetalicWack.wav");
     }
 #endif
 
@@ -394,7 +399,7 @@ public class SwingingAxeTrap : NetworkBehaviour
                 }
                 pushDir = pushDir.sqrMagnitude > 1e-6f ? pushDir.normalized : transform.forward;
 
-                ApplyHit(ph, pushDir);
+                ApplyHit(ph, pushDir, center);
             }
         }
 
@@ -402,7 +407,7 @@ public class SwingingAxeTrap : NetworkBehaviour
         PruneHitCooldowns();
     }
 
-    void ApplyHit(PlayerHealth ph, Vector3 pushDirHorizontal)
+    void ApplyHit(PlayerHealth ph, Vector3 pushDirHorizontal, Vector3 impactPosition)
     {
         // Damage is authoritative here (server, or local when offline). PlayerHealth.TakeDamage no-ops on
         // non-server peers, and the result replicates via NetworkPlayerRespawn.
@@ -412,6 +417,13 @@ public class SwingingAxeTrap : NetworkBehaviour
 
         if (IsNetworkActive && IsServer)
         {
+            // The impact cue goes out over the RPC only — it loops back to the host, so playing it locally as
+            // well would double it there. An unspawned local copy has no RPC channel and falls back.
+            if (IsSpawned)
+                PlayImpactSfxRpc(impactPosition);
+            else
+                PlayImpactSfxLocal(impactPosition);
+
             NetworkObject no = ph.GetComponent<NetworkObject>();
             if (no == null)
                 return;
@@ -424,10 +436,27 @@ public class SwingingAxeTrap : NetworkBehaviour
         else
         {
             // Offline / single player.
+            PlayImpactSfxLocal(impactPosition);
+
             PlayerController pc = ph.GetComponent<PlayerController>();
             if (pc != null)
                 pc.ApplyExternalPush(pushVel, pushUpwardSpeed, pushControlLockSeconds);
         }
+    }
+
+    [Rpc(SendTo.Everyone)]
+    void PlayImpactSfxRpc(Vector3 impactPosition)
+    {
+        PlayImpactSfxLocal(impactPosition);
+    }
+
+    /// <summary>
+    /// Blade impact at the point it landed rather than from the trap root: with a 3.3m blade offset those are
+    /// far enough apart to read wrong. Distances match this trap's own swoosh source.
+    /// </summary>
+    void PlayImpactSfxLocal(Vector3 impactPosition)
+    {
+        GameAudioManager.PlaySfxAtPoint(impactClip, impactPosition, impactVolume, 1f, 45f);
     }
 
     [Rpc(SendTo.SpecifiedInParams)]

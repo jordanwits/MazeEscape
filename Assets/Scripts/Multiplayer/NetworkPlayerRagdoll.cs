@@ -210,8 +210,11 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         // NetworkTransform never saw a root delta to broadcast. Recovery suddenly sets transform.position to
         // the landing spot, and without a teleport flag the observer interpolates back toward the stale anchor
         // (the visible "snap to near the Clown grab spot" the player sees just after the body settles).
+        // Vector3.one, not the current localScale: the player invariant is unit scale (see
+        // NetworkPlayerAvatar.EnforceUnitWorldScale), so passing whatever scale happens to be on the root at
+        // recovery would re-cement a corrupted value instead of letting the invariant repair it.
         if (ownerNetTransform != null)
-            ownerNetTransform.Teleport(rootPosition, rootRotation, transform.localScale);
+            ownerNetTransform.Teleport(rootPosition, rootRotation, Vector3.one);
 
         NotifyRecoveryStartedServerRpc(rootPosition, rootRotation, onBack);
     }
@@ -244,9 +247,21 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     }
 
     /// <summary>
+    /// Impact cue the hit RPC carries so every peer plays the same one positionally. Deliberately a kind and
+    /// not a clip: the emitters are deterministic local scene objects present on all peers, so the RPC only
+    /// has to say which family of sound this hit was.
+    /// </summary>
+    public enum TrapImpactSfxKind : byte
+    {
+        None = 0,
+        TrapMetallic = 1,
+    }
+
+    /// <summary>
     /// Call from server-only code (e.g. trap OnTriggerEnter when IsServer).
     /// </summary>
-    public void RequestTrapHitFromServer(Vector3 worldForce, Vector3 worldForcePosition, float damageAmount, ForceMode forceMode = ForceMode.Impulse)
+    public void RequestTrapHitFromServer(Vector3 worldForce, Vector3 worldForcePosition, float damageAmount,
+        ForceMode forceMode = ForceMode.Impulse, TrapImpactSfxKind impactSfxKind = TrapImpactSfxKind.None)
     {
         if (!IsServer || ragdoll == null || playerHealth == null)
             return;
@@ -258,7 +273,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
         s_TrapRagdollNextAllowedTime[id] = now + TrapRagdollServerCooldownSeconds;
         playerHealth.TakeDamage(damageAmount);
-        BeginRagdollFromServer(worldForce, worldForcePosition, forceMode, allowAutoRecovery: true);
+        BeginRagdollFromServer(worldForce, worldForcePosition, forceMode, allowAutoRecovery: true, impactSfxKind: impactSfxKind);
     }
 
     // NOTE: trap hits are now adjudicated server-only (see RagdollTrap.TryHit). The former owner-invoke
@@ -267,8 +282,17 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     // The sole trap-hit entry point is now the server-only RequestTrapHitFromServer above.
 
     [ClientRpc]
-    void StartRagdollClientRpc(Vector3 worldForce, Vector3 worldForcePosition, byte forceMode, bool allowAutoRecovery)
+    void StartRagdollClientRpc(Vector3 worldForce, Vector3 worldForcePosition, byte forceMode, bool allowAutoRecovery,
+        byte impactSfxKind)
     {
+        // The impact cue rides the hit RPC rather than local trigger detection: a trap's trigger only fires for
+        // the victim's own controller and (unreliably) the observers' blocking proxy, so observers used to lose
+        // a race against the proxy suppression below and hear nothing. Resolved before the ragdoll work so the
+        // sound is not delayed by it, and it plays on the host too (loop-back), which is why the server no
+        // longer plays its own local copy.
+        if (impactSfxKind == (byte)TrapImpactSfxKind.TrapMetallic)
+            RagdollTrap.PlayNearestTrapImpactSfx(worldForcePosition);
+
         if (ragdoll == null)
             return;
 
@@ -304,6 +328,26 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             _streamHipsPathInit = false;
             _streamHipsPathLen = 0f;
         }
+    }
+
+    /// <summary>
+    /// Server: relay a pit's spike stab for this player's kill to every peer. The pit is plain local geometry
+    /// with no NetworkObject of its own, so the position rides the Rpc and each peer resolves its own copy of
+    /// the pit from it — same treatment as the trap clank above, and for the same reason: an observer's
+    /// proxy-vs-trigger race against death replication usually loses, so it heard nothing.
+    /// </summary>
+    public void BroadcastPitStabSfxFromServer(Vector3 worldPosition)
+    {
+        if (!IsServer || !IsSpawned)
+            return;
+
+        PlayPitStabSfxClientRpc(worldPosition);
+    }
+
+    [ClientRpc]
+    void PlayPitStabSfxClientRpc(Vector3 worldPosition)
+    {
+        PitKillZone.PlayNearestPitStabSfx(worldPosition);
     }
 
     /// <summary>
@@ -452,7 +496,8 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         return null;
     }
 
-    void BeginRagdollFromServer(Vector3 worldForce, Vector3 worldForcePosition, ForceMode forceMode, bool allowAutoRecovery)
+    void BeginRagdollFromServer(Vector3 worldForce, Vector3 worldForcePosition, ForceMode forceMode, bool allowAutoRecovery,
+        TrapImpactSfxKind impactSfxKind = TrapImpactSfxKind.None)
     {
         if (!IsServer || ragdoll == null)
             return;
@@ -466,7 +511,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             Active = 1,
             AllowAutoRecovery = (byte)(allowAutoRecovery ? 1 : 0),
         };
-        StartRagdollClientRpc(worldForce, worldForcePosition, (byte)forceMode, allowAutoRecovery);
+        StartRagdollClientRpc(worldForce, worldForcePosition, (byte)forceMode, allowAutoRecovery, (byte)impactSfxKind);
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]

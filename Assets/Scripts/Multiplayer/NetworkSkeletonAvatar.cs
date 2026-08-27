@@ -78,6 +78,43 @@ public class NetworkSkeletonAvatar : NetworkBehaviour
         _heldSkullHidden.OnValueChanged -= HandleHeldSkullChanged;
     }
 
+    /// <summary>
+    /// Throw / bash cues. <see cref="SkeletonAI"/> runs both routines server-only, so playing them there left
+    /// clients hearing a silent wind-up. Mirrors <see cref="NetworkJailorAvatar.PlayPickupLaughSfxForObservers"/>:
+    /// the RPC goes to EVERYONE and the server does not also play its own local copy, which is what keeps the
+    /// listen-server host from hearing it twice.
+    /// </summary>
+    public void PlayThrowSfxForObservers()
+    {
+        if (!IsServer)
+            return;
+
+        PlayThrowSfxClientRpc();
+    }
+
+    [ClientRpc]
+    void PlayThrowSfxClientRpc()
+    {
+        if (skeletonAI != null)
+            skeletonAI.PlayThrowSfxLocal();
+    }
+
+    /// <seealso cref="PlayThrowSfxForObservers"/>
+    public void PlayBashSfxForObservers()
+    {
+        if (!IsServer)
+            return;
+
+        PlayBashSfxClientRpc();
+    }
+
+    [ClientRpc]
+    void PlayBashSfxClientRpc()
+    {
+        if (skeletonAI != null)
+            skeletonAI.PlayBashSfxLocal();
+    }
+
     /// <summary>Server-authoritative show/hide of the in-hand skull. <see cref="SkeletonAI"/> calls this during throws.</summary>
     public void SetHeldSkullHidden(bool hidden)
     {

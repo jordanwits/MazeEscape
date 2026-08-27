@@ -802,7 +802,7 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
         FaceTarget();
 
         CrossFade(throwStateName, actionCrossfade);
-        PlaySfx(throwSfx);
+        NotifyThrowSfx();
 
         if (throwReleaseDelay > 0f)
             yield return new WaitForSeconds(throwReleaseDelay);
@@ -836,7 +836,7 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
 
         Vector3 committedDirection = GetFacingToTarget();
         CrossFade(bashStateName, actionCrossfade);
-        PlaySfx(bashSfx);
+        NotifyBashSfx();
 
         if (bashHitDelay > 0f)
             yield return new WaitForSeconds(bashHitDelay);
@@ -1542,6 +1542,7 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
             return;
         _sfxSource.playOnAwake = false;
         _sfxSource.spatialBlend = 1f;
+        GameAudioManager.RouteSfxSource(_sfxSource);
     }
 
     void PlaySfx(AudioClip clip)
@@ -1550,6 +1551,46 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
             return;
         _sfxSource.PlayOneShot(clip);
     }
+
+    /// <summary>
+    /// True when the avatar can relay a cue to every peer. When it can, the caller must NOT also play locally:
+    /// the ClientRpc loops back to the listen-server host, so a local play would double it there.
+    /// </summary>
+    bool CanRelaySfxThroughAvatar()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        return networkAvatar != null
+            && nm != null
+            && nm.IsListening
+            && _networkObject != null
+            && _networkObject.IsSpawned;
+    }
+
+    void NotifyThrowSfx()
+    {
+        if (CanRelaySfxThroughAvatar())
+        {
+            networkAvatar.PlayThrowSfxForObservers();
+            return;
+        }
+
+        PlayThrowSfxLocal();
+    }
+
+    void NotifyBashSfx()
+    {
+        if (CanRelaySfxThroughAvatar())
+        {
+            networkAvatar.PlayBashSfxForObservers();
+            return;
+        }
+
+        PlayBashSfxLocal();
+    }
+
+    public void PlayThrowSfxLocal() => PlaySfx(throwSfx);
+
+    public void PlayBashSfxLocal() => PlaySfx(bashSfx);
 
     void UpdateFootsteps()
     {
