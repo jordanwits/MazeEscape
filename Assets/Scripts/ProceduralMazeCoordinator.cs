@@ -513,15 +513,16 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         ClearRoot(root.transform);
         root.transform.position = Vector3.zero;
 
+        int sectionSeed = MixSeed(seed, SectionSeedSalt(_config.TargetSceneName));
         Vector2Int logicalSize = _config.MazeSize;
-        MazeLayout layout = GenerateMazeLayout(seed, logicalSize.x, logicalSize.y);
+        MazeLayout layout = GenerateMazeLayout(sectionSeed, logicalSize.x, logicalSize.y);
         MazeCell[,] grid = layout.Cells;
         Vector2Int start = layout.Start;
         Vector2Int exit = FindFarthestCell(grid, start);
         int width = grid.GetLength(0);
         int height = grid.GetLength(1);
         bool multiStartWanted = TryPrepareMultiCellForcedStart(
-            grid, start, exit, width, height, seed,
+            grid, start, exit, width, height, sectionSeed,
             out HashSet<Vector2Int> reservedForForcedStart,
             out Vector2Int multiStartFootprint);
 
@@ -540,7 +541,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         {
             InteriorRoomBuildPlan forcedStartPlan = new(forcedStartAnchors, forcedStartSkips);
             if (TryAttachForcedStartAsInteriorRoom(
-                    forcedStartPlan, grid, start, exit, seed, multiStartFootprint))
+                    forcedStartPlan, grid, start, exit, sectionSeed, multiStartFootprint))
                 startAttached = true;
             else
                 multiStartFootprint = Vector2Int.one;
@@ -553,7 +554,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         HashSet<Vector2Int> exitHallSkips = new();
         HashSet<Vector2Int> reservedCells = reservedForForcedStart;
         if (TryAttachExitHall(
-                exitHallAnchors, exitHallSkips, grid, start, exit, width, height, seed, reservedCells))
+                exitHallAnchors, exitHallSkips, grid, start, exit, width, height, sectionSeed, reservedCells))
         {
             reservedCells ??= new HashSet<Vector2Int>();
             foreach (Vector2Int cell in _exitHallCells)
@@ -561,7 +562,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         InteriorRoomBuildPlan interiorPlan = SelectInteriorRoomPlacements(
-            grid, start, exit, seed, width, height, reservedCells);
+            grid, start, exit, sectionSeed, width, height, reservedCells);
         if (startAttached)
         {
             foreach (KeyValuePair<Vector2Int, InteriorRoomPlacementEntry> a in forcedStartAnchors)
@@ -576,7 +577,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             interiorPlan.SkipCells.Add(skip);
 
         Vector2Int? jailDeadEndCell = SelectJailDeadEndCell(
-            _config.JailDeadEndPrefab, grid, start, exit, interiorPlan, width, height, seed);
+            _config.JailDeadEndPrefab, grid, start, exit, interiorPlan, width, height, sectionSeed);
         if (_config.JailDeadEndPrefab != null && !jailDeadEndCell.HasValue)
         {
             LogMazeWarningOnce(
@@ -616,7 +617,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
                     blockerOffset,
                     isStart,
                     isExit,
-                    seed,
+                    sectionSeed,
                     cell,
                     isInteriorAnchor,
                     interiorEntry,
@@ -625,12 +626,12 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         (HashSet<Vector2Int> mazeTrapCells, List<Transform> mazeTrapRoots) =
-            TrySpawnMazeTraps(root.transform, grid, builtCellRoots, start, exit, seed, cellSize);
-        TrySpawnMazeChests(root.transform, builtCellRoots, seed);
-        TrySpawnMazeTeleportOrbs(root.transform, builtCellRoots, seed);
-        TrySpawnMazePosters(root.transform, builtCellRoots, seed);
-        TrySpawnMazeBatRoosts(root.transform, grid, builtCellRoots, start, exit, jailDeadEndCell, interiorPlan, seed, cellSize);
-        TrySpawnMazeRoachColonies(root.transform, grid, builtCellRoots, start, exit, jailDeadEndCell, interiorPlan, seed, cellSize);
+            TrySpawnMazeTraps(root.transform, grid, builtCellRoots, start, exit, sectionSeed, cellSize);
+        TrySpawnMazeChests(root.transform, builtCellRoots, sectionSeed);
+        TrySpawnMazeTeleportOrbs(root.transform, builtCellRoots, sectionSeed);
+        TrySpawnMazePosters(root.transform, builtCellRoots, sectionSeed);
+        TrySpawnMazeBatRoosts(root.transform, grid, builtCellRoots, start, exit, jailDeadEndCell, interiorPlan, sectionSeed, cellSize);
+        TrySpawnMazeRoachColonies(root.transform, grid, builtCellRoots, start, exit, jailDeadEndCell, interiorPlan, sectionSeed, cellSize);
         TrySpawnMazeStartFlashlights(root.transform);
         CreateSpawnPoints(root.transform, start, cellSize, multiStartFootprint);
         if (MultiplayerSpawnRegistry.Instance != null)
@@ -639,9 +640,9 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             MultiplayerSpawnRegistry.Instance.ResetInitialJoinRoundRobin();
         }
         TryRebuildRuntimeNavMesh(root);
-        TrySpawnMazeItemPickups(root.transform, builtCellRoots, seed);
-        TrySpawnMazeEnemies(root.transform, grid, start, exit, seed, cellSize, interiorPlan, mazeTrapCells, mazeTrapRoots);
-        TrySpawnMazeRatBots(root.transform, seed);
+        TrySpawnMazeItemPickups(root.transform, builtCellRoots, sectionSeed);
+        TrySpawnMazeEnemies(root.transform, grid, start, exit, sectionSeed, cellSize, interiorPlan, mazeTrapCells, mazeTrapRoots);
+        TrySpawnMazeRatBots(root.transform, sectionSeed);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);
 
         MarkLocalMazeCollidersReadyAndResyncClientPlayer();
@@ -693,6 +694,11 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             if (ownerNetTransform != null)
                 ownerNetTransform.SnapObserverToLatestNetworkState();
         }
+
+        // Items a teammate carried in from the previous section belong to no seed and exist on no other peer,
+        // so this client has to build its own copies from the replicated record. Before the loop below: the
+        // world-item snapshot it requests only lands on ids that already resolve here.
+        CarriedItemNetworkStore.ReplayPendingAfterLocalWorldBuild();
 
         // The maze's local pickups only registered a moment ago (TrySpawnMazeItemPickups above), so every
         // player's held-item view — which resolves items by id — ran too early on this client and found
@@ -1413,6 +1419,30 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Per-section salt mixed into the replicated run seed by <see cref="BuildMazeInScene"/>. One seed is rolled
+    /// per run and reused for every section, and the section configs carry the same layout parameters, so the raw
+    /// seed would lay out the same corridors, start and exit cell in each of them. The salt is a build-local
+    /// constant derived from the config's target scene name, so peers building the same section from the same
+    /// replicated seed still agree cell for cell.
+    /// </summary>
+    static int SectionSeedSalt(string sectionName)
+    {
+        const uint fnvOffset = 2166136261u;
+        const uint fnvPrime = 16777619u;
+        unchecked
+        {
+            uint hash = fnvOffset;
+            for (int i = 0; i < sectionName.Length; i++)
+            {
+                hash ^= sectionName[i];
+                hash *= fnvPrime;
+            }
+
+            return (int)hash;
+        }
+    }
+
     MazeCell[,] GenerateCoreMaze(System.Random random, int width, int height)
     {
         MazeCell[,] cells = new MazeCell[width, height];
@@ -1670,20 +1700,6 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             foreach (Vector2Int anchor in candidateAnchors)
             {
                 if (anchors.ContainsKey(anchor))
-                    continue;
-
-                bool tooCloseEarly = false;
-                for (int i = 0; i < placedRects.Count; i++)
-                {
-                    (Vector2Int pMin, Vector2Int pSize) = placedRects[i];
-                    if (MinChebyshevBetweenAxisAlignedRects(anchor, configFootprint, pMin, pSize) < minApart)
-                    {
-                        tooCloseEarly = true;
-                        break;
-                    }
-                }
-
-                if (tooCloseEarly)
                     continue;
 
                 if (!TryStampInteriorRoomAtAnchor(

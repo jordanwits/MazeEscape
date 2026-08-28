@@ -155,7 +155,13 @@ public sealed class BasketballHoopTrigger : MonoBehaviour
             return false;
 
         ballNet = ball.GetComponentInParent<NetworkObject>();
-        return ballNet != null;
+        if (ballNet == null || ballNet.NetworkObjectId != controller.SpawnedBallNetworkObjectId)
+        {
+            ballNet = null;
+            return false;
+        }
+
+        return true;
     }
 
     void OnDrawGizmos()

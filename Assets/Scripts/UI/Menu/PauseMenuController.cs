@@ -135,7 +135,8 @@ public sealed class PauseMenuController : MonoBehaviour
         // clears, but nothing watches that flag: ApplyCursorLock only runs on a local-control transition, which
         // pausing never causes. So the cursor stayed free after unpausing until the player clicked — and that
         // recapture click fell straight through into an unintended punch or throw.
-        if (!BlackjackOverlayController.IsInteractive
+        if (InGameplayScene()
+            && !BlackjackOverlayController.IsInteractive
             && !SkeletonRpsOverlayController.IsInteractive
             && !CarnivalStoreOverlayController.IsInteractive)
         {

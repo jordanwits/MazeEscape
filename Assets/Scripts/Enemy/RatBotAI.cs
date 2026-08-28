@@ -715,6 +715,9 @@ public class RatBotAI : NetworkBehaviour, IBlindableEnemy
 
     void GoDormant()
     {
+        // Standing down always releases the statue: a frozen animator (speed 0 on every peer) would otherwise
+        // hold the mid-sneak pose while he keeps moving, and nothing else clears it until he is seen again.
+        Unfreeze();
         SetLocomotion(LocomotionIdle);
         if (navMeshAgent != null && navMeshAgent.enabled)
             navMeshAgent.ResetPath();
@@ -787,6 +790,20 @@ public class RatBotAI : NetworkBehaviour, IBlindableEnemy
             SetLocomotion(LocomotionIdle);       // param -> Idle (replicates) so nothing re-triggers Sprint
             animator.Play(_idleStateHash, 0, 0f); // snap straight to Idle, no blend
             animator.Update(0f);                  // apply this frame so the captured state IS Idle
+        }
+
+        // Caught mid gait cross-fade, the animator holds a half-finished blend, but GetCurrentAnimatorStateInfo
+        // reports the state being transitioned FROM — the hash/time captured below would describe a pose the
+        // server is not actually in, and clients Play()ing it would snap off the blend they were rendering.
+        // Collapse onto the destination state first so the statue is one pure pose everywhere.
+        if (animator.IsInTransition(0))
+        {
+            AnimatorStateInfo next = animator.GetNextAnimatorStateInfo(0);
+            if (next.fullPathHash != 0)
+            {
+                animator.Play(next.fullPathHash, 0, next.normalizedTime);
+                animator.Update(0f);
+            }
         }
 
         AnimatorStateInfo info = animator.GetCurrentAnimatorStateInfo(0);

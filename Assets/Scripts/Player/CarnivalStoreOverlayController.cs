@@ -2,6 +2,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
@@ -162,12 +163,18 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
             _store = null;
             _player = null;
             _wallet = null;
-            if (!PauseMenuController.BlocksGameplayInput)
+            if (!PauseMenuController.BlocksGameplayInput && InGameplayScene())
             {
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
             }
         }
+    }
+
+    static bool InGameplayScene()
+    {
+        Scene active = SceneManager.GetActiveScene();
+        return active.IsValid() && MultiplayerSceneFlow.IsMazeGameplayScene(active.name);
     }
 
     // =========================================================================================

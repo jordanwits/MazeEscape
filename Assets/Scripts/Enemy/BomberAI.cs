@@ -451,7 +451,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         {
             PlayerHealth victim = s_blastVictims[i];
             Vector3 chest = victim.transform.position + Vector3.up * blastHeight;
-            if (!TryGetBlastStrength(point, chest, victim, out float strength))
+            if (!TryGetBlastStrength(point, chest, out float strength))
                 continue;
 
             float damage = blastDamage * strength;
@@ -493,7 +493,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
     /// Distance falloff plus the wall check. <paramref name="strength"/> is 1 out to
     /// <see cref="fullDamageRadiusFraction"/> of the radius, then eases to 0 at the edge.
     /// </summary>
-    bool TryGetBlastStrength(Vector3 blast, Vector3 victimChest, PlayerHealth victim, out float strength)
+    bool TryGetBlastStrength(Vector3 blast, Vector3 victimChest, out float strength)
     {
         strength = 0f;
 
@@ -501,7 +501,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         if (distance > blastRadius)
             return false;
 
-        if (blastRequiresLineOfSight && !HasLineOfSight(blast, victim))
+        if (blastRequiresLineOfSight && !HasBlastLineOfSight(blast, victimChest))
             return false;
 
         float fullRadius = blastRadius * fullDamageRadiusFraction;
@@ -510,6 +510,43 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
             : 1f - Mathf.InverseLerp(fullRadius, blastRadius, distance);
         strength = Mathf.Clamp01(strength);
         return strength > 0f;
+    }
+
+    /// <summary>
+    /// The blast's own wall check: only the level stops an explosion. Bodies are stepped over, so standing
+    /// behind another player -- or behind the second bomber that arrived with this one -- is no cover. The
+    /// sensing <see cref="HasLineOfSight"/> deliberately keeps the opposite rule (a body in the way really
+    /// does break a sight line), which is why this does not share it. Same rule as the flashbang's.
+    /// </summary>
+    bool HasBlastLineOfSight(Vector3 blast, Vector3 victimChest)
+    {
+        Vector3 toVictim = victimChest - blast;
+        float distance = toVictim.magnitude;
+        if (distance <= 0.001f)
+            return true;
+
+        int mask = lineOfSightMask.value == 0 ? Physics.DefaultRaycastLayers : lineOfSightMask.value;
+        int hitCount = Physics.RaycastNonAlloc(
+            blast, toVictim / distance, s_lineOfSightHits, distance, mask, QueryTriggerInteraction.Ignore);
+
+        for (int i = 0; i < hitCount; i++)
+        {
+            Collider collider = s_lineOfSightHits[i].collider;
+            s_lineOfSightHits[i] = default;
+
+            if (collider == null)
+                continue;
+            if (collider.transform == transform || collider.transform.IsChildOf(transform))
+                continue;   // his own body / the dynamite in his fists
+            if (collider.GetComponentInParent<PlayerHealth>() != null)
+                continue;   // the victim himself, or anyone standing in front of him
+            if (collider.GetComponentInParent<IBlindableEnemy>() != null)
+                continue;   // another enemy body
+
+            return false;   // real level geometry
+        }
+
+        return true;
     }
 
     // ------------------------------------------------------------------ sensing (server)

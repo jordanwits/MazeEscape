@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
@@ -409,12 +410,18 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
             _hasPendingResult = false;
             _challenge = null;
             _player = null;
-            if (!PauseMenuController.BlocksGameplayInput)
+            if (!PauseMenuController.BlocksGameplayInput && InGameplayScene())
             {
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
             }
         }
+    }
+
+    static bool InGameplayScene()
+    {
+        Scene active = SceneManager.GetActiveScene();
+        return active.IsValid() && MultiplayerSceneFlow.IsMazeGameplayScene(active.name);
     }
 
     // =========================================================================================

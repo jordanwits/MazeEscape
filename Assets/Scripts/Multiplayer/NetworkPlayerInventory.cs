@@ -643,9 +643,12 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             }
             if (w <= 0)
             {
-                ConsumedItemNetworkStore.ServerMarkConsumed(item.ItemId);
-                RemoveWorldItemClientRpc(item.ItemId);
-                Object.Destroy(item.gameObject);
+                if (!ServerTryDespawnConsumedNetworkItem(item))
+                {
+                    ConsumedItemNetworkStore.ServerMarkConsumed(item.ItemId);
+                    RemoveWorldItemClientRpc(item.ItemId);
+                    Object.Destroy(item.gameObject);
+                }
                 return;
             }
             int emptyG = GetFirstEmptySlot();
@@ -790,7 +793,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
     /// every item type uses and which carries no light information.
     /// </summary>
     [ClientRpc]
-    void ApplyDroppedFlashlightLightClientRpc(ulong itemId, bool lightOn)
+    void ApplyDroppedFlashlightLightClientRpc(ulong itemId, bool lightOn, ClientRpcParams clientRpcParams = default)
     {
         if (!GrabbableInventoryItem.TryGetRegistered(itemId, out GrabbableInventoryItem g) || g == null)
             return;
@@ -1135,6 +1138,13 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                 continue;
             }
 
+            // This item is a LOCAL object that only exists on the peers that were connected at the switch (it
+            // rode the carry-over pen across on each of them). Replicate it so anyone joining later can build
+            // their own copy under the same id — without this the joiner has nothing the id can resolve to and
+            // every path that names it, including a later drop, silently does nothing for them.
+            CarriedItemNetworkStore.ServerRecordCarriedItem(
+                itemId, slot.TypeId, slot.StackCount, slot.FlashlightBatteryNormalized);
+
             // Same broadcast the pickup path uses, so observers attach the item to this avatar even before
             // their own slot-change refresh runs.
             ApplyItemStateWithTypeClientRpc(
@@ -1286,6 +1296,12 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                 r,
                 default,
                 targetOwner);
+
+            // The snapshot RPC carries no beam state and its handler can only re-assert the joiner's own local
+            // value, which is always false on a freshly built copy. A torch dropped lit before this peer joined
+            // therefore has to be corrected explicitly from the server's copy.
+            if (!held && g is FlashlightItem worldFlashlight)
+                ApplyDroppedFlashlightLightClientRpc(worldFlashlight.ItemId, worldFlashlight.IsLightOn, targetOwner);
         }
     }
 
@@ -1434,10 +1450,13 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         SetSlotItemTypeId(sel, GrabbableInventoryItem.TypeIdNone);
         SetSlotStackCount(sel, 0);
         _selectedFlashlightLightOn.Value = false;
-        ulong consumeId = g.ItemId;
-        ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
-        ConsumeItemClientRpc(consumeId);
-        Object.Destroy(g.gameObject);
+        if (!ServerTryDespawnConsumedNetworkItem(g))
+        {
+            ulong consumeId = g.ItemId;
+            ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
+            ConsumeItemClientRpc(consumeId);
+            Object.Destroy(g.gameObject);
+        }
         SelectAfterDrop();
         RaiseChangedAndRefresh();
     }
@@ -1514,10 +1533,13 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         SetSlotItemTypeId(sel, GrabbableInventoryItem.TypeIdNone);
         SetSlotStackCount(sel, 0);
         _selectedFlashlightLightOn.Value = false;
-        ulong consumeId = g.ItemId;
-        ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
-        ConsumeItemClientRpc(consumeId);
-        Object.Destroy(g.gameObject);
+        if (!ServerTryDespawnConsumedNetworkItem(g))
+        {
+            ulong consumeId = g.ItemId;
+            ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
+            ConsumeItemClientRpc(consumeId);
+            Object.Destroy(g.gameObject);
+        }
         SelectAfterDrop();
         RaiseChangedAndRefresh();
     }
@@ -1825,10 +1847,13 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                 SetSlotItemId(i, 0UL);
                 SetSlotItemTypeId(i, GrabbableInventoryItem.TypeIdNone);
                 SetSlotStackCount(i, 0);
-                ulong consumeId = g.ItemId;
-                ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
-                ConsumeItemClientRpc(consumeId);
-                Object.Destroy(g.gameObject);
+                if (!ServerTryDespawnConsumedNetworkItem(g))
+                {
+                    ulong consumeId = g.ItemId;
+                    ConsumedItemNetworkStore.ServerMarkConsumed(consumeId);
+                    ConsumeItemClientRpc(consumeId);
+                    Object.Destroy(g.gameObject);
+                }
             }
             else
             {
@@ -1879,7 +1904,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             SetSlotItemId(i, 0UL);
             SetSlotItemTypeId(i, GrabbableInventoryItem.TypeIdNone);
             SetSlotStackCount(i, 0);
-            if (g != null)
+            if (g != null && !ServerTryDespawnConsumedNetworkItem(g))
             {
                 ConsumedItemNetworkStore.ServerMarkConsumed(id);
                 ConsumeItemClientRpc(id);
@@ -1931,12 +1956,36 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         playerController?.RefreshInventoryViewFromNetwork();
     }
 
+    /// <summary>
+    /// Server-only teardown for a permanently-consumed item that is a real spawned NetworkObject (the carnival
+    /// ticket key, the Jailor's key — every other pickup is a local copy each peer builds from the seed).
+    /// Despawning is the only correct removal for those: NGO tears the replica down on every peer, late joiners
+    /// included, whereas the tombstone-and-destroy pair asks each client to destroy a live NetworkObject it has
+    /// no authority over. Returns true once the item is gone, i.e. the caller must skip its own teardown.
+    /// </summary>
+    static bool ServerTryDespawnConsumedNetworkItem(GrabbableInventoryItem item)
+    {
+        if (item == null || !item.IsNetworkSpawnedItem || !item.TryGetComponent(out NetworkObject itemObject))
+            return false;
+
+        itemObject.Despawn(true);
+        return true;
+    }
+
     static void DestroyRegisteredItem(ulong itemId)
     {
         if (itemId == 0UL)
             return;
 
         if (!GrabbableInventoryItem.TryGetRegistered(itemId, out GrabbableInventoryItem item) || item == null)
+            return;
+
+        // Only the server may tear down a spawned NetworkObject. A pure client that destroys its own replica
+        // strands the entry in NGO's spawn table forever — the server's despawn message then finds a
+        // Unity-null object and bails, and the next spawn that draws the recycled NetworkObjectId is refused
+        // as "already in the spawned list" and never appears on that peer.
+        NetworkManager nm = NetworkManager.Singleton;
+        if (item.IsNetworkSpawnedItem && nm != null && nm.IsListening && !nm.IsServer)
             return;
 
         Object.Destroy(item.gameObject);

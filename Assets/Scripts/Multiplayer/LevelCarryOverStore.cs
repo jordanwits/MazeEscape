@@ -99,6 +99,12 @@ public static class LevelCarryOverStore
         if (nm == null || !nm.IsListening || !nm.IsServer)
             return;
 
+        // The replicated record of what was carried into the section we are LEAVING is dead the moment this
+        // snapshot is taken; the next section refills it as each player is re-seated. Cleared from here rather
+        // than from the maze build (where its sibling stores are scoped) because the build and the player
+        // restore race each other in the next section — clearing on the build can wipe entries it just wrote.
+        CarriedItemNetworkStore.ServerClear();
+
         foreach (KeyValuePair<ulong, NetworkClient> pair in nm.ConnectedClients)
         {
             NetworkObject playerObject = pair.Value != null ? pair.Value.PlayerObject : null;

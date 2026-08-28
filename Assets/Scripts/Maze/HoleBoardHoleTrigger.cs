@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -32,10 +33,9 @@ public sealed class HoleBoardHoleTrigger : MonoBehaviour
 
     public int Points => points;
 
-    // Server-only pass tracking for the single ball currently inside this hole.
-    ulong _trackedBallId;
-    float _enterPlaneOffset;
-    bool _tracking;
+    // Server-only pass tracking, keyed by ball, so several of the round's balls inside this hole at
+    // once are each judged on their own crossing. Entries live only for the length of a pass.
+    readonly Dictionary<ulong, float> _enterPlaneOffsets = new Dictionary<ulong, float>(4);
 
     void Reset()
     {
@@ -56,23 +56,23 @@ public sealed class HoleBoardHoleTrigger : MonoBehaviour
         if (!TryResolveServerBall(other, out NetworkObject ballNet))
             return;
 
-        // Start tracking this pass; the make is judged when the ball leaves the volume. We record which
+        // Start tracking this ball's pass; the make is judged when it leaves the volume. We record which
         // side of the board plane the ball entered on so the exit can tell a clean pass-through (the ball
         // crossed to the far side) from a rim bounce (it left on the same side it came in).
-        _trackedBallId = ballNet.NetworkObjectId;
-        _enterPlaneOffset = PlaneOffset(ballNet.transform.position);
-        _tracking = true;
+        _enterPlaneOffsets[ballNet.NetworkObjectId] = PlaneOffset(ballNet.transform.position);
     }
 
     void OnTriggerExit(Collider other)
     {
-        if (!_tracking)
+        if (_enterPlaneOffsets.Count == 0)
             return;
-        if (!TryResolveServerBall(other, out NetworkObject ballNet) || ballNet.NetworkObjectId != _trackedBallId)
+        if (!TryResolveServerBall(other, out NetworkObject ballNet))
+            return;
+        if (!_enterPlaneOffsets.TryGetValue(ballNet.NetworkObjectId, out float enterOffset))
             return;
 
-        // The tracked ball has left the volume — this pass is resolved, sink or miss.
-        _tracking = false;
+        // This ball has left the volume — its pass is resolved, sink or miss.
+        _enterPlaneOffsets.Remove(ballNet.NetworkObjectId);
 
         if (controller == null || !controller.IsActive)
             return;
@@ -80,11 +80,17 @@ public sealed class HoleBoardHoleTrigger : MonoBehaviour
         // A clean sink crosses the board plane: it entered on one face and left through the other, so the
         // signed offsets have opposite signs. A rim bounce enters and leaves on the same side (same sign).
         float exitOffset = PlaneOffset(ballNet.transform.position);
-        if (_enterPlaneOffset * exitOffset >= 0f)
+        if (enterOffset * exitOffset >= 0f)
             return;
 
         controller.ServerOnHoleScored(ballNet, points);
     }
+
+    /// <summary>
+    /// Server-only. Drops every in-progress pass. Called by <see cref="HoleBoardGameController"/> when a
+    /// round's balls are spawned or cleared, so a ball that despawned inside the hole leaves nothing behind.
+    /// </summary>
+    public void ServerClearPassTracking() => _enterPlaneOffsets.Clear();
 
     /// <summary>
     /// Signed distance of <paramref name="worldPos"/> from the board plane, measured along the
@@ -93,13 +99,14 @@ public sealed class HoleBoardHoleTrigger : MonoBehaviour
     float PlaneOffset(Vector3 worldPos) => Vector3.Dot(worldPos - transform.position, ThroughAxis);
 
     /// <summary>
-    /// True only on the server when <paramref name="other"/> belongs to a throwable ball. Outs the ball's
-    /// <see cref="NetworkObject"/>.
+    /// True only on the server when <paramref name="other"/> belongs to one of the balls spawned for the
+    /// round in progress. Outs the ball's <see cref="NetworkObject"/>. Any other throwable carried into
+    /// the hole — a stray ball, a ring from the next booth — is ignored so it cannot displace a real pass.
     /// </summary>
     bool TryResolveServerBall(Collider other, out NetworkObject ballNet)
     {
         ballNet = null;
-        if (other == null)
+        if (other == null || controller == null)
             return false;
         NetworkManager nm = NetworkManager.Singleton;
         if (nm == null || !nm.IsListening || !nm.IsServer)
@@ -109,8 +116,12 @@ public sealed class HoleBoardHoleTrigger : MonoBehaviour
         if (ball == null)
             return false;
 
-        ballNet = ball.GetComponentInParent<NetworkObject>();
-        return ballNet != null;
+        NetworkObject net = ball.GetComponentInParent<NetworkObject>();
+        if (net == null || !controller.IsTrackedBall(net))
+            return false;
+
+        ballNet = net;
+        return true;
     }
 
     void OnDrawGizmos()

@@ -145,8 +145,20 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
     public override void OnNetworkDespawn()
     {
+        ulong holder = _holderNetworkObjectId.Value;
         _holderNetworkObjectId.OnValueChanged -= OnHolderChanged;
         _observerArcActive = false;
+
+        if (holder == 0UL)
+            return;
+
+        // A body despawned while still held (booth round ending on the carrier) never writes the holder
+        // back to 0 — the NetworkVariable dies with the object — so OnHolderChanged never runs the
+        // release-side refresh and the holder's hotbar stays force-stashed. Run it here, but drop out of
+        // the held-by lookup FIRST: this runs before the GameObject is destroyed, so a refresh that still
+        // finds this hold would just re-stash everything.
+        Instances.Remove(this);
+        NotifyHolderInventoryRefresh(holder);
     }
 
     /// <summary>
@@ -1055,6 +1067,30 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
 
         // Mirror to the remaining clients so their copies un-parent before the avatar despawn destroys them.
         NetworkPlayerInventory.ServerBroadcastHeavyThrowableStateIfNeeded(_item, false, 0UL, worldPosition, worldRotation);
+    }
+
+    /// <summary>
+    /// Server-side force-release used when the holding player dies. Unlike the disconnect case the avatar and
+    /// its inventory stay spawned, so this is just the normal release with no throw velocity: clearing the
+    /// replicated holder lets the booth's throw tracking see the release, and the release ClientRpc un-holds
+    /// the body on every peer (which is also what un-stashes the dead player's hotbar for their respawn).
+    /// </summary>
+    public void ServerForceReleaseForHolderDeath()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer || _item == null)
+            return;
+
+        ulong holder = IsSpawned ? _holderNetworkObjectId.Value : _item.HolderNetworkObjectId;
+        if (holder == 0UL)
+            return;
+
+        Vector3 worldPosition = _item.transform.position;
+        Quaternion worldRotation = _item.transform.rotation;
+        worldPosition.y += 0.05f;
+
+        ulong releasingOwnerClientId = _networkObject != null ? _networkObject.OwnerClientId : ulong.MaxValue;
+        ApplyReleaseAuthority(Vector3.zero, Vector3.zero, worldPosition, worldRotation, releasingOwnerClientId);
     }
 
     public bool ServerTryDropFromRelay(ulong playerNetworkObjectId, ulong senderClientId)

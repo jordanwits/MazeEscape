@@ -862,6 +862,15 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             && (_targetHealth == null || _targetHealth.IsDead))
             ReleaseCarriedPlayerIfNeeded();
 
+        // A target that died is dropped here — every branch below only reads a LIVE target, so the stale
+        // reference would otherwise survive their whole death and hand him a free re-acquire (no sight, no
+        // hearing, no line of sight) the moment NetworkPlayerRespawn flips them back to alive. Before the
+        // sensing scan so a player he can genuinely perceive is still picked up this frame. The grab/carry
+        // release above has already cleared its own target; JailDelivery keeps its one, since UpdateJailDelivery
+        // owns that drop and clears it in ApplyCarryDropRelease.
+        if (_state != JailorState.JailDelivery && (_targetHealth == null || _targetHealth.IsDead))
+            ClearTarget();
+
         // Throttle the acquisition scan. RefreshTargetFromSightAndHearing() already no-ops once a target is
         // held, so this only paces the expensive search-phase OverlapSphere/rays; chase/grab/carry stay per-frame.
         if (_nextSenseTime < 0f)

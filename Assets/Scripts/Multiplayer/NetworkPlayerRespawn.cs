@@ -157,6 +157,10 @@ public class NetworkPlayerRespawn : NetworkBehaviour
             return;
 
         networkPlayerInventory?.ServerDropAllHeldOnDeath();
+        // A heavy throwable (booth ball / ring) is carried outside the hotbar via a replicated holder id, so
+        // the slot sweep above cannot reach it. Left held, the corpse keeps the id through respawn: the booth
+        // round never sees its prop released, and the respawned player's whole hotbar stays force-stashed.
+        NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(NetworkObjectId)?.ServerForceReleaseForHolderDeath();
         _isDead.Value = true;
 
         NetworkPlayerRagdoll netRagdoll = GetComponent<NetworkPlayerRagdoll>();

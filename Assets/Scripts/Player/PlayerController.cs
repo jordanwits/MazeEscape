@@ -392,6 +392,8 @@ public partial class PlayerController : MonoBehaviour
         _horizontalVelocity = Vector3.zero;
         _currentHorizontalSpeed = 0f;
         _groundMoveThisFrame = Vector3.zero;
+        _externalPushVelocity = Vector3.zero;
+        _externalPushControlLockTimer = 0f;
         _isSprinting = false;
         _audiblySprintingForAi = false;
         if (_networkPlayerAvatar != null && _networkPlayerAvatar.IsSpawned && _networkPlayerAvatar.IsOwner)
@@ -694,12 +696,7 @@ public partial class PlayerController : MonoBehaviour
                 ? _lookAction.ReadValue<Vector2>()
                 : ReadLookFallback();
 
-            if (firstPersonLook && lockCursor && Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame
-                && Cursor.lockState != CursorLockMode.Locked)
-            {
-                Cursor.lockState = CursorLockMode.Locked;
-                Cursor.visible = false;
-            }
+            TryRecaptureCursorOnClick();
 
             if (firstPersonLook)
             {
@@ -774,12 +771,8 @@ public partial class PlayerController : MonoBehaviour
             sprintHeld = false;
         }
 
-        if (firstPersonLook && lockCursor && Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame
-            && Cursor.lockState != CursorLockMode.Locked)
+        if (TryRecaptureCursorOnClick())
         {
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
-
             // That click bought the cursor back; it must not also swing. Every attack — the punch, the flare
             // shot, and the start of a throw charge — keys off the press, so dropping it here is enough.
             attackPressed = false;
@@ -1413,6 +1406,8 @@ public partial class PlayerController : MonoBehaviour
             _moveInput = Vector2.zero;
             _horizontalVelocity = Vector3.zero;
             _verticalVelocity = Vector3.zero;
+            _externalPushVelocity = Vector3.zero;
+            _externalPushControlLockTimer = 0f;
             SetPickupPromptVisible(false);
         }
 
@@ -1449,12 +1444,7 @@ public partial class PlayerController : MonoBehaviour
             ? _lookAction.ReadValue<Vector2>()
             : ReadLookFallback();
 
-        if (firstPersonLook && lockCursor && Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame
-            && Cursor.lockState != CursorLockMode.Locked)
-        {
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
-        }
+        TryRecaptureCursorOnClick();
 
         if (!firstPersonLook)
             return;
@@ -1509,16 +1499,36 @@ public partial class PlayerController : MonoBehaviour
         _playerMap?.Disable();
     }
 
+    /// <summary>
+    /// The single gate for taking the cursor: only the machine-local avatar writes it (see SetIsLocalAvatar),
+    /// and never while the pause menu or an interactive overlay owns the pointer.
+    /// </summary>
+    bool CanLockCursor =>
+        _isLocalAvatar && firstPersonLook && lockCursor && !PauseMenuController.BlocksGameplayInput
+        && !BlackjackOverlayController.IsInteractive && !SkeletonRpsOverlayController.IsInteractive
+        && !CarnivalStoreOverlayController.IsInteractive;
+
     void ApplyCursorLock()
     {
-        if (!_isLocalAvatar)
-            return; // a teammate's avatar never writes the local cursor — see SetIsLocalAvatar
-        if (!firstPersonLook || !lockCursor || PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive
-            || SkeletonRpsOverlayController.IsInteractive || CarnivalStoreOverlayController.IsInteractive)
+        if (!CanLockCursor)
             return;
 
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
+    }
+
+    /// <summary>
+    /// A left click made while the cursor is loose buys it back rather than acting in the world.
+    /// Returns true when the click was spent on the recapture.
+    /// </summary>
+    bool TryRecaptureCursorOnClick()
+    {
+        if (!CanLockCursor || Mouse.current == null || !Mouse.current.leftButton.wasPressedThisFrame
+            || Cursor.lockState == CursorLockMode.Locked)
+            return false;
+
+        ApplyCursorLock();
+        return true;
     }
 
     void ReleaseCursor()

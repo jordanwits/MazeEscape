@@ -3,6 +3,7 @@ using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
@@ -20,6 +21,9 @@ public sealed class BlackjackOverlayController : MonoBehaviour
     public static bool IsInteractive { get; private set; }
 
     static BlackjackOverlayController _instance;
+
+    /// <summary>How long a client's LEAVE outranks the replicated seat state before the panel re-derives from it.</summary>
+    const float LeaveRequestTimeoutSeconds = 2f;
 
     PlayerController _player;
     NetworkObject _playerNet;
@@ -39,6 +43,8 @@ public sealed class BlackjackOverlayController : MonoBehaviour
     int _currentSeatIndex = -1;
     bool _shown;
     bool _subscribed;
+    bool _leaveRequested;
+    float _leaveRequestedAt;
 
     public static void NotifySeatInteract(PlayerController player, BlackjackSeat seat)
     {
@@ -72,6 +78,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         {
             Unsubscribe();
             _table = table;
+            _leaveRequested = false;
             if (_table != null)
             {
                 _table.StateChanged += Refresh;
@@ -80,6 +87,8 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         }
 
         EnsureUiBuilt();
+        // Re-checked on every sit: the event system is a plain object that a scene load or the pause menu can take.
+        EnsureEventSystem();
         Refresh();
     }
 
@@ -103,6 +112,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
     {
         if (_table == null || _player == null || _playerNet == null || !_playerNet.IsSpawned)
         {
+            _leaveRequested = false;
             SetShown(false);
             return;
         }
@@ -110,8 +120,19 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         int seatIndex = _table.SeatIndexOfOccupant(_playerNet.NetworkObjectId);
         if (seatIndex < 0)
         {
+            _leaveRequested = false;
             SetShown(false);
             return;
+        }
+
+        // A client's LEAVE only reaches the replicated state once the server's vacate comes back, so for that round
+        // trip the seat still names this player as its occupant. Re-deriving from it would drop them onto the stool
+        // again (camera + body) for the width of the RTT; the timeout hands the seat back if no vacate ever lands.
+        if (_leaveRequested)
+        {
+            if (Time.unscaledTime - _leaveRequestedAt < LeaveRequestTimeoutSeconds)
+                return;
+            _leaveRequested = false;
         }
 
         if (_root == null)
@@ -162,12 +183,22 @@ public sealed class BlackjackOverlayController : MonoBehaviour
             DeactivateCamera();
             if (_player != null)
                 _player.ExitBlackjackSeat();
-            if (!PauseMenuController.BlocksGameplayInput)
+            if (!PauseMenuController.BlocksGameplayInput && InGameplayScene())
             {
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
             }
         }
+    }
+
+    /// <summary>
+    /// True only while a level scene is live. The overlay outlives the session, so its close path must not stamp a
+    /// gameplay cursor lock over the menu's free cursor when the run ends out from under a seated player.
+    /// </summary>
+    static bool InGameplayScene()
+    {
+        Scene active = SceneManager.GetActiveScene();
+        return active.IsValid() && MultiplayerSceneFlow.IsMazeGameplayScene(active.name);
     }
 
     /// <summary>Snap the local player's avatar onto the current seat's stool (server replicates pose + sit anim).</summary>
@@ -372,6 +403,8 @@ public sealed class BlackjackOverlayController : MonoBehaviour
     void OnLeave()
     {
         // Optimistically release locally so the player is never stuck even if the server is a beat behind.
+        _leaveRequested = true;
+        _leaveRequestedAt = Time.unscaledTime;
         SetShown(false);
         _table?.RequestLeave(_player);
     }
@@ -385,7 +418,6 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         if (_root != null)
             return;
 
-        EnsureEventSystem();
         Canvas canvas = CreateOwnedCanvas();
 
         const float W = 940f;
@@ -477,11 +509,16 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         return canvas;
     }
 
+    /// <summary>
+    /// The canvas outlives scene loads, so the event system feeding it has to as well — a scene-bound one dies on
+    /// the next level and leaves the plates unclickable with the player frozen in the seat.
+    /// </summary>
     static void EnsureEventSystem()
     {
         if (EventSystem.current != null || FindAnyObjectByType<EventSystem>() != null)
             return;
         GameObject es = new("EventSystem (Blackjack)");
+        UnityEngine.Object.DontDestroyOnLoad(es);
         es.AddComponent<EventSystem>();
         es.AddComponent<InputSystemUIInputModule>();
     }

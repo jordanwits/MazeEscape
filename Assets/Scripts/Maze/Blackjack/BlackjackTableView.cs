@@ -180,7 +180,10 @@ public sealed class BlackjackTableView : MonoBehaviour
         bool dealerHas = dealerCardAnchor != null && d.Cards.Length > 0;
         UpdateTotal(DealerPoolIndex, dealerCardAnchor, dealerHas, dealerHas ? controller.DealerVisibleTotal() : 0);
 
-        _firstRebuildDone = true;
+        // OnEnable paints once before the spawn deserializes any state, so that pass sees an empty table and must
+        // not spend the suppression — the first post-spawn repaint is the one carrying a late joiner's live hand.
+        if (controller.IsSpawned)
+            _firstRebuildDone = true;
     }
 
     void UpdateTotal(int idx, Transform anchor, bool show, int total)

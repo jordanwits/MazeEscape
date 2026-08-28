@@ -114,6 +114,10 @@ public class WindupMonkeyAI : NetworkBehaviour
         // Movement only runs on the server; clients follow via NetworkTransform.
         if (characterController != null)
             characterController.enabled = ShouldSimulate;
+
+        // Observer clients disable the CC (server drives movement) — keep him solid for remote players
+        // and client-thrown props via the mirrored kinematic capsule.
+        EnemyClientCollisionProxy.Apply(characterController, ShouldSimulate);
     }
 
     void HandleActivatedChanged(bool previousValue, bool currentValue) => ApplyActivatedVisual(currentValue);

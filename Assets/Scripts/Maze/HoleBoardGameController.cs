@@ -258,7 +258,11 @@ public sealed class HoleBoardGameController : NetworkBehaviour, ICarnivalGameSta
         _score.Value += points;
     }
 
-    bool IsTrackedBall(NetworkObject ball)
+    /// <summary>
+    /// Server-only. True while <paramref name="ball"/> is one of the balls spawned for the round in
+    /// progress. The list is empty on clients and between rounds.
+    /// </summary>
+    public bool IsTrackedBall(NetworkObject ball)
     {
         for (int i = 0; i < _balls.Count; i++)
         {
@@ -394,6 +398,15 @@ public sealed class HoleBoardGameController : NetworkBehaviour, ICarnivalGameSta
                 b.net.Despawn(true);
         }
         _balls.Clear();
+
+        if (holeTriggers == null)
+            return;
+        for (int i = 0; i < holeTriggers.Length; i++)
+        {
+            HoleBoardHoleTrigger trigger = holeTriggers[i];
+            if (trigger != null)
+                trigger.ServerClearPassTracking();
+        }
     }
 
     public override void OnNetworkDespawn()

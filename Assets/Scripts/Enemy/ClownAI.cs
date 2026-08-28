@@ -220,6 +220,8 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
     [SerializeField, Range(0f, 180f)] float attackHalfAngle = 55f;
     [Tooltip("Max vertical offset (m) to the player to start a swing.")]
     [SerializeField, Min(0.1f)] float maxAttackVerticalDelta = 1.2f;
+    [Tooltip("If enabled, the swing needs a clear ray to the player both to commit and at the impact frame, so the hammer cannot reach through a wall or a booth. Uses the same mask/height as the detection ray.")]
+    [SerializeField] bool requireAttackLineOfSight = true;
     [Tooltip("At the impact frame the hammer only connects if the player is still within (attack range + padding) × this multiplier — nothing catches them early, so a clean dodge during the wind-up whiffs. 1 = exactly the start reach; higher = more forgiving.")]
     [SerializeField, Min(1f)] float hammerHitReachMultiplier = 1.5f;
     [Tooltip("Primary trigger: normalized clip time (0-1) at which the hammer connects and the player is launched into ragdoll. Driven off actual animation playback (frame-accurate). TUNE THIS to the frame where the hammer visually contacts.")]
@@ -680,6 +682,12 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
         RecoverNavMeshIfOffMesh();
         UpdatePitStuckWatchdog();
+
+        // A target that died is dropped here — every branch below only reads a LIVE target, so the stale
+        // reference would otherwise survive their whole death and hand him a free re-acquire (no sight, no
+        // hearing, no line of sight) the moment NetworkPlayerRespawn flips them back to alive.
+        if (_targetHealth == null || _targetHealth.IsDead)
+            ClearTarget();
 
         // Throttle the acquisition scan. RefreshTargetFromSightAndHearing() already no-ops once a target is
         // held, so this only paces the expensive search-phase OverlapSphere/rays; chasing stays per-frame.
@@ -1580,6 +1588,25 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         return HasLineOfSightToTarget(targetHealth, detectionLineOfSightMask, detectionLineOfSightHeight, Vector3.zero);
     }
 
+    /// <summary>Swing-time sight check — the detection ray's mask/height, nudged along the swing direction.</summary>
+    bool HasAttackLineOfSight(PlayerHealth targetHealth, Vector3 committedAttackDirection)
+    {
+        return HasLineOfSightToTarget(targetHealth, detectionLineOfSightMask, detectionLineOfSightHeight, committedAttackDirection * 0.15f);
+    }
+
+    /// <summary>Flattened direction from the Clown to <paramref name="targetPosition"/>; its own facing if they overlap.</summary>
+    Vector3 GetCommittedAttackDirection(Vector3 targetPosition)
+    {
+        Vector3 toTarget = targetPosition - transform.position;
+        toTarget.y = 0f;
+        if (toTarget.sqrMagnitude > 1e-4f)
+            return toTarget.normalized;
+
+        Vector3 fwd = transform.forward;
+        fwd.y = 0f;
+        return fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.forward;
+    }
+
     bool HasLineOfSightToTarget(PlayerHealth targetHealth, LayerMask lineOfSightMask, float lineOfSightHeight, Vector3 originOffset)
     {
         if (targetHealth == null)
@@ -1954,6 +1981,12 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
                 animator.CrossFadeInFixedTime(deathStateName, deathCrossfadeDuration, 0, 0f);
         }
 
+        // Killed mid-swing: EndSwing never runs from here (Update early-returns on Dead), so drop the late-join
+        // snapshot too. A client that syncs in while it's still set would Play() the swing over the replicated
+        // Death pose and watch the corpse finish the swing and stand up in Idle.
+        if (_networkClownAvatar != null)
+            _networkClownAvatar.ServerMarkAttackAnimationEnded();
+
         if (clownFootstepAudioSource != null)
             clownFootstepAudioSource.Stop();
 
@@ -2000,6 +2033,12 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             if (Vector3.Angle(fwd.normalized, flat / dist) > attackHalfAngle)
                 return false;
         }
+
+        // The reach grows with the Clown, so by the time the giant commits it is swinging from several metres
+        // out — far enough for a wall, a stall or a vent to sit between the hammer and the player.
+        if (requireAttackLineOfSight
+            && !HasAttackLineOfSight(_targetHealth, GetCommittedAttackDirection(_target.position)))
+            return false;
 
         return true;
     }
@@ -2234,6 +2273,15 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (_attackTargetHealth == null || _attackTargetHealth.IsDead)
             return;
 
+        // Went down during the wind-up (a Bomber blast, a RatBot, another Clown, a trap): the same refusal
+        // ShouldStartAttack makes against an already-downed player. The reach re-check below can't catch this —
+        // a ragdolled player's root transform stops moving, so they stay frozen inside the padded reach.
+        if (_attackTargetRagdoll == null)
+            _attackTargetRagdoll = _attackTargetHealth.GetComponent<PlayerRagdollController>();
+        if (_attackTargetRagdoll != null
+            && (_attackTargetRagdoll.IsRagdolled || _attackTargetRagdoll.IsHeld || _attackTargetRagdoll.IsGettingUp))
+            return;
+
         // Nothing catches the player early (unlike the old grab), so they're free to run during the wind-up.
         // Only connect if they're still within the hammer's reach at the impact frame — a clean dodge whiffs.
         float reach = (attackRange + Mathf.Max(0f, attackRangePadding))
@@ -2242,6 +2290,14 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         flatToTarget.y = 0f;
         if (flatToTarget.magnitude > reach)
             return; // player got out of the way
+
+        // Diving behind cover during the planted wind-up has to work: the Clown tracks the player's facing the
+        // whole time and never re-checks the cone, so without this the hammer lands through the wall.
+        if (requireAttackLineOfSight
+            && !HasAttackLineOfSight(
+                _attackTargetHealth,
+                GetCommittedAttackDirection(_attackTargetHealth.transform.position)))
+            return; // wall/stall between the hammer and the player
 
         // Knock the player away from the Clown (flattened to horizontal) — the hammer sweeps in front, so this
         // reads as being clubbed off their feet.

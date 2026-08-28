@@ -70,16 +70,32 @@ public sealed class ConsumedItemNetworkStore : NetworkBehaviour
     {
         if (itemId == 0UL)
             return;
-        if (GrabbableInventoryItem.TryGetRegistered(itemId, out GrabbableInventoryItem item) && item != null)
+        // Only ever reached on a pure client, so a spawned NetworkObject is off limits here: destroying a
+        // replica off-authority strands its entry in NGO's spawn table and NGO's own despawn is what removes
+        // it. Nothing tombstones one either (see ServerMarkConsumed), so this is a guard, not a normal path.
+        if (GrabbableInventoryItem.TryGetRegistered(itemId, out GrabbableInventoryItem item)
+            && item != null
+            && !item.IsNetworkSpawnedItem)
             Destroy(item.gameObject);
     }
 
     // ---- Server API ---------------------------------------------------------
 
-    /// <summary>Server-only: record that the item id was permanently consumed/removed this level.</summary>
+    /// <summary>
+    /// Server-only: record that the item id was permanently consumed/removed this level. Tombstones exist for
+    /// the LOCAL copies every peer rebuilds from the seed; a spawned NetworkObject is skipped, because its
+    /// despawn already removes it everywhere (late joiners included) and its id is derived from a
+    /// NetworkObjectId that NGO recycles after <c>NetworkIdRecycleDelay</c> — a tombstone for one would later
+    /// match an unrelated new spawn (a carnival ball, a ring) and delete it on every client.
+    /// </summary>
     public static void ServerMarkConsumed(ulong itemId)
     {
         if (itemId == 0UL || Instance == null || !Instance.IsServer)
+            return;
+
+        if (GrabbableInventoryItem.TryGetRegistered(itemId, out GrabbableInventoryItem item)
+            && item != null
+            && item.IsNetworkSpawnedItem)
             return;
 
         for (int i = 0; i < Instance._consumedItemIds.Count; i++)

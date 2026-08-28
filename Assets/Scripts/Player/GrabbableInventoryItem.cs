@@ -981,10 +981,15 @@ public class GrabbableInventoryItem : MonoBehaviour
     /// this id is consumed. No-op on the server/host (it destroyed the real item and never rebuilds it) and
     /// offline. Ids are unique per level and tombstones are cleared each build, so this never hits a
     /// legitimate item.
+    ///
+    /// Never applies to a spawned NetworkObject (the carnival ticket key, the Jailor's key). Those are torn
+    /// down on every peer by the server's despawn, so they are never tombstoned; their id is derived from a
+    /// NetworkObjectId, which NGO recycles onto a later spawn, so matching one against the tombstone set
+    /// would delete an unrelated live item — and a client may not destroy a replica it has no authority over.
     /// </summary>
     void SuppressIfConsumedGhost(ulong itemId)
     {
-        if (itemId == 0UL)
+        if (itemId == 0UL || IsNetworkSpawnedItem)
             return;
 
         NetworkManager nm = NetworkManager.Singleton;
