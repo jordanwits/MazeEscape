@@ -1,6 +1,7 @@
 using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Health/damage for the carnival Clown. Mirrors <see cref="SecurityGuardHealth"/> (itself modelled on
@@ -52,6 +53,18 @@ public class ClownHealth : MonoBehaviour
     [Tooltip("Preferred distance, taken whenever the maze offers it. Past WorldRenderCuller's 48m cut the " +
              "spawn is not even drawn, so this sits just inside that — line of sight is checked either way.")]
     [SerializeField] float respawnPreferredPlayerDistance = 45f;
+
+    [Header("Death drop")]
+    [Tooltip("Dropped on death: the key to Level02's exit elevator. The other way to get one is the prize " +
+             "counter, for a small fortune in tickets — so the section always has both a fight route and a " +
+             "grind route out. Must be registered in Resources/DefaultNetworkPrefabs.asset: unlike the shop's " +
+             "goods (local copies built from a replicated sale) a corpse drop lands at a runtime position, so " +
+             "it is a real spawned NetworkObject and late joiners get it for free.")]
+    [SerializeField] GameObject clownKeyDropPrefab;
+    [Tooltip("Where the key lands relative to the body, in WORLD units (not TransformPoint — the Clown's " +
+             "scale changes as he hunts, and that must not change where his key falls). Y lifts it clear of " +
+             "the floor so its rigidbody settles instead of tunnelling.")]
+    [SerializeField] Vector3 clownKeyDropWorldOffset = new Vector3(0f, 0.35f, 0f);
 
     [Header("Death")]
     [SerializeField] ClownAI clownAI;
@@ -136,6 +149,8 @@ public class ClownHealth : MonoBehaviour
         if (clownAI != null)
             clownAI.HandleDeath();
 
+        TrySpawnClownKeyDrop();
+
         // Queued on the coordinator (a DontDestroyOnLoad component on the NetworkManager object), NOT here:
         // this corpse despawns itself a minute from now, which would cancel a coroutine started on it. The
         // coordinator also drops the queued respawn if the level changes before it fires.
@@ -146,6 +161,29 @@ public class ClownHealth : MonoBehaviour
         }
 
         StartCoroutine(DeathCleanupRoutine());
+    }
+
+    /// <summary>
+    /// Drops the exit-elevator key on the corpse. Server-only in a session (<see cref="Die"/> has already
+    /// returned on other peers); offline the local peer is the authority and the spawn is a plain instantiate.
+    /// Modelled on <c>JailorAI.TrySpawnJailorKeyOnPlayerPickup</c>, the project's other enemy key drop.
+    /// </summary>
+    void TrySpawnClownKeyDrop()
+    {
+        if (clownKeyDropPrefab == null)
+            return;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        bool inNetSession = nm != null && nm.IsListening;
+        if (inNetSession && !nm.IsServer)
+            return;
+
+        Vector3 position = transform.position + clownKeyDropWorldOffset;
+        GameObject key = Instantiate(clownKeyDropPrefab, position, clownKeyDropPrefab.transform.rotation);
+        SceneManager.MoveGameObjectToScene(key, gameObject.scene);
+
+        if (inNetSession && key.TryGetComponent(out NetworkObject keyObject))
+            keyObject.Spawn();
     }
 
     IEnumerator DeathCleanupRoutine()

@@ -152,6 +152,9 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
     // Every cell the multi-cell exit hall claimed this build (see TryAttachExitHall). The hall IS the
     // finish, so nothing else — enemies especially — gets to spawn inside the approach. Cleared per build.
     readonly HashSet<Vector2Int> _exitHallCells = new();
+    // The exit hall piece instantiated this build (null when the single-cell fallback finish was used). The
+    // final boss spawns at the MutantBossSpawnMarker inside it — see TrySpawnFinalBoss. Cleared per build.
+    Transform _exitHallInstance;
     string _lastServerMazeBuildSceneName;
     int _lastServerMazeBuildSeed = int.MinValue;
     Dictionary<string, ProceduralMazeConfig> _sectionConfigsByTargetScene;
@@ -501,6 +504,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         _loggedMazeWarnings.Clear();
         _placedCellPrefabs.Clear();
         _exitHallCells.Clear();
+        _exitHallInstance = null;
         // Invalidates any hunter respawn queued against the previous build (see the partial in
         // ProceduralMazeCoordinator.HunterRespawn.cs).
         ClearHunterRespawnContext();
@@ -521,10 +525,32 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         Vector2Int exit = FindFarthestCell(grid, start);
         int width = grid.GetLength(0);
         int height = grid.GetLength(1);
-        bool multiStartWanted = TryPrepareMultiCellForcedStart(
-            grid, start, exit, width, height, sectionSeed,
-            out HashSet<Vector2Int> reservedForForcedStart,
-            out Vector2Int multiStartFootprint);
+        bool corridorStart = false;
+        bool multiStartWanted;
+        HashSet<Vector2Int> reservedForForcedStart;
+        Vector2Int multiStartFootprint;
+        if (_config.PlaceForcedStartInCorridor
+            && TrySelectCorridorForcedStart(grid, exit, width, height, out Vector2Int corridorAnchor, out Vector2Int corridorFootprint))
+        {
+            // The run starts inside the forced start room wherever it landed; the attach below stamps it there.
+            corridorStart = true;
+            start = corridorAnchor;
+            multiStartWanted = true;
+            multiStartFootprint = corridorFootprint;
+            reservedForForcedStart = new HashSet<Vector2Int>(corridorFootprint.x * corridorFootprint.y);
+            for (int ly = 0; ly < corridorFootprint.y; ly++)
+            {
+                for (int lx = 0; lx < corridorFootprint.x; lx++)
+                    reservedForForcedStart.Add(new Vector2Int(start.x + lx, start.y + ly));
+            }
+        }
+        else
+        {
+            multiStartWanted = TryPrepareMultiCellForcedStart(
+                grid, start, exit, width, height, sectionSeed,
+                out reservedForForcedStart,
+                out multiStartFootprint);
+        }
 
         if (!multiStartWanted)
         {
@@ -546,6 +572,11 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             else
                 multiStartFootprint = Vector2Int.one;
         }
+
+        // A corridor start moved the run off the corner, so the exit picked from the corner is no longer the cell
+        // farthest from the players. Re-pick it from the stamped grid.
+        if (corridorStart && startAttached)
+            exit = FindFarthestCell(grid, start);
 
         // Exit hall: a multi-cell finish piece stamped over a straight run of cells that contains the
         // exit, so the run ends in a long approach corridor. Runs before interior rooms so they can be
@@ -643,6 +674,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         TrySpawnMazeItemPickups(root.transform, builtCellRoots, sectionSeed);
         TrySpawnMazeEnemies(root.transform, grid, start, exit, sectionSeed, cellSize, interiorPlan, mazeTrapCells, mazeTrapRoots);
         TrySpawnMazeRatBots(root.transform, sectionSeed);
+        TrySpawnFinalBoss(root.transform, cellsRoot);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);
 
         MarkLocalMazeCollidersReadyAndResyncClientPlayer();
@@ -855,6 +887,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
                 definition,
                 width,
                 height,
+                protectedCells: null,
                 out InteriorRoomPlacementEntry entry,
                 out Dictionary<Vector2Int, MazeFaceMask> gridChanges,
                 out _,
@@ -883,6 +916,94 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
 
         plan.Anchors[start] = entry;
         return true;
+    }
+
+    /// <summary>
+    /// <see cref="ProceduralMazeConfig.PlaceForcedStartInCorridor"/>: picks where a through-room forced start goes
+    /// instead of the core corner. The start cell sits on two grid edges, so every footprint that contains it has
+    /// doorway faces pointing out of the grid, and <see cref="TryComputeStampPlan"/> rejects an authored doorway that
+    /// meets nothing — a room with doorways on opposite sides can never stamp there. Every anchor is instead tried as
+    /// an interior-room stamp that keeps <paramref name="connectivityTarget"/> reachable; the winner orphans the fewest
+    /// maze cells (normally none, because the corridor already runs straight through it), then sits nearest the
+    /// corner the core maze grows from, which keeps the run about as long as a corner start. The row-then-column scan
+    /// breaks ties identically on every peer.
+    /// </summary>
+    bool TrySelectCorridorForcedStart(
+        MazeCell[,] grid,
+        Vector2Int connectivityTarget,
+        int width,
+        int height,
+        out Vector2Int anchor,
+        out Vector2Int footprint)
+    {
+        anchor = default;
+        footprint = Vector2Int.one;
+
+        GameObject prefab = _config.ForcedStartPiecePrefab;
+        if (prefab == null || !MazePieceDefinition.TryGetDefinitionForResolution(prefab, out MazePieceDefinition definition))
+            return false;
+
+        footprint = definition.ResolveInteriorGridFootprint(_config.InteriorRoomGridFootprint);
+        if (footprint.x <= 1 && footprint.y <= 1)
+        {
+            LogMazeWarningOnce(
+                "corridor-start-single-cell",
+                $"[Maze] Place Forced Start In Corridor is on, but \"{prefab.name}\" has no multi-cell Interior Grid Footprint; using the corner start.",
+                this);
+            return false;
+        }
+
+        bool found = false;
+        int bestOrphans = int.MaxValue;
+        int bestDistance = int.MaxValue;
+        for (int y = 0; y + footprint.y <= height; y++)
+        {
+            for (int x = 0; x + footprint.x <= width; x++)
+            {
+                int distance = x + y;
+                if (bestOrphans == 0 && distance >= bestDistance)
+                    continue;
+
+                Vector2Int candidate = new(x, y);
+                if (ExitLiesInFootprint(connectivityTarget, candidate, footprint))
+                    continue;
+
+                if (!TryStampInteriorRoomWithPrefab(
+                        grid,
+                        candidate,
+                        connectivityTarget,
+                        candidate,
+                        footprint,
+                        prefab,
+                        definition,
+                        width,
+                        height,
+                        protectedCells: null,
+                        out _,
+                        out _,
+                        out int orphans,
+                        out _))
+                    continue;
+
+                if (orphans < bestOrphans || (orphans == bestOrphans && distance < bestDistance))
+                {
+                    anchor = candidate;
+                    bestOrphans = orphans;
+                    bestDistance = distance;
+                    found = true;
+                }
+            }
+        }
+
+        if (!found)
+        {
+            LogMazeWarningOnce(
+                "corridor-start-no-anchor",
+                $"[Maze] Place Forced Start In Corridor: \"{prefab.name}\" fits nowhere with every doorway connected; using the corner start.",
+                this);
+        }
+
+        return found;
     }
 
     /// <summary>
@@ -972,6 +1093,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
                     doorways,
                     width,
                     height,
+                    reservedCells,
                     out Dictionary<Vector2Int, MazeFaceMask> proposed,
                     out MazeFaceMask exteriorMask,
                     out int orphans))
@@ -2015,6 +2137,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
                     definition,
                     width,
                     height,
+                    cellsReservedByForcedStart,
                     out entry,
                     out gridChanges,
                     out orphanedCells,
@@ -2042,6 +2165,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         MazePieceDefinition definition,
         int width,
         int height,
+        HashSet<Vector2Int> protectedCells,
         out InteriorRoomPlacementEntry entry,
         out Dictionary<Vector2Int, MazeFaceMask> gridChanges,
         out int orphanedCells,
@@ -2094,6 +2218,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
                     rotatedDoorways,
                     width,
                     height,
+                    protectedCells,
                     out Dictionary<Vector2Int, MazeFaceMask> proposed,
                     out MazeFaceMask exteriorMask,
                     out int rotationOrphans))
@@ -2180,6 +2305,8 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         return doorways;
     }
 
+    /// <param name="protectedCells">Cells of multi-cell pieces already stamped this build (the forced start room,
+    /// the exit hall) whose face masks this stamp must leave exactly as they are; null when nothing is stamped yet.</param>
     static bool TryComputeStampPlan(
         MazeCell[,] grid,
         Vector2Int start,
@@ -2189,6 +2316,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         HashSet<InteriorDoorwaySpec> doorways,
         int width,
         int height,
+        HashSet<Vector2Int> protectedCells,
         out Dictionary<Vector2Int, MazeFaceMask> proposed,
         out MazeFaceMask exteriorMask,
         out int orphanedCells)
@@ -2295,11 +2423,38 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         // piece, and the level builds with no elevator and no ElevatorFinishSpawnMarker — the run becomes
         // unfinishable, on every peer, with nothing logged. The same strips the forced start, which on Level01
         // carries the only MultiplayerSpawnPoints. Reject the placement; the room can land somewhere else.
-        if (StampWouldChangeCellMask(grid, proposed, start) || StampWouldChangeCellMask(grid, proposed, exit))
+        // A start cell INSIDE the footprint is the exception: that is a multi-cell forced start being stamped as
+        // this room, so the room itself is the start piece and the start cell's mask is meant to change. An exit
+        // cell inside it is the same case for the exit hall (TryAttachExitHall): the hall carries the elevator
+        // itself and the exit cell becomes its anchor or one of its skip cells, never a Special-pool match.
+        // Guarding it anyway left the hall one legal candidate per seed (exit at the closed end, its one opening
+        // pointing down the hall) and sent about half of all seeds to the single-cell fallback. Every other stamp
+        // is kept off the exit (IsRectangleStampable, ExitLiesInFootprint), so the guard still holds for them.
+        bool startInsideRoom = start.x >= anchor.x && start.x < anchor.x + footprint.x
+            && start.y >= anchor.y && start.y < anchor.y + footprint.y;
+        bool exitInsideRoom = ExitLiesInFootprint(exit, anchor, footprint);
+        if ((!startInsideRoom && StampWouldChangeCellMask(grid, proposed, start))
+            || (!exitInsideRoom && StampWouldChangeCellMask(grid, proposed, exit)))
             return false;
 
         if (!IsConnectivityPreservedAfterStamp(grid, proposed, start, exit, width, height, out orphanedCells))
             return false;
+
+        // The start room and the exit hall are fixed prefabs whose doorways are part of the art, so their cells
+        // must keep exactly the faces they were stamped with. The reconciliation above would treat them like
+        // corridor: close one of their doorway faces when this room covers the corridor it opened onto, or open a
+        // face in their solid wall when this room's doorway points at it (and the pruning just above can close
+        // one too). The grid then counts the two pieces as connected while the geometry has a wall on one side
+        // and a doorway onto nothing on the other — on Level03 that could wall the exit off from the start room.
+        // Checked after the pruning so a face it closes is caught as well.
+        if (protectedCells != null)
+        {
+            foreach (Vector2Int cell in protectedCells)
+            {
+                if (StampWouldChangeCellMask(grid, proposed, cell))
+                    return false;
+            }
+        }
 
         // If stamping the room orphaned its own footprint, IsConnectivityPreservedAfterStamp pruned
         // those cells to None. The cell-build loop skips any cell with Openings==None *before* it
@@ -2615,6 +2770,8 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             MazePieceMatch forcedMatch = interiorRoomEntry.Match;
             GameObject forcedPiece = Instantiate(forcedMatch.Prefab, parent.position, forcedMatch.Rotation, parent);
             _placedCellPrefabs[cellCoordinates] = forcedMatch.Prefab;
+            if (_config != null && forcedMatch.Prefab == _config.ExitHallPiecePrefab)
+                _exitHallInstance = forcedPiece.transform;
             WarnIfExitCellHasNoElevator(forcedPiece, isExit, cellCoordinates);
             TrySpawnElevatorFinishSyncIfPresent(forcedPiece);
             TrySpawnUseKeyHingeNetworkObjectsIfPresent(forcedPiece);
@@ -3490,6 +3647,81 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         return hasBounds;
+    }
+
+    /// <summary>
+    /// Server/offline: spawn the level's final boss (<see cref="ProceduralMazeConfig.FinalBossPrefab"/>) at the
+    /// <see cref="MutantBossSpawnMarker"/> inside this build's exit hall, facing along the marker. Runs after the
+    /// NavMesh bake and the ordinary enemies. The boss then takes the arena (the hall's entry door is his wake
+    /// trigger) and locks the exit elevator until he dies. The single-cell fallback finish carries its own marker in
+    /// its approach corridor; a build with no marker at all gets no boss and no lock, so it can never be soft-locked
+    /// by a boss that isn't there.
+    /// Despawned by <see cref="ServerDespawnAllLevelNetworkObjects"/> like every other level NetworkObject.
+    /// </summary>
+    void TrySpawnFinalBoss(Transform mazeRoot, Transform cellsRoot)
+    {
+        GameObject prefab = _config != null ? _config.FinalBossPrefab : null;
+        if (prefab == null || mazeRoot == null)
+            return;
+
+        bool listening = _networkManager != null && _networkManager.IsListening;
+        if (listening && !_networkManager.IsServer)
+            return; // clients receive the spawned boss
+
+        // Only this build's pieces: on a same-root rebuild the previous build's are still under the maze root
+        // (Destroy is end-of-frame), and a root-wide search could place him at one of their stale markers.
+        Transform searchRoot = _exitHallInstance != null ? _exitHallInstance : cellsRoot != null ? cellsRoot : mazeRoot;
+        MutantBossSpawnMarker marker = searchRoot.GetComponentInChildren<MutantBossSpawnMarker>(true);
+        if (marker == null)
+        {
+            LogMazeWarningOnce(
+                "final-boss-no-marker",
+                $"[Maze] Final boss \"{prefab.name}\" is configured but this build has no MutantBossSpawnMarker "
+                + "(single-cell fallback finish?). No boss this run — the exit stays unlocked.",
+                this);
+            return;
+        }
+
+        if (listening)
+        {
+            NetworkObject prefabNetworkObject = prefab.GetComponent<NetworkObject>();
+            if (prefabNetworkObject == null
+                || !_networkManager.NetworkConfig.Prefabs.NetworkPrefabOverrideLinks.ContainsKey(prefabNetworkObject.PrefabIdHash))
+            {
+                Debug.LogError(
+                    $"[Maze] Final boss \"{prefab.name}\" is not a registered network prefab (add it to "
+                    + "Resources/DefaultNetworkPrefabs.asset) — clients could not resolve it, so it was not spawned.",
+                    this);
+                return;
+            }
+        }
+
+        Vector3 position = marker.transform.position;
+        if (NavMesh.SamplePosition(position, out NavMeshHit navHit, 2f, NavMesh.AllAreas))
+            position = navHit.position;
+
+        Vector3 facing = marker.transform.forward;
+        facing.y = 0f;
+        Quaternion rotation = facing.sqrMagnitude > 1e-4f ? Quaternion.LookRotation(facing.normalized) : Quaternion.identity;
+
+        // Always a fresh container: on a rebuild the previous build's children are only Destroy()-queued
+        // (end of frame), so a lookup by name would find the doomed old GeneratedEnemies and take the new
+        // boss down with it.
+        Transform bossRoot = CreateChild(mazeRoot, "GeneratedBoss");
+
+        GameObject instance = Instantiate(prefab, position, rotation, bossRoot);
+        instance.name = prefab.name;
+        if (listening)
+        {
+            NetworkObject networkObject = instance.GetComponent<NetworkObject>();
+            if (networkObject != null)
+                networkObject.Spawn();
+        }
+
+        if (instance.TryGetComponent(out MutantAI mutant))
+            mutant.ServerConfigureArena(_exitHallInstance);
+
+        Debug.Log($"[Maze] Spawned final boss \"{prefab.name}\" in the exit hall at {position}.", this);
     }
 
     void TrySpawnMazeEnemies(

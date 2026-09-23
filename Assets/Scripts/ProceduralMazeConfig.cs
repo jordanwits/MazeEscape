@@ -96,12 +96,21 @@ public class ProceduralMazeConfig : ScriptableObject
         + "so the run ends in a long approach hallway instead of a single 6m cell. "
         + "Falls back to the normal single-cell Special piece when no run fits. Leave empty to skip.")]
     [SerializeField] GameObject exitHallPiecePrefab;
+    [Tooltip("Optional final boss (a registered network prefab, e.g. the Mutant). Server-spawned at the "
+        + "MutantBossSpawnMarker inside the exit hall piece once the maze and NavMesh are built. No marker (the "
+        + "single-cell fallback finish) means no boss — and so no boss lock on the exit elevator.")]
+    [SerializeField] GameObject finalBossPrefab;
 
     [Header("Start Cell")]
     [Tooltip("When set, the maze start cell always uses this prefab. For a one-opening (end-cap) piece, enable Force Start Cell Single Opening too, or use open faces that cover every start pattern (e.g. a cross).")]
     [SerializeField] GameObject forcedStartPiecePrefab;
     [Tooltip("Deterministically retries generation (same session seed, salted tries) until core cell (0,0) has exactly one open passage, so a single-opening forced start prefab always fits.")]
     [SerializeField] bool forceStartCellSingleOpening;
+    [Tooltip("For a multi-cell forced start with doorways on more than one side (a through-room): instead of the corner, "
+        + "stamp it at the nearest spot where every doorway meets a live corridor without cutting any maze cells off, "
+        + "and start the run there, so players spawn into a hallway. The exit is then the cell farthest from it. "
+        + "Force Start Cell Single Opening does not affect where it lands.")]
+    [SerializeField] bool placeForcedStartInCorridor;
 
     [Header("Legacy Starter Pieces")]
     [SerializeField] GameObject crossPrefab;
@@ -314,8 +323,10 @@ public class ProceduralMazeConfig : ScriptableObject
         return Mathf.Max(0, caps[poolIndex]);
     }
     public GameObject ExitHallPiecePrefab => exitHallPiecePrefab;
+    public GameObject FinalBossPrefab => finalBossPrefab;
     public GameObject ForcedStartPiecePrefab => forcedStartPiecePrefab;
     public bool ForceStartCellSingleOpening => forceStartCellSingleOpening;
+    public bool PlaceForcedStartInCorridor => placeForcedStartInCorridor;
     public GameObject CrossPrefab => crossPrefab;
     public GameObject StraightPrefab => straightPrefab;
     public GameObject DeadEndPrefab => deadEndPrefab;

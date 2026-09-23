@@ -155,6 +155,7 @@ public class FlareProjectile : NetworkBehaviour
         SecurityGuardHealth guard = hit.collider.GetComponentInParent<SecurityGuardHealth>();
         ClownHealth clown = hit.collider.GetComponentInParent<ClownHealth>();
         BomberHealth bomber = hit.collider.GetComponentInParent<BomberHealth>();
+        MutantHealth mutant = hit.collider.GetComponentInParent<MutantHealth>();
 
         if (zombie != null && !zombie.IsDead)
         {
@@ -183,6 +184,15 @@ public class FlareProjectile : NetworkBehaviour
             bomber.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
             if (!bomber.IsDead)
                 FlareBurnEffect.SpawnAttached(burnEffectPrefab, bomber.transform, null, null, null, null, _shooterRoot, _shooterHealth, bomber);
+            else
+                FlareBurnEffect.SpawnWorld(burnEffectPrefab, point + normal * 0.05f);
+        }
+        else if (mutant != null && !mutant.IsDead)
+        {
+            // The final boss: absolute damage, unscaled by his melee resistance, so a flare is worth ~5 punches.
+            mutant.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);
+            if (!mutant.IsDead)
+                FlareBurnEffect.SpawnAttached(burnEffectPrefab, mutant.transform, null, null, null, null, _shooterRoot, _shooterHealth, null, mutant);
             else
                 FlareBurnEffect.SpawnWorld(burnEffectPrefab, point + normal * 0.05f);
         }

@@ -21,6 +21,12 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         "Last section of the run: closing the doors ends the game and returns everyone to the main menu instead of "
         + "loading the next maze scene. Leave off for sections that advance.")]
     [SerializeField] bool endRunInsteadOfAdvancing;
+    [Tooltip(
+        "The cab starts locked and its outside call pad does nothing until somebody presses it while carrying a "
+        + "ClownKeyItem, which is consumed. Authored on the finish PIECE (Level02's CarnivalFinish1); every peer "
+        + "copies it off that piece in TryBindToFinishPiece. Once opened the cab stays unlocked for the rest of "
+        + "the section.")]
+    [SerializeField] bool requiresClownKeyToOpen;
 
     readonly NetworkVariable<int> _livingInside = new(
         0,
@@ -37,6 +43,31 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         false,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
+
+    /// <summary>
+    /// Set once somebody has spent a clown key on this cab. Replicated because every peer draws its own pad
+    /// prompt off it — the lock is a property of the cab, not of whoever happens to be standing at it.
+    /// </summary>
+    readonly NetworkVariable<bool> _clownKeyLockOpened = new(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    /// <summary>Offline mirror of <see cref="_clownKeyLockOpened"/> (play mode with no session running).</summary>
+    bool _clownKeyLockOpenedOffline;
+
+    /// <summary>
+    /// Held by a living boss (Level03's <see cref="MutantAI"/>): engaged when he spawns in the exit hall, released
+    /// only by his death. Set at runtime by the boss rather than authored on the piece, so a level where the boss
+    /// never spawned can never be soft-locked. Replicated for the pad prompt on every peer.
+    /// </summary>
+    readonly NetworkVariable<bool> _bossLockEngaged = new(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+
+    /// <summary>Offline mirror of <see cref="_bossLockEngaged"/>.</summary>
+    bool _bossLockEngagedOffline;
 
     HingeInteractDoor _doorA;
     HingeInteractDoor _doorB;
@@ -68,6 +99,32 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
     public bool ElevatorButtonsResponsive => _slidingDoors != null && (IsSpawned || IsOfflineSession);
 
     bool DoorsOpenState => IsSpawned ? _doorsOpen.Value : _slidingDoors != null && _slidingDoors.IsOpen;
+
+    /// <summary>
+    /// True while this cab still wants a clown key. Drives the pad's prompt on every peer; the pad stays
+    /// pressable either way so a locked cab answers ("Locked") instead of reading as scenery, exactly as a
+    /// keyed <see cref="HingeInteractDoor"/> does. The real gate is server-side in
+    /// <see cref="ServerTryPassClownKeyLock"/>.
+    /// </summary>
+    public bool IsClownKeyLockEngaged =>
+        requiresClownKeyToOpen && !(IsSpawned ? _clownKeyLockOpened.Value : _clownKeyLockOpenedOffline);
+
+    /// <summary>True while a living boss holds this cab shut (see <see cref="ServerSetBossLock"/>).</summary>
+    public bool IsBossLockEngaged => IsSpawned ? _bossLockEngaged.Value : _bossLockEngagedOffline;
+
+    /// <summary>Server (or offline): the boss engages the lock on spawn and releases it on death.</summary>
+    public void ServerSetBossLock(bool engaged)
+    {
+        if (IsSpawned)
+        {
+            if (IsServer)
+                _bossLockEngaged.Value = engaged;
+            return;
+        }
+
+        if (IsOfflineSession)
+            _bossLockEngagedOffline = engaged;
+    }
 
     public bool CanRequestDoorsOpen => ElevatorButtonsResponsive && !_runCommitted && !DoorsOpenState;
 
@@ -134,6 +191,7 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
             return;
 
         endRunInsteadOfAdvancing = pieceCopy.endRunInsteadOfAdvancing;
+        requiresClownKeyToOpen = pieceCopy.requiresClownKeyToOpen;
 
         if (interiorVolume != null && pieceCopy.interiorVolume != null)
         {
@@ -203,7 +261,7 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         if (HasElevatorAuthority)
             CacheDoorPairsForIdleCheck(doors);
 
-        AdoptInteriorVolumeFromPieceCopy(marker);
+        AdoptAuthoredPieceStateFromPieceCopy(marker);
 
         _slidingDoors = marker.GetComponentInChildren<ElevatorSlidingDoors>(true);
 
@@ -254,24 +312,32 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
 
     /// <summary>
     /// Every peer's replica — the server's included — is instantiated from the registered ElevatorFinishSync prefab,
-    /// so it carries that prefab's default cab volume rather than the override authored on the finish piece. The
-    /// piece each peer just built holds an inert copy with the authored volume — take the size from it so "am I
-    /// aboard" means the same thing on every peer.
+    /// so it carries that prefab's defaults rather than the overrides authored on the finish piece. The piece each
+    /// peer just built holds an inert copy with the authored values — take them from it so "am I aboard" and "does
+    /// this cab want a key" mean the same thing on every peer.
+    ///
+    /// <see cref="requiresClownKeyToOpen"/> is copied here as well as in
+    /// <see cref="AdoptAuthoredSettingsFromPieceCopy"/> (which only ever runs on the server, pre-spawn) because
+    /// clients draw the pad's locked/unlock prompt off it. <see cref="endRunInsteadOfAdvancing"/> deliberately is
+    /// not: only the server ever reads that one.
     /// </summary>
-    void AdoptInteriorVolumeFromPieceCopy(ElevatorFinishSpawnMarker marker)
+    void AdoptAuthoredPieceStateFromPieceCopy(ElevatorFinishSpawnMarker marker)
     {
-        if (interiorVolume == null)
-            return;
-
         ElevatorFinishController[] copies = marker.GetComponentsInChildren<ElevatorFinishController>(true);
         for (int i = 0; i < copies.Length; i++)
         {
             ElevatorFinishController copy = copies[i];
-            if (copy == null || copy == this || copy.IsSpawned || copy.interiorVolume == null)
+            if (copy == null || copy == this || copy.IsSpawned)
                 continue;
 
-            interiorVolume.size = copy.interiorVolume.size;
-            interiorVolume.center = copy.interiorVolume.center;
+            requiresClownKeyToOpen = copy.requiresClownKeyToOpen;
+
+            if (interiorVolume != null && copy.interiorVolume != null)
+            {
+                interiorVolume.size = copy.interiorVolume.size;
+                interiorVolume.center = copy.interiorVolume.center;
+            }
+
             return;
         }
     }
@@ -396,8 +462,11 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
 
     // ---- sliding cab: call pads ----
 
-    /// <summary>Outside pad: call the elevator. Server (or the local peer offline) decides.</summary>
-    public void RequestDoorsOpenFromButton(Vector3 interactorPosition)
+    /// <summary>
+    /// Outside pad: call the elevator. Server (or the local peer offline) decides. A cab that still wants a
+    /// clown key refuses unless <paramref name="interactor"/> is carrying one, which is then spent.
+    /// </summary>
+    public void RequestDoorsOpenFromButton(Vector3 interactorPosition, PlayerController interactor)
     {
         if (_slidingDoors == null)
             return;
@@ -408,6 +477,16 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
                 return;
             if (_runCommitted || _slidingDoors.IsOpen)
                 return;
+            if (IsBossLockEngaged)
+                return;
+            // Offline the presser is the only player there is, so their own hotbar is the whole answer.
+            if (IsClownKeyLockEngaged)
+            {
+                if (interactor == null || !interactor.TryConsumeLocalClownKeyForElevator())
+                    return;
+
+                _clownKeyLockOpenedOffline = true;
+            }
 
             _slidingDoors.SetOpen(true, immediate: false);
             return;
@@ -448,9 +527,43 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
             return;
         if (interiorVolume == null || interiorVolume.bounds.SqrDistance(feet) > 36f)
             return;
+        // Sealed while the boss lives — checked before the clown key so a key is never spent on a sealed cab.
+        if (_bossLockEngaged.Value)
+            return;
+        // The key is spent LAST, after every other reason to refuse has been ruled out, so a press that could
+        // not have opened the doors anyway never eats it.
+        if (!ServerTryPassClownKeyLock(rpcParams.Receive.SenderClientId))
+            return;
 
         _doorsOpen.Value = true;
         FanOutCallButtonPress(ElevatorCallButton.ElevatorButtonAction.OpenDoors, rpcParams.Receive.SenderClientId);
+    }
+
+    /// <summary>
+    /// Server-only clown-key gate. Returns true when the cab does not want a key (or has already been opened
+    /// with one), otherwise consumes a <see cref="ClownKeyItem"/> from the presser's hotbar and unlatches the
+    /// cab for everybody. Read-then-consume happens in this one server call, so two presses arriving together
+    /// cannot both pass and spend two keys.
+    /// </summary>
+    bool ServerTryPassClownKeyLock(ulong presserClientId)
+    {
+        if (!IsClownKeyLockEngaged)
+            return true;
+
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null
+            || !nm.ConnectedClients.TryGetValue(presserClientId, out NetworkClient client)
+            || client.PlayerObject == null
+            || !client.PlayerObject.TryGetComponent(out NetworkPlayerInventory inventory))
+        {
+            return false;
+        }
+
+        if (!inventory.ServerHasClownKeyItem() || !inventory.ServerTryConsumeClownKeyItem())
+            return false;
+
+        _clownKeyLockOpened.Value = true;
+        return true;
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]

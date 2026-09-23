@@ -1882,7 +1882,24 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             playerController?.PlayFlareReloadEffects(gun, rounds);
     }
 
-    public bool ServerTryConsumeKeyItem()
+    /// <summary>Consumes an ordinary maze/jail key (<see cref="KeyItem"/>). Used by every keyed hinge door.</summary>
+    public bool ServerTryConsumeKeyItem() =>
+        ServerTryConsumeKeyItemOfType<KeyItem>(GrabbableInventoryItem.TypeIdKey);
+
+    /// <summary>
+    /// Consumes the Clown's elevator key. Separate from <see cref="ServerTryConsumeKeyItem"/> on purpose:
+    /// <see cref="ClownKeyItem"/> does not derive from <see cref="KeyItem"/> and carries its own type id, so
+    /// neither key can ever be spent on the other's lock. Called by <see cref="ElevatorFinishController"/>.
+    /// </summary>
+    public bool ServerTryConsumeClownKeyItem() =>
+        ServerTryConsumeKeyItemOfType<ClownKeyItem>(GrabbableInventoryItem.TypeIdClownKey);
+
+    /// <summary>
+    /// Removes the first slot holding a key of type <typeparamref name="TKey"/> and destroys/despawns the item.
+    /// A slot is a match if its replicated type id says so OR the resolved world item is of that class — the
+    /// slot's own type id is authoritative here because a peer may not have resolved the object yet.
+    /// </summary>
+    bool ServerTryConsumeKeyItemOfType<TKey>(byte keyTypeId) where TKey : GrabbableInventoryItem
     {
         if (!IsServer || !IsSpawned)
             return false;
@@ -1890,14 +1907,14 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         for (int i = 0; i < SlotCapacity; i++)
         {
             ulong id = GetSlotItemId(i);
-            bool slotSaysKey = GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdKey;
+            bool slotSaysKey = GetSlotItemTypeId(i) == keyTypeId;
             if (id == 0UL && !slotSaysKey)
                 continue;
 
             GrabbableInventoryItem g = null;
             bool resolvedKey = id != 0UL
                 && GrabbableInventoryItem.TryGetRegistered(id, out g)
-                && g is KeyItem;
+                && g is TKey;
             if (!slotSaysKey && !resolvedKey)
                 continue;
 
@@ -1918,7 +1935,13 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         return false;
     }
 
-    bool ServerHasKeyItem()
+    bool ServerHasKeyItem() => ServerHasKeyItemOfType<KeyItem>(GrabbableInventoryItem.TypeIdKey);
+
+    /// <summary>Server-side "is this player carrying the Clown's elevator key" — the cab's unlock gate.</summary>
+    public bool ServerHasClownKeyItem() =>
+        ServerHasKeyItemOfType<ClownKeyItem>(GrabbableInventoryItem.TypeIdClownKey);
+
+    bool ServerHasKeyItemOfType<TKey>(byte keyTypeId) where TKey : GrabbableInventoryItem
     {
         if (!IsServer || !IsSpawned)
             return false;
@@ -1926,7 +1949,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         for (int i = 0; i < SlotCapacity; i++)
         {
             ulong id = GetSlotItemId(i);
-            bool slotSaysKey = GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdKey;
+            bool slotSaysKey = GetSlotItemTypeId(i) == keyTypeId;
             if (id == 0UL && !slotSaysKey)
                 continue;
 
@@ -1935,7 +1958,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
             if (id != 0UL
                 && GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g)
-                && g is KeyItem)
+                && g is TKey)
                 return true;
         }
 

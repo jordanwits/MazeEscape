@@ -52,6 +52,12 @@ public class AlarmLightPulse : MonoBehaviour
 
     MaterialPropertyBlock _mpb;
 
+    /// <summary>
+    /// Outside dimmer on top of the pulse, light and bulb together (1 = normal, 0 = dead). Written by
+    /// <see cref="MutantLightDisturbance"/> so a blackout takes the glowing bulb down with the light.
+    /// </summary>
+    public float ExternalLevel { get; set; } = 1f;
+
     void Awake()
     {
         ResolveFixture();
@@ -105,8 +111,9 @@ public class AlarmLightPulse : MonoBehaviour
 
     void Apply(float level)
     {
+        float external = Mathf.Clamp01(ExternalLevel);
         if (alarmLight != null)
-            alarmLight.intensity = Mathf.Lerp(minIntensity, peakIntensity, level);
+            alarmLight.intensity = Mathf.Lerp(minIntensity, peakIntensity, level) * external;
 
         if (bulbRenderer == null)
             return;
@@ -116,7 +123,7 @@ public class AlarmLightPulse : MonoBehaviour
         _mpb ??= new MaterialPropertyBlock();
         bulbRenderer.GetPropertyBlock(_mpb);
         // .linear because _EmissionColor is consumed in linear space, while the inspector colour is authored in gamma.
-        _mpb.SetColor(EmissionColorId, alarmColor.linear * Mathf.Lerp(minEmission, peakEmission, level));
+        _mpb.SetColor(EmissionColorId, alarmColor.linear * (Mathf.Lerp(minEmission, peakEmission, level) * external));
         bulbRenderer.SetPropertyBlock(_mpb);
     }
 

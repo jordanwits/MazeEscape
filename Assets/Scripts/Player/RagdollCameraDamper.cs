@@ -159,9 +159,15 @@ public class RagdollCameraDamper : MonoBehaviour
             return;
         }
 
-        Proxy.position = positionSmoothTime > 0f
+        // Held by an enemy the body is frozen rigid, so there is no flailing to smooth — only the grab's own motion,
+        // which reels and swings the victim at up to ~25 m/s. Damping that left the eye trailing up to a metre
+        // behind the head, looking at the player's own headless body. Ride the head exactly while held.
+        bool held = _lookTarget != null;
+        Proxy.position = positionSmoothTime > 0f && !held
             ? Vector3.SmoothDamp(Proxy.position, headPos, ref _positionVelocity, positionSmoothTime, Mathf.Infinity, dt)
             : headPos;
+        if (held)
+            _positionVelocity = Vector3.zero;
 
         // Frame-rate-independent exponential approach: rotationSmoothTime is the time constant.
         float t = rotationSmoothTime > 1e-4f ? 1f - Mathf.Exp(-dt / rotationSmoothTime) : 1f;

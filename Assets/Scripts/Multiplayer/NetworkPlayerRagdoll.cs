@@ -439,7 +439,34 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         if (grabBone == null)
             return;
 
+        IgnoreGrabberCollisions(enemyNetObjId);
         ragdoll.BeginHeldByPoint(grabBone, localPos, Quaternion.Euler(localEuler), approachLocalPos, approachSeconds);
+    }
+
+    /// <summary>
+    /// Every peer: this body never collides with the enemy holding it. The server's AI already ignores the enemy's
+    /// CharacterController, but a client's copy of the enemy is solid through
+    /// <see cref="EnemyClientCollisionProxy"/>'s kinematic capsule instead, and that capsule is what the OWNER's
+    /// ragdoll simulates against — the body is let go right at the enemy's hand, then lies at his feet.
+    /// </summary>
+    void IgnoreGrabberCollisions(ulong enemyNetObjId)
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || nm.SpawnManager == null
+            || !nm.SpawnManager.SpawnedObjects.TryGetValue(enemyNetObjId, out NetworkObject enemy) || enemy == null)
+            return;
+
+        IReadOnlyList<Collider> bones = ragdoll.RagdollColliders;
+        Collider[] enemyColliders = enemy.GetComponentsInChildren<Collider>();
+        for (int e = 0; e < enemyColliders.Length; e++)
+        {
+            Collider enemyCollider = enemyColliders[e];
+            if (enemyCollider == null || enemyCollider.isTrigger)
+                continue;
+            for (int b = 0; b < bones.Count; b++)
+                if (bones[b] != null)
+                    Physics.IgnoreCollision(enemyCollider, bones[b], true);
+        }
     }
 
     [ClientRpc]

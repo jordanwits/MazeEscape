@@ -34,6 +34,7 @@ public class FlareBurnEffect : NetworkBehaviour
     SecurityGuardHealth _guard;
     ClownHealth _clown;
     BomberHealth _bomber;
+    MutantHealth _mutant;
     Transform _attacker;
     PlayerHealth _attackerHealth;
     float _baseLightIntensity;
@@ -47,7 +48,7 @@ public class FlareBurnEffect : NetworkBehaviour
     public static FlareBurnEffect SpawnAttached(
         GameObject prefab, Transform enemyRoot, ZombieHealth zombie, SkeletonHealth skeleton,
         SecurityGuardHealth guard, ClownHealth clown, Transform attacker, PlayerHealth attackerHealth,
-        BomberHealth bomber = null)
+        BomberHealth bomber = null, MutantHealth mutant = null)
     {
         FlareBurnEffect fx = SpawnCommon(prefab, enemyRoot != null ? enemyRoot.position + Vector3.up * 1.15f : Vector3.zero);
         if (fx == null)
@@ -60,6 +61,7 @@ public class FlareBurnEffect : NetworkBehaviour
         fx._guard = guard;
         fx._clown = clown;
         fx._bomber = bomber;
+        fx._mutant = mutant;
         fx._attacker = attacker;
         fx._attackerHealth = attackerHealth;
         fx.BeginAuthorityLife();
@@ -199,6 +201,12 @@ public class FlareBurnEffect : NetworkBehaviour
         // A burning Bomber is on a second timer: the burn can finish him, and finishing him sets off his
         // dynamite wherever he has run to by then.
         if (_bomber != null && !_bomber.IsDead)
+        {
             _bomber.TakeDamage(damagePerTick, fromPlayerMelee: false, attacker: _attacker, attackerHealth: _attackerHealth);
+            return;
+        }
+
+        if (_mutant != null && !_mutant.IsDead)
+            _mutant.TakeDamage(damagePerTick, fromPlayerMelee: false, attacker: _attacker, attackerHealth: _attackerHealth);
     }
 }

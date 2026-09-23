@@ -49,6 +49,21 @@ public class ElevatorCallButton : MonoBehaviour
     /// <summary>The inside pad is only reachable from inside the cab, which also keeps it from being pressed through the wall.</summary>
     public bool RequiresInteractorInsideCab => action == ElevatorButtonAction.CloseDoors;
 
+    /// <summary>
+    /// True when this is the outside pad of a cab that still wants the Clown's key (Level02). The pad stays
+    /// pressable — <see cref="PlayerController"/> reads this only to swap the prompt for "locked"/"unlock", the
+    /// same way a keyed <see cref="HingeInteractDoor"/> does; the server owns the actual refusal.
+    /// </summary>
+    public bool RequiresClownKeyToOpen =>
+        action == ElevatorButtonAction.OpenDoors && _controller != null && _controller.IsClownKeyLockEngaged;
+
+    /// <summary>
+    /// True when this is the outside pad of a cab a living boss is holding shut (Level03's Mutant). Prompt-only,
+    /// like <see cref="RequiresClownKeyToOpen"/>; the server refuses the press.
+    /// </summary>
+    public bool RequiresBossDefeat =>
+        action == ElevatorButtonAction.OpenDoors && _controller != null && _controller.IsBossLockEngaged;
+
     void Awake()
     {
         _restLocalPosition = transform.localPosition;
@@ -97,7 +112,9 @@ public class ElevatorCallButton : MonoBehaviour
     /// A cab dropped into a dev scene on its own (Staging) has no ElevatorFinishSync next to it, so no controller ever
     /// binds and the pads would be dead. With no session running, drive the leaves directly instead so the cab can be
     /// authored and eyeballed in isolation — there is no occupancy gate and closing does not end the run in that mode.
-    /// Never active in a session, where a null controller means "not bound yet" and local-only doors would just desync.
+    /// Never active in a session, where a null controller means "not bound yet" and local-only doors would just desync,
+    /// nor on an arrival cab (<see cref="ElevatorSlidingDoors.OpensOnArrival"/>), which opens itself and must never be
+    /// closed on the players who spawned inside it.
     /// </summary>
     bool TryGetDetachedCabDoors(out ElevatorSlidingDoors doors)
     {
@@ -113,7 +130,7 @@ public class ElevatorCallButton : MonoBehaviour
             _detachedDoors = GetComponentInParent<ElevatorSlidingDoors>();
 
         doors = _detachedDoors;
-        return doors != null;
+        return doors != null && !doors.OpensOnArrival;
     }
 
     /// <summary>True when pressing this pad would actually do something for a player standing at <paramref name="interactorPosition"/>.</summary>
@@ -137,8 +154,12 @@ public class ElevatorCallButton : MonoBehaviour
             : _controller.CanRequestDoorsClose;
     }
 
-    /// <summary>Player interact. Always gives the local press feedback; the door request is validated by the server.</summary>
-    public void Press(Vector3 interactorPosition)
+    /// <summary>
+    /// Player interact. Always gives the local press feedback; the door request is validated by the server —
+    /// including the clown-key gate, which is why the pressing <paramref name="interactor"/> comes along (the
+    /// offline cab has no client id to resolve a hotbar from).
+    /// </summary>
+    public void Press(Vector3 interactorPosition, PlayerController interactor)
     {
         if (_controller == null)
         {
@@ -173,7 +194,7 @@ public class ElevatorCallButton : MonoBehaviour
         PlayPressFeedback();
 
         if (action == ElevatorButtonAction.OpenDoors)
-            _controller.RequestDoorsOpenFromButton(interactorPosition);
+            _controller.RequestDoorsOpenFromButton(interactorPosition, interactor);
         else
             _controller.RequestDoorsCloseFromButton(interactorPosition);
     }

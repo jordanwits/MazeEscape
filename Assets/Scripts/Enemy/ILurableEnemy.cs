@@ -1,8 +1,8 @@
 using UnityEngine;
 
 /// <summary>
-/// An enemy that can be pulled toward a noise it hears — implemented by the three hunters a
-/// <see cref="DecoyGrenade"/> is meant to bait away from the player (Clown, Jailor, Security Guard).
+/// An enemy that can be pulled toward a noise it hears — implemented by the enemies a
+/// <see cref="DecoyGrenade"/> is meant to bait away from the player (Clown, Jailor, Security Guard, Bomber).
 ///
 /// Deliberately separate from <see cref="IBlindableEnemy"/>: a flashbang is a thing that happens TO an
 /// enemy and is applied as a bolt-on component, whereas a lure is a request the AI is free to refuse.

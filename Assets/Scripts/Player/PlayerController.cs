@@ -68,6 +68,12 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] string teleportOrbPromptMessage = "Hold E to teleport";
     [SerializeField] string skeletonRpsPromptMessage = "Press E to challenge the skeleton";
     [SerializeField] string elevatorCallPromptMessage = "Press E to call the elevator";
+    [Tooltip("Outside pad of a key-locked exit cab (Level02) while the player IS carrying the Clown's key.")]
+    [SerializeField] string elevatorUnlockPromptMessage = "Press E to unlock the elevator";
+    [Tooltip("Outside pad of a key-locked exit cab while the player is NOT carrying the Clown's key.")]
+    [SerializeField] string elevatorLockedPromptMessage = "Locked - the Clown holds the key";
+    [Tooltip("Outside pad of the exit cab while Level03's boss (the Mutant) is still alive.")]
+    [SerializeField] string elevatorBossLockedPromptMessage = "Locked - it's still alive";
     [Tooltip("Shown on the cab's inside pad only when there is no occupancy gate to report (a detached dev-scene cab); the real finish elevator shows the N/M aboard count instead.")]
     [SerializeField] string elevatorCloseDoorsPromptMessage = "Press E to close the doors";
     [Tooltip("Optional mask for interactable items. If empty, Unity default raycast layers are used.")]
@@ -333,6 +339,7 @@ public partial class PlayerController : MonoBehaviour
     readonly HashSet<SecurityGuardHealth> _meleeHitGuards = new();
     readonly HashSet<ClownHealth> _meleeHitClowns = new();
     readonly HashSet<BomberHealth> _meleeHitBombers = new();
+    readonly HashSet<MutantHealth> _meleeHitMutants = new();
     bool _meleeHitSkeletonThisSwing;
     const string EnemyLayerName = "Enemy";
     const string ClownLayerName = "Clown";
@@ -2051,6 +2058,12 @@ public partial class PlayerController : MonoBehaviour
             }
 
             cameraPitchTransform.SetParent(followParent, true);
+            // A grab yanks the frozen body into the enemy's grip within a few physics steps, and this attach can
+            // land a step or two late — keeping the pitch's world position then locked the stale standing eye in
+            // as a permanent offset (measured 0.8-1.05 m), so the whole hold was watched from outside the player's
+            // own headless body. The held proxy already sits at the intended eye point, so seat the view on it.
+            if (_ragdollController.IsHeld && _ragdollCameraDamper != null)
+                cameraPitchTransform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
             _cameraPitchParentedToHead = true;
         }
         else if (!wantAttach && _cameraPitchParentedToHead)
@@ -2060,7 +2073,7 @@ public partial class PlayerController : MonoBehaviour
         // riding the rolled head bone; any other ragdoll/getting-up keeps the raw head-follow tumble.
         if (_cameraPitchParentedToHead && _ragdollCameraDamper != null)
             _ragdollCameraDamper.LookTarget =
-                (_ragdollController != null && _ragdollController.IsHeld) ? _ragdollController.HeldTarget : null;
+                (_ragdollController != null && _ragdollController.IsHeld) ? _ragdollController.HeldLookTarget : null;
     }
 
     void DetachCameraPitchFromHead()
@@ -2271,6 +2284,23 @@ public partial class PlayerController : MonoBehaviour
                 return;
             }
 
+            // A key-locked cab still answers its pad rather than reading as inert scenery: with the Clown's key
+            // the press is an actionable unlock, without it the pad says why it will not open. Same shape as the
+            // keyed-door branch above.
+            if (elevatorButton.RequiresBossDefeat)
+            {
+                SetPickupPromptVisible(true, elevatorBossLockedPromptMessage);
+                return;
+            }
+
+            if (elevatorButton.RequiresClownKeyToOpen)
+            {
+                SetPickupPromptVisible(
+                    true,
+                    PlayerHasClownKeyInInventory() ? elevatorUnlockPromptMessage : elevatorLockedPromptMessage);
+                return;
+            }
+
             SetPickupPromptVisible(true, elevatorCallPromptMessage);
             return;
         }
@@ -2441,7 +2471,20 @@ public partial class PlayerController : MonoBehaviour
         return false;
     }
 
-    bool PlayerHasKeyInInventory()
+    bool PlayerHasKeyInInventory() => PlayerHasKeyInInventory<KeyItem>(GrabbableInventoryItem.TypeIdKey);
+
+    /// <summary>
+    /// Local read for the elevator pad prompt: does this player carry the Clown's key? Only ever decides which
+    /// message is drawn — the server re-checks the real hotbar before it unlocks anything.
+    /// </summary>
+    bool PlayerHasClownKeyInInventory() =>
+        PlayerHasKeyInInventory<ClownKeyItem>(GrabbableInventoryItem.TypeIdClownKey);
+
+    /// <summary>
+    /// Whether any hotbar slot holds a key of type <typeparamref name="TKey"/>. Checks the replicated slot type
+    /// id first so a key whose world object has not resolved on this peer yet still counts.
+    /// </summary>
+    bool PlayerHasKeyInInventory<TKey>(byte keyTypeId) where TKey : GrabbableInventoryItem
     {
         if (IsUsingNetworkedInventory)
         {
@@ -2450,11 +2493,11 @@ public partial class PlayerController : MonoBehaviour
             for (int i = 0; i < InventorySlotCapacity; i++)
             {
                 ulong id = _networkPlayerInventory.GetSlotItemId(i);
-                if (_networkPlayerInventory.GetSlotItemTypeId(i) == GrabbableInventoryItem.TypeIdKey)
+                if (_networkPlayerInventory.GetSlotItemTypeId(i) == keyTypeId)
                     return true;
                 if (id == 0UL)
                     continue;
-                if (GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) && g is KeyItem)
+                if (GrabbableInventoryItem.TryGetRegistered(id, out GrabbableInventoryItem g) && g is TKey)
                     return true;
             }
             return false;
@@ -2462,7 +2505,7 @@ public partial class PlayerController : MonoBehaviour
 
         for (int i = 0; i < InventorySlotCapacity; i++)
         {
-            if (_localInventorySlots[i] is KeyItem)
+            if (_localInventorySlots[i] is TKey)
                 return true;
         }
         return false;
@@ -3082,6 +3125,7 @@ public partial class PlayerController : MonoBehaviour
         _meleeHitGuards.Clear();
         _meleeHitClowns.Clear();
         _meleeHitBombers.Clear();
+        _meleeHitMutants.Clear();
         _meleeHitSkeletonThisSwing = false;
         for (int i = 0; i < hitCount; i++)
         {
@@ -3184,6 +3228,21 @@ public partial class PlayerController : MonoBehaviour
 
                 float damage = bomberHealth.MaxHealth * damageFraction;
                 if (bomberHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
+                    damagedAny = true;
+                continue;
+            }
+
+            // Mutant (Level03 final boss). MutantHealth scales melee down hard and by party size, so this is a
+            // long fight — ~40 punches / ~17 sword swings solo — broken up by poise staggers. Every hit also
+            // turns him on the puncher, and a stagger mid-reel drops whoever he is holding.
+            MutantHealth mutantHealth = col.GetComponentInParent<MutantHealth>();
+            if (mutantHealth != null && !mutantHealth.IsDead)
+            {
+                if (!_meleeHitMutants.Add(mutantHealth))
+                    continue;
+
+                float damage = mutantHealth.MaxHealth * damageFraction;
+                if (mutantHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                     damagedAny = true;
                 continue;
             }

@@ -28,6 +28,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         Chase = 1,    // committed run at the target
         Priming = 2,  // fuse lit, standing still, about to go off
         Spent = 3,    // detonated; waiting out the despawn
+        Lured = 4,    // still dormant, but running at a decoy grenade to blow up on it
     }
 
     [Header("Refs (auto-resolved if left empty)")]
@@ -125,6 +126,11 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
     /// <summary>Widening snap radii for <see cref="SetDestination"/>; see the note there.</summary>
     static readonly float[] s_destinationSnapRadii = { 2.5f, 6f, 12f };
 
+    /// <summary>Slightly longer than the decoy's 1s pulse, so a decoy that keeps calling holds him continuously.</summary>
+    const float LureHoldSeconds = 2.5f;
+    /// <summary>How close a fuse lit on a decoy walks him in before he plants his feet on it.</summary>
+    const float DecoyStandDistance = 1f;
+
     readonly NetworkVariable<bool> _fuseLit = new(false);
 
     BomberState _state = BomberState.Idle;
@@ -132,6 +138,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
     EnemyBlindEffect _blindEffect;
     Vector3 _lurePoint;
     bool _hasLurePoint;
+    float _lureHoldUntil;
     bool _provoked;
     float _verticalVelocity;
     float _nextScanTime;
@@ -171,6 +178,10 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
 
         ResolveDynamiteSticks();
         EnsureVoiceSource();
+
+        // Awake/OnDestroy rather than OnEnable/OnDisable, matching the Clown/Jailor/Guard registries, so a
+        // decoy's lookup never depends on whether this component happens to be enabled on this peer.
+        BomberAIRegistry.Register(this);
     }
 
     void ResolveDynamiteSticks()
@@ -230,6 +241,12 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         _fuseLit.OnValueChanged -= HandleFuseLitChanged;
     }
 
+    public override void OnDestroy()
+    {
+        BomberAIRegistry.Unregister(this);
+        base.OnDestroy();
+    }
+
     /// <summary>Server / offline runs the brain; observer clients only render what it decides.</summary>
     bool ShouldSimulate =>
         NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening || IsServer;
@@ -256,6 +273,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         switch (_state)
         {
             case BomberState.Idle:    TickIdle();    break;
+            case BomberState.Lured:   TickLured();   break;
             case BomberState.Chase:   TickChase();   break;
             case BomberState.Priming: TickPriming(); break;
         }
@@ -272,15 +290,11 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
 
         if (_provoked)
         {
-            // Woken by damage/noise but with nobody to chase yet: walk to the noise, else keep waiting.
+            // Woken but with nobody to chase yet: take the nearest player (only one he can sense, if not
+            // relentless), else keep waiting.
             PlayerHealth nearest = FindNearestLivingPlayer(out _);
             if (nearest != null && (relentless || CanSense(nearest, out _)))
-            {
                 BeginChase(nearest);
-                return;
-            }
-            if (_hasLurePoint)
-                EnterState(BomberState.Chase);
             return;
         }
 
@@ -301,24 +315,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
 
         if (_target == null)
         {
-            // Nobody left to blow up. Run down the last noise if there is one, otherwise stand and wait.
-            if (_hasLurePoint)
-            {
-                if (Time.time >= _nextRepathTime)
-                {
-                    _nextRepathTime = Time.time + repathInterval;
-                    SetDestination(_lurePoint);
-                }
-                if (HorizontalDistance(transform.position, _lurePoint) <= Mathf.Max(1f, detonateDistance))
-                {
-                    _hasLurePoint = false;
-                    EnterState(BomberState.Idle);
-                    return;
-                }
-                MoveAlongPath();
-                return;
-            }
-
+            // Nobody left to blow up: stand and wait.
             EnterState(BomberState.Idle);
             return;
         }
@@ -338,10 +335,60 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         MoveAlongPath();
     }
 
+    /// <summary>
+    /// Running at a decoy grenade. He is NOT provoked -- a noise is not a player -- so this is still the dormant
+    /// toy, just pointed somewhere. When he gets there he treats the decoy exactly like a victim and lights up
+    /// on it, which is what makes a decoy the way to get rid of him.
+    /// </summary>
+    void TickLured()
+    {
+        // The decoy has stopped calling him (its call ran out, he fell out of earshot, his route was cut off):
+        // wind back down to a dormant toy wherever he stands.
+        if (!_hasLurePoint || Time.time >= _lureHoldUntil)
+        {
+            _hasLurePoint = false;
+            EnterState(BomberState.Idle);
+            return;
+        }
+
+        // Only SEEING a player pulls him off a live decoy -- the same rule as the Jailor and Clown. His other
+        // two senses are hearing (sprint noise, the through-wall notice radius), and a decoy outranks noise.
+        if (Time.time >= _nextScanTime)
+        {
+            _nextScanTime = Time.time + scanInterval;
+            PlayerHealth spotted = FindProvokingPlayer(sightOnly: true);
+            if (spotted != null)
+            {
+                _provoked = true;
+                BeginChase(spotted);
+                return;
+            }
+        }
+
+        SetChasingAnimation(true);
+
+        // Same fuse distance a player gets; TickPriming then finishes the run-in so he goes off on top of it.
+        if (HorizontalDistance(transform.position, _lurePoint) <= Mathf.Max(DecoyStandDistance, detonateDistance))
+        {
+            LightFuse();
+            return;
+        }
+
+        if (Time.time >= _nextRepathTime)
+        {
+            _nextRepathTime = Time.time + repathInterval;
+            SetDestination(_lurePoint);
+        }
+        MoveAlongPath();
+    }
+
     void TickPriming()
     {
         bool stillHunting = chaseWhileFuseBurns && _target != null && !_target.IsDead;
-        if (stillHunting)
+        // Lit on a decoy rather than a player: finish the run-in so the blast goes off right on top of it.
+        bool closingOnDecoy = chaseWhileFuseBurns && _target == null && _hasLurePoint
+            && HorizontalDistance(transform.position, _lurePoint) > DecoyStandDistance;
+        if (stillHunting || closingOnDecoy)
         {
             // Committed final charge: the fuse is lit and he keeps coming. The sparklers are a real warning
             // precisely because they cost him nothing -- planting his feet here would let the player stroll
@@ -350,7 +397,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
             if (Time.time >= _nextRepathTime)
             {
                 _nextRepathTime = Time.time + repathInterval;
-                SetDestination(_target.transform.position);
+                SetDestination(stillHunting ? _target.transform.position : _lurePoint);
             }
             MoveAlongPath();
         }
@@ -359,8 +406,8 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
             SetChasingAnimation(false);
             ApplyMotion(Vector3.zero);
 
-            // Nothing left to chase (or the charge is disabled): hold still and face the victim so the
-            // blast still reads as deliberate rather than incidental.
+            // Nothing left to chase, stood on the decoy, or the charge is disabled: hold still and face the
+            // victim (if any) so the blast still reads as deliberate rather than incidental.
             if (_target != null)
             {
                 Vector3 toTarget = _target.transform.position - transform.position;
@@ -378,6 +425,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
     void BeginChase(PlayerHealth target)
     {
         _target = target;
+        _hasLurePoint = false;   // a real victim voids any decoy's claim on him
         _nextRepathTime = 0f;
         EnterState(BomberState.Chase);
     }
@@ -389,7 +437,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         _state = next;
 
         if (navMeshAgent != null && navMeshAgent.enabled && navMeshAgent.isOnNavMesh)
-            navMeshAgent.isStopped = next != BomberState.Chase;
+            navMeshAgent.isStopped = next != BomberState.Chase && next != BomberState.Lured;
     }
 
     /// <summary>Server: the point of no return. Nothing after this can stop the blast.</summary>
@@ -551,7 +599,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
 
     // ------------------------------------------------------------------ sensing (server)
 
-    PlayerHealth FindProvokingPlayer()
+    PlayerHealth FindProvokingPlayer(bool sightOnly = false)
     {
         PlayerHealth best = null;
         float bestDistance = float.PositiveInfinity;
@@ -563,7 +611,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
             if (player == null || player.IsDead)
                 continue;
 
-            if (!CanSense(player, out float distance) || distance >= bestDistance)
+            if (!CanSense(player, out float distance, sightOnly) || distance >= bestDistance)
                 continue;
 
             best = player;
@@ -573,18 +621,21 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         return best;
     }
 
-    /// <summary>Close enough to hear, sprinting within earshot, or ahead of him in plain sight.</summary>
-    bool CanSense(PlayerHealth player, out float distance)
+    /// <summary>
+    /// Close enough to hear, sprinting within earshot, or ahead of him in plain sight. <paramref name="sightOnly"/>
+    /// keeps only the last: a decoy that is calling him outranks anything he merely hears.
+    /// </summary>
+    bool CanSense(PlayerHealth player, out float distance, bool sightOnly = false)
     {
         distance = Vector3.Distance(transform.position, player.transform.position);
 
-        if (distance <= noticeRadius)
+        if (!sightOnly && distance <= noticeRadius)
             return true;
 
         // Heard-sprint acquisition: no vision cone or line-of-sight gate, exactly like ZombieAI -- a sprinting
         // player is heard from any direction and through walls. Walking stays silent, and unlike the
         // Jailor/Clown he never hears voice chat (he is not registered with ServerProximityVoiceNotifications).
-        if (distance <= hearingRadius && IsPlayerAudiblySprinting(player))
+        if (!sightOnly && distance <= hearingRadius && IsPlayerAudiblySprinting(player))
             return true;
 
         if (distance > sightRadius)
@@ -758,13 +809,21 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         ApplyMotion(desired);
     }
 
-    /// <summary>Path-free beeline at the current target, used only when the NavMesh cannot offer a route.</summary>
+    /// <summary>
+    /// Path-free beeline at the current target (or the decoy he is running at), used only when the NavMesh cannot
+    /// offer a route.
+    /// </summary>
     Vector3 SteerDirectlyAtTarget()
     {
-        if (_target == null)
+        Vector3 goal;
+        if (_target != null)
+            goal = _target.transform.position;
+        else if (_hasLurePoint)
+            goal = _lurePoint;
+        else
             return Vector3.zero;
 
-        Vector3 toTarget = _target.transform.position - transform.position;
+        Vector3 toTarget = goal - transform.position;
         toTarget.y = 0f;
         if (toTarget.sqrMagnitude < 0.0001f)
             return Vector3.zero;
@@ -878,6 +937,13 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
 
         _provoked = true;
         _nextScanTime = 0f;
+
+        // Really awake now: a decoy has no more claim on him, and TickIdle takes it from here.
+        if (_state == BomberState.Lured)
+        {
+            _hasLurePoint = false;
+            EnterState(BomberState.Idle);
+        }
     }
 
     /// <summary>
@@ -889,8 +955,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         if (!ShouldSimulate || _state == BomberState.Priming || _state == BomberState.Spent)
             return;
 
-        _provoked = true;
-        _nextScanTime = 0f;
+        ServerProvoke();
 
         if (attackerHealth != null && !attackerHealth.IsDead)
             BeginChase(attackerHealth);
@@ -939,14 +1004,24 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
 
     // ---- ILurableEnemy: a decoy grenade can bait him onto itself instead of onto the squad ----
 
-    /// <summary>Never pull him off a live run-up or a burning fuse.</summary>
+    /// <summary>
+    /// Never pull him off a live run-up or a burning fuse. A relentless bomber that has been woken counts too,
+    /// even with no target this instant (blinded, between scans): he is locked onto the squad for good, so a
+    /// decoy only ever works on a dormant one.
+    /// </summary>
     public bool IsPursuingPlayer =>
         _state == BomberState.Priming
         || _state == BomberState.Spent
-        || (_state == BomberState.Chase && _target != null);
+        || (_state == BomberState.Chase && _target != null)
+        || (_provoked && relentless);
 
     public Vector3 LureListenPosition => transform.position;
 
+    /// <summary>
+    /// A decoy is calling: run at it and blow up on it (<see cref="TickLured"/>). Deliberately NOT a provocation --
+    /// a woken bomber goes straight to the relentless nearest-player retarget, which turned every decoy into a
+    /// wake-up call aimed at the squad. Repeat pulses only keep the hold alive; they never restart the run.
+    /// </summary>
     public void LureToNoise(Vector3 worldPoint)
     {
         if (!ShouldSimulate || IsPursuingPlayer)
@@ -954,9 +1029,12 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
 
         _lurePoint = worldPoint;
         _hasLurePoint = true;
-        _provoked = true;
-        _nextRepathTime = 0f;
-        EnterState(BomberState.Chase);
+        _lureHoldUntil = Time.time + LureHoldSeconds;
+        if (_state != BomberState.Lured)
+        {
+            _nextRepathTime = 0f;
+            EnterState(BomberState.Lured);
+        }
     }
 
     sealed class RaycastHitDistanceComparer : IComparer<RaycastHit>

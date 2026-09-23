@@ -651,7 +651,7 @@ public partial class PlayerController
             && TryFindInteractableElevatorButton(cam, out ElevatorCallButton elevatorButton)
             && elevatorButton.CanPress(transform.position))
         {
-            elevatorButton.Press(transform.position);
+            elevatorButton.Press(transform.position, this);
             return;
         }
 
@@ -906,6 +906,30 @@ public partial class PlayerController
             door.ApplyLocalUnlock();
             return;
         }
+    }
+
+    /// <summary>
+    /// Offline (no session) counterpart of <c>NetworkPlayerInventory.ServerTryConsumeClownKeyItem</c>: spends a
+    /// <see cref="ClownKeyItem"/> from the local hotbar so the play-mode exit cab enforces the same lock the
+    /// networked one does. Returns false — and consumes nothing — when no clown key is carried.
+    /// </summary>
+    public bool TryConsumeLocalClownKeyForElevator()
+    {
+        // Teardown-style sweep: MaxSlotCount, so a key parked in the bought 4th slot still counts.
+        for (int i = 0; i < NetworkPlayerInventory.MaxSlotCount; i++)
+        {
+            if (_localInventorySlots[i] is not ClownKeyItem key)
+                continue;
+
+            _localInventorySlots[i] = null;
+            _localSlotStacks[i] = 0;
+            SelectAfterDropLocal();
+            Destroy(key.gameObject);
+            RefreshLocalInventoryView();
+            return true;
+        }
+
+        return false;
     }
 
     bool HasSelectedFlashlightInWorld()

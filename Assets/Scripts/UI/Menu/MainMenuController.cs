@@ -383,16 +383,16 @@ public sealed class MainMenuController : MonoBehaviour
     }
 
     /// <summary>
-    /// Host's go button, bottom-right — mirroring the exits bottom-left with READY UP between them.
+    /// Host's go button, bottom-centre — between the exits bottom-left and READY UP bottom-right.
     /// No panel around it: START is one action, and a card here would crowd the survivor strip.
     /// </summary>
     void BuildLobbyStartControls(Transform screen)
     {
         RectTransform holder = MenuWidgets.CreateRect("StartControls", screen);
-        holder.anchorMin = new Vector2(1f, 0f);
-        holder.anchorMax = new Vector2(1f, 0f);
-        holder.pivot = new Vector2(1f, 0f);
-        holder.anchoredPosition = new Vector2(-118f, 108f);
+        holder.anchorMin = new Vector2(0.5f, 0f);
+        holder.anchorMax = new Vector2(0.5f, 0f);
+        holder.pivot = new Vector2(0.5f, 0f);
+        holder.anchoredPosition = new Vector2(0f, 108f);
         holder.sizeDelta = new Vector2(320f, 104f);
         MenuWidgets.AddVertical(holder.gameObject, new RectOffset(0, 0, 0, 0), 10f);
         _startSection = holder.gameObject;   // host-only
@@ -685,13 +685,13 @@ public sealed class MainMenuController : MonoBehaviour
         headRt.anchoredPosition = new Vector2(-SurvivorGridInsetRight, SurvivorGridBottom - 12f);
         headRt.sizeDelta = new Vector2(SurvivorPlateWidth * 2f + SurvivorGridSpacingX, 22f);
 
-        // READY UP sits under your own portrait rather than in a side panel — it is the one thing
-        // every player (host or not) has to press.
+        // READY UP sits bottom-right under the survivor grid rather than in a side panel — it is the
+        // one thing every player (host or not) has to press.
         RectTransform readyHolder = MenuWidgets.CreateRect("ReadyHolder", screen);
-        readyHolder.anchorMin = new Vector2(0.5f, 0f);
-        readyHolder.anchorMax = new Vector2(0.5f, 0f);
-        readyHolder.pivot = new Vector2(0.5f, 0f);
-        readyHolder.anchoredPosition = new Vector2(0f, 108f);
+        readyHolder.anchorMin = new Vector2(1f, 0f);
+        readyHolder.anchorMax = new Vector2(1f, 0f);
+        readyHolder.pivot = new Vector2(1f, 0f);
+        readyHolder.anchoredPosition = new Vector2(-118f, 108f);
         readyHolder.sizeDelta = new Vector2(460f, 70f);
 
         _readyButton = MenuWidgets.CreateGhostButton(readyHolder, "READY UP", OnReadyClicked, false, 70f);

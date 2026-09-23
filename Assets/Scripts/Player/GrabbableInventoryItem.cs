@@ -26,6 +26,13 @@ public class GrabbableInventoryItem : MonoBehaviour
     public const byte TypeIdSword = 12;
     public const byte TypeIdFlashbang = 13;
     public const byte TypeIdDecoyGrenade = 14;
+    /// <summary>
+    /// The Clown's key to the carnival exit elevator. Deliberately NOT <see cref="TypeIdKey"/>: an ordinary
+    /// maze key must not call the cab, and this one must not open a jail cell. Kept a separate type (and a
+    /// separate <see cref="ClownKeyItem"/> class that does NOT derive from <see cref="KeyItem"/>) so the
+    /// server-side "do you hold a key" checks stay mutually exclusive.
+    /// </summary>
+    public const byte TypeIdClownKey = 15;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -181,6 +188,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhFlash;
     static Sprite s_hudPhGlow;
     static Sprite s_hudPhKey;
+    static Sprite s_hudPhClownKey;
     static Sprite s_hudPhBandage;
     static Sprite s_hudPhStarBall;
     static Sprite s_hudPhRingBlue;
@@ -213,6 +221,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdFlashlight;
         if (GetComponent<GlowstickItem>() != null)
             return TypeIdGlowstick;
+        if (GetComponent<ClownKeyItem>() != null)
+            return TypeIdClownKey;
         if (GetComponent<KeyItem>() != null)
             return TypeIdKey;
         if (GetComponent<BandageItem>() != null)
@@ -241,6 +251,7 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdFlashlight => s_hudPhFlash ??= CreatePlaceholderSprite(0.95f, 0.9f, 0.5f),
             TypeIdGlowstick => s_hudPhGlow ??= CreatePlaceholderSprite(0.35f, 1f, 0.35f),
             TypeIdKey => KeyItem.SharedHudSlotIcon ?? (s_hudPhKey ??= CreatePlaceholderSprite(0.92f, 0.75f, 0.2f)),
+            TypeIdClownKey => ClownKeyItem.SharedHudSlotIcon ?? (s_hudPhClownKey ??= CreatePlaceholderSprite(0.86f, 0.24f, 0.32f)),
             TypeIdBandage => BandageItem.SharedHudSlotIcon ?? (s_hudPhBandage ??= CreatePlaceholderSprite(0.95f, 0.35f, 0.35f)),
             TypeIdEnergyDrink => EnergyDrinkItem.SharedHudSlotIcon ?? (s_hudPhEnergyDrink ??= CreatePlaceholderSprite(0.2f, 0.95f, 0.85f)),
             TypeIdStarBall => s_hudPhStarBall ??= CreatePlaceholderSprite(0.95f, 0.55f, 0.2f),

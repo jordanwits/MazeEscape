@@ -60,6 +60,10 @@ public class RagdollCameraCollision : MonoBehaviour
     [Header("Own-body hiding")]
     [Tooltip("Hide the player's own mesh while the camera is forced close to the body, so you never see inside your own model.")]
     [SerializeField] bool hideOwnBodyWhenClose = true;
+    [Tooltip("Hide the player's own mesh for the whole of an enemy grab hold. The body is frozen rigid in whatever " +
+             "orientation the grip swings it through, so limbs and the backpack poke into the view from all sides " +
+             "(and its colliders are off, so the distance test below never fires).")]
+    [SerializeField] bool hideOwnBodyWhileHeld = true;
     [Tooltip("Distance from the camera to the nearest own collider below which the body is hidden (m).")]
     [SerializeField] float bodyHideDistance = 0.35f;
 
@@ -246,8 +250,12 @@ public class RagdollCameraCollision : MonoBehaviour
         // Move the pitch so the rigidly-attached camera eye lands exactly on the safe point.
         cameraPitchTransform.position += safe - desired;
 
-        if (hideOwnBodyWhenClose)
+        if (hideOwnBodyWhileHeld && ragdollController.IsHeld)
+            SetBodyHidden(true);
+        else if (hideOwnBodyWhenClose)
             SetBodyHidden(NearestOwnColliderDistance(safe) < bodyHideDistance);
+        else if (_bodyHidden)
+            SetBodyHidden(false);
 
         if (debugLog && Time.frameCount % 15 == 0)
             Debug.Log($"[RagdollCam] near={_cam.nearClipPlane:F3} r={_radius:F3} desired.y={desired.y:F2} safe.y={safe.y:F2} dy={(safe.y - desired.y):F2} buried={IsBuried(safe)}", this);

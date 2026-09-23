@@ -294,7 +294,7 @@ public class DecoyGrenade : NetworkBehaviour
 
         if (logLureDecisions)
             Debug.Log($"[Decoy] pulse at {target} | candidates={s_lurables.Count} " +
-                      $"(clowns={ClownAIRegistry.All.Count} jailors={JailorAIRegistry.All.Count} guards={SecurityGuardAIRegistry.All.Count})", this);
+                      $"(clowns={ClownAIRegistry.All.Count} jailors={JailorAIRegistry.All.Count} guards={SecurityGuardAIRegistry.All.Count} bombers={BomberAIRegistry.All.Count})", this);
 
         float r2 = hearingRadius * hearingRadius;
         for (int i = 0; i < s_lurables.Count; i++)
@@ -386,7 +386,7 @@ public class DecoyGrenade : NetworkBehaviour
     }
 
     /// <summary>
-    /// The three hunters a decoy works on. Null-checked as concrete types, never as the interface: a
+    /// The four enemy types a decoy works on. Null-checked as concrete types, never as the interface: a
     /// destroyed MonoBehaviour compares false to null through an interface reference, so an interface-typed
     /// null check would happily call into a dead object.
     /// </summary>
@@ -414,6 +414,14 @@ public class DecoyGrenade : NetworkBehaviour
             SecurityGuardAI g = guards[i];
             if (g != null)
                 into.Add(g);
+        }
+
+        IReadOnlyList<BomberAI> bombers = BomberAIRegistry.All;
+        for (int i = 0; i < bombers.Count; i++)
+        {
+            BomberAI b = bombers[i];
+            if (b != null)
+                into.Add(b);
         }
     }
 

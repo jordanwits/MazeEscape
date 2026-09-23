@@ -8,6 +8,8 @@ using UnityEditor;
 /// procedurally built maze piece, so every peer owns its own copy of these transforms and the spawned
 /// <see cref="ElevatorFinishController"/> replicates the open/closed state and calls <see cref="SetOpen"/> on all
 /// of them. Nothing here is networked — do not add a NetworkObject to a maze piece (nested spawns are dropped).
+/// An arrival cab (a level's start elevator) has no controller and opens itself once instead — see
+/// <see cref="OpensOnArrival"/>.
 /// </summary>
 [DisallowMultipleComponent]
 public class ElevatorSlidingDoors : MonoBehaviour
@@ -36,6 +38,13 @@ public class ElevatorSlidingDoors : MonoBehaviour
     [SerializeField] AudioClip doorCloseClip;
     [SerializeField, Range(0f, 1f)] float doorVolume = 0.8f;
 
+    [Header("Arrival")]
+    [Tooltip(
+        "Arrival cab (a level's start elevator): open the doors on their own this many seconds after the cab spawns. "
+        + "0 = never, for an exit cab that stays shut until its ElevatorFinishController opens it. One-way and local, so "
+        + "every peer opens its own copy with nothing to replicate, and the cab's pads stop responding.")]
+    [SerializeField, Min(0f)] float openOnArrivalDelay;
+
     struct Leaf
     {
         public Transform Transform;
@@ -52,6 +61,8 @@ public class ElevatorSlidingDoors : MonoBehaviour
     bool _open;
     /// <summary>0 = closed, 1 = fully open.</summary>
     float _t;
+    /// <summary>Seconds left before the arrival open; negative when none is pending.</summary>
+    float _arrivalCountdown = -1f;
     AudioSource _sfx;
 
     /// <summary>Target state: true once an open has been requested, false from the moment a close starts.</summary>
@@ -63,10 +74,19 @@ public class ElevatorSlidingDoors : MonoBehaviour
     /// <summary>Closed and settled — the elevator run may complete.</summary>
     public bool IsClosedAndIdle => !_open && _t == 0f;
 
+    /// <summary>
+    /// An arrival cab opens itself once and is never closed, so nothing may drive it — its pads ignore presses
+    /// (see <see cref="ElevatorCallButton"/>) rather than shut the doors on the players who spawned inside.
+    /// </summary>
+    public bool OpensOnArrival => openOnArrivalDelay > 0f;
+
     void Awake()
     {
         CacheLeaves();
         ApplyPose();
+
+        if (OpensOnArrival)
+            _arrivalCountdown = openOnArrivalDelay;
     }
 
     void CacheLeaves()
@@ -148,6 +168,15 @@ public class ElevatorSlidingDoors : MonoBehaviour
 
     void Update()
     {
+        if (_arrivalCountdown >= 0f)
+        {
+            // Clamped: the cab spawns inside the maze build, whose frame can run for seconds, and an unclamped
+            // real-time step would spend the whole delay before anyone has seen the doors.
+            _arrivalCountdown -= Mathf.Min(Time.unscaledDeltaTime, 0.1f);
+            if (_arrivalCountdown < 0f)
+                SetOpen(true, immediate: false);
+        }
+
         float target = _open ? 1f : 0f;
         if (_t == target)
             return;

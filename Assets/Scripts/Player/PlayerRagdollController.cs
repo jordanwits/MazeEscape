@@ -77,6 +77,14 @@ public class PlayerRagdollController : MonoBehaviour
     Transform _getUpRightFoot;
     float _getUpLeftSole;
     float _getUpRightSole;
+    // Floor under the body when the current get-up began; foot planting only searches around it.
+    float _getUpGroundY;
+
+    // How far above / below that floor the get-up foot planting looks for the surface under each foot.
+    const float GetUpFloorSearchAbove = 0.75f;
+    const float GetUpFloorSearchBelow = 1f;
+
+    int _groundSnapMask = -1;
 
     public bool IsRagdolled { get; private set; }
     public bool IsGettingUp { get; private set; }
@@ -118,6 +126,7 @@ public class PlayerRagdollController : MonoBehaviour
     bool _isHeld;
     bool _heldRigid;
     Transform _heldTarget;
+    Transform _heldLookTarget;
     Vector3 _heldLocalPos;
     Quaternion _heldLocalRot;
     RigidbodyInterpolation _hipsInterpolationBeforeHold;
@@ -129,9 +138,15 @@ public class PlayerRagdollController : MonoBehaviour
     bool _heldApproaching;
     public bool IsHeld => _isHeld;
 
-    /// <summary>The transform the victim is pinned to while held (the enemy's grab bone), or null. Used by the
-    /// camera path to aim a held victim's view at the grabber instead of at the rolled head bone.</summary>
+    /// <summary>The transform the victim is pinned to while held (the enemy's grab bone), or null.</summary>
     public Transform HeldTarget => _heldTarget;
+
+    /// <summary>
+    /// What a held victim's view locks onto: the grabber's head when its rig is humanoid, else the grab bone. The
+    /// grab bone is the wrong thing to stare at when the grip is at arm's length — the Mutant's hand sits at the
+    /// victim's own hips, so the view looked straight down their own (headless) body.
+    /// </summary>
+    public Transform HeldLookTarget => _heldLookTarget != null ? _heldLookTarget : _heldTarget;
 
     /// <summary>
     /// The hips/pelvis transform — the heavy central bone the physics engine keeps inside the level.
@@ -336,6 +351,10 @@ public class PlayerRagdollController : MonoBehaviour
         SetRagdollPhysicsActive(false); // bodies kinematic, bone colliders off — rigid frozen pose
 
         _heldTarget = target;
+        Animator grabberAnimator = target.GetComponentInParent<Animator>();
+        _heldLookTarget = grabberAnimator != null && grabberAnimator.isHuman
+            ? grabberAnimator.GetBoneTransform(HumanBodyBones.Head)
+            : null;
         _heldLocalPos = localPosOffset;
         _heldLocalRot = localRotOffset;
         _isHeld = true;
@@ -367,6 +386,7 @@ public class PlayerRagdollController : MonoBehaviour
         _isHeld = false;
         _heldRigid = false;
         _heldTarget = null;
+        _heldLookTarget = null;
         _heldApproaching = false;
 
         if (hipsRigidbody != null)
@@ -374,13 +394,16 @@ public class PlayerRagdollController : MonoBehaviour
 
         // Snap the still-rigid body to the validated safe release position (passed by the enemy) BEFORE it
         // goes limp, so the ragdoll never starts embedded in / beyond a wall (which dropped the player out of
-        // the map). The body is rigid here, so moving the hips translates the whole skeleton with it.
+        // the map). Move the hips TRANSFORM: every other bone is its child and still kinematic, so the whole
+        // frozen skeleton comes along, and SyncTransforms hands each bone's new pose to physics. Writing only the
+        // hips Rigidbody left the limbs behind for the joints to yank back together as the body went limp —
+        // measured ~25 m/s bone speeds for a 1.5 m snap and ~44 m/s for 3 m.
         if (wasRigid && hipsRigidbody != null)
         {
-            Vector3 delta = worldForcePosition - hipsRigidbody.position;
-            if (delta.sqrMagnitude > 1e-6f)
+            Transform hips = hipsRigidbody.transform;
+            if ((worldForcePosition - hips.position).sqrMagnitude > 1e-6f)
             {
-                hipsRigidbody.position = worldForcePosition;
+                hips.position = worldForcePosition;
                 Physics.SyncTransforms();
             }
         }
@@ -391,6 +414,7 @@ public class PlayerRagdollController : MonoBehaviour
         {
             IsRagdolled = true;
             SetRagdollPhysicsActive(true); // all bodies dynamic (incl. hips) + colliders on
+            LiftReleasedBodyClearOfFloor();
         }
         else if (hipsRigidbody != null)
         {
@@ -422,6 +446,38 @@ public class PlayerRagdollController : MonoBehaviour
             _landRecoverRoutine = StartCoroutine(LandRecoverWhenStillRoutine());
     }
 
+    /// <summary>
+    /// Lifts the just-released body until its lowest bone collider clears the floor under the hips. The body keeps
+    /// the orientation it was held in, so a release point that is right for one held pose can bury another (a
+    /// client's copy of the enemy's hand can be a few frames off the server's), and a limb starting inside the floor
+    /// slab is thrown out at 30-40 m/s. Colliders are live here, so their bounds are exact.
+    /// </summary>
+    void LiftReleasedBodyClearOfFloor()
+    {
+        if (hipsRigidbody == null)
+            return;
+
+        Transform hips = hipsRigidbody.transform;
+        if (!Physics.Raycast(hips.position + Vector3.up * 0.5f, Vector3.down, out RaycastHit floor, groundSnapRayLength,
+                GroundSnapMask, QueryTriggerInteraction.Ignore))
+            return;
+
+        float lowest = float.PositiveInfinity;
+        for (int i = 0; i < _ragdollColliders.Count; i++)
+        {
+            Collider col = _ragdollColliders[i];
+            if (col != null && col.enabled)
+                lowest = Mathf.Min(lowest, col.bounds.min.y);
+        }
+
+        float lift = floor.point.y + 0.02f - lowest;
+        if (lift > 0f && !float.IsInfinity(lift))
+        {
+            hips.position += Vector3.up * lift;
+            Physics.SyncTransforms();
+        }
+    }
+
     void ClearHeldState()
     {
         if (!_isHeld)
@@ -430,6 +486,7 @@ public class PlayerRagdollController : MonoBehaviour
         _isHeld = false;
         _heldRigid = false;
         _heldTarget = null;
+        _heldLookTarget = null;
         _heldApproaching = false;
         if (hipsRigidbody != null)
             hipsRigidbody.interpolation = _hipsInterpolationBeforeHold;
@@ -813,6 +870,31 @@ public class PlayerRagdollController : MonoBehaviour
         hipsRigidbody.position = worldPos;
     }
 
+    /// <summary>
+    /// <see cref="groundLayers"/> minus every character layer, for the stand-up snaps. They look for the floor under
+    /// the body, and an enemy or another player standing over the victim is not somewhere to stand up on: the get-up
+    /// planted a victim on top of the Mutant's capsule, and from that height the next ray began above the corridor's
+    /// ceiling slab and put them on the roof of the maze.
+    /// </summary>
+    int GroundSnapMask
+    {
+        get
+        {
+            if (_groundSnapMask != -1)
+                return _groundSnapMask;
+
+            int mask = groundLayers.value;
+            foreach (string layer in new[] { "Player", "Enemy", "Jailor", "Clown" })
+            {
+                int index = LayerMask.NameToLayer(layer);
+                if (index >= 0)
+                    mask &= ~(1 << index);
+            }
+            _groundSnapMask = mask;
+            return mask;
+        }
+    }
+
     void SnapToGroundForGetUp()
     {
         if (hipsRigidbody == null)
@@ -821,7 +903,7 @@ public class PlayerRagdollController : MonoBehaviour
         // Find where the ground is under the hips
         Vector3 sample = hipsRigidbody.position + Vector3.up * 0.5f;
         float groundY = hipsRigidbody.position.y - 0.5f;
-        if (Physics.Raycast(sample, Vector3.down, out RaycastHit hit, groundSnapRayLength, groundLayers, QueryTriggerInteraction.Ignore))
+        if (Physics.Raycast(sample, Vector3.down, out RaycastHit hit, groundSnapRayLength, GroundSnapMask, QueryTriggerInteraction.Ignore))
         {
             groundY = hit.point.y;
         }
@@ -844,7 +926,7 @@ public class PlayerRagdollController : MonoBehaviour
             return;
 
         Vector3 sample = transform.position + Vector3.up * 0.5f;
-        if (Physics.Raycast(sample, Vector3.down, out RaycastHit hit, groundSnapRayLength, groundLayers, QueryTriggerInteraction.Ignore))
+        if (Physics.Raycast(sample, Vector3.down, out RaycastHit hit, groundSnapRayLength, GroundSnapMask, QueryTriggerInteraction.Ignore))
         {
             float halfHeight = characterController.height * 0.5f;
             float centerY = characterController.center.y;
@@ -869,7 +951,7 @@ public class PlayerRagdollController : MonoBehaviour
     bool TrySampleGroundBelow(out float groundHitY)
     {
         Vector3 sample = transform.position + Vector3.up * 0.5f;
-        if (Physics.Raycast(sample, Vector3.down, out RaycastHit hit, groundSnapRayLength, groundLayers, QueryTriggerInteraction.Ignore))
+        if (Physics.Raycast(sample, Vector3.down, out RaycastHit hit, groundSnapRayLength, GroundSnapMask, QueryTriggerInteraction.Ignore))
         {
             groundHitY = hit.point.y;
             return true;
@@ -879,13 +961,20 @@ public class PlayerRagdollController : MonoBehaviour
         return false;
     }
 
+    /// <summary>
+    /// Floor height under a foot during the get-up, searched only within a step of the floor the body was lying on
+    /// (<see cref="_getUpGroundY"/>). This runs every frame of the get-up and moves the root, so it must never find
+    /// anything far from that floor: the ray used to start 4 m above the root and hit every layer, so an enemy
+    /// standing over the victim lifted them onto its head, and from there the next frame's ray began above the
+    /// corridor's 1 m ceiling slab and planted them on the roof of the maze.
+    /// </summary>
     float GetGroundYUnderWorldXZ(Vector3 worldPos)
     {
-        float rayTop = Mathf.Max(worldPos.y + 2.5f, transform.position.y + 4f);
-        Vector3 origin = new Vector3(worldPos.x, rayTop, worldPos.z);
-        if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, 40f, groundLayers, QueryTriggerInteraction.Ignore))
+        Vector3 origin = new Vector3(worldPos.x, _getUpGroundY + GetUpFloorSearchAbove, worldPos.z);
+        if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, GetUpFloorSearchAbove + GetUpFloorSearchBelow,
+                GroundSnapMask, QueryTriggerInteraction.Ignore))
             return hit.point.y;
-        return TrySampleGroundBelow(out float gy) ? gy : transform.position.y;
+        return _getUpGroundY;
     }
 
     void ApplyGetUpFootPlanting()
@@ -948,8 +1037,9 @@ public class PlayerRagdollController : MonoBehaviour
 
         float groundY = transform.position.y;
         Vector3 sample = hipsRigidbody != null ? hipsRigidbody.position + Vector3.up * 0.5f : transform.position + Vector3.up * 0.5f;
-        if (Physics.Raycast(sample, Vector3.down, out RaycastHit hit, groundSnapRayLength, groundLayers, QueryTriggerInteraction.Ignore))
+        if (Physics.Raycast(sample, Vector3.down, out RaycastHit hit, groundSnapRayLength, GroundSnapMask, QueryTriggerInteraction.Ignore))
             groundY = hit.point.y;
+        _getUpGroundY = groundY;
 
         // Position at ground level for animation start
         transform.position = new Vector3(transform.position.x, groundY + getUpGroundOffset, transform.position.z);
