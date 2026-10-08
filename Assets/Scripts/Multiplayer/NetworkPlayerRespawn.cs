@@ -2,6 +2,15 @@ using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
 
+/// <summary>
+/// Server-authoritative life state for one player, plus the placement moves that must go through the owner
+/// (level-start spawn, teleport orb).
+///
+/// Death is permanent for the rest of the section: the body stays down where it fell and the owner drops into
+/// <see cref="PlayerSpectatorCamera"/>. Nothing in this section brings them back — every section switch
+/// replaces the avatar with a fresh one (see <see cref="LevelCarryOverStore"/>), and that new avatar is what
+/// returns a dead player to the run. When the last living player dies, <see cref="TeamWipeDirector"/> ends it.
+/// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(NetworkObject))]
 [RequireComponent(typeof(PlayerHealth))]
@@ -21,9 +30,6 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     // value can only ever come from the authoritative server write.
     readonly NetworkVariable<float> _currentHealth = new(0f);
 
-    MultiplayerProjectSettings _projectSettings;
-    Coroutine _respawnRoutine;
-    Coroutine _remoteRespawnResyncRoutine;
     OwnerNetworkTransform _ownerNetworkTransform;
     float _ignorePitKillsUntil;
 
@@ -42,7 +48,18 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         if (_ownerNetworkTransform == null)
             _ownerNetworkTransform = GetComponent<OwnerNetworkTransform>();
 
-        _projectSettings = Resources.Load<MultiplayerProjectSettings>("MultiplayerProjectSettings");
+        // No-session play mode (a level scene entered straight from the editor) never spawns this, so the
+        // networked death path below never runs there. That lone player's death is still a team wipe.
+        if (playerHealth != null)
+            playerHealth.Died += HandlePlayerDiedWithoutSession;
+    }
+
+    public override void OnDestroy()
+    {
+        if (playerHealth != null)
+            playerHealth.Died -= HandlePlayerDiedWithoutSession;
+
+        base.OnDestroy();
     }
 
     public override void OnNetworkSpawn()
@@ -90,7 +107,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         // server seated on this avatar (see LevelCarryOverStore); healing locally on the owner would leave that
         // client showing full health against a server that still has them wounded, and _currentHealth never
         // changes again to correct it.
-        RespawnOwnerClientRpc(spawnPosition, spawnRotation, false, new ClientRpcParams
+        TeleportOwnerClientRpc(spawnPosition, spawnRotation, new ClientRpcParams
         {
             Send = new ClientRpcSendParams
             {
@@ -103,7 +120,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     /// Server-authoritative teleport of THIS player to an already-validated destination (e.g. from a
     /// <see cref="TeleportOrb"/>). Mirrors <see cref="ApplyInitialSpawn"/> — applies on the server for
     /// coherence and tells the owning client (the OwnerNetworkTransform authority) to perform the move —
-    /// but does NOT heal the player. No-op if the player is dead/respawning.
+    /// but does NOT heal the player. No-op if the player is dead.
     /// </summary>
     public void ServerTeleport(Vector3 position, Quaternion rotation)
     {
@@ -130,7 +147,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     [ClientRpc]
     void TeleportOwnerClientRpc(Vector3 position, Quaternion rotation, ClientRpcParams clientRpcParams = default)
     {
-        // The host already applied the move in ServerTeleport; only remote owners run it here.
+        // The host already applied the move on the server side; only remote owners run it here.
         if (IsServer)
             return;
 
@@ -139,7 +156,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
 
     /// <summary>
     /// Offline / non-networked teleport: moves the local player directly using the same
-    /// CharacterController-safe path as respawn. Used when no netcode session is active.
+    /// CharacterController-safe path as the spawn placement. Used when no netcode session is active.
     /// </summary>
     public void LocalTeleport(Vector3 position, Quaternion rotation)
     {
@@ -151,6 +168,24 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         return IsSpawned && Time.time < _ignorePitKillsUntil;
     }
 
+    /// <summary>
+    /// Server: the team is wiped. Sent through this player's object only because a spawned NetworkBehaviour
+    /// is needed to reach every peer; every peer — the host included — runs its own exit sequence.
+    /// </summary>
+    public void ServerBroadcastTeamWipe()
+    {
+        if (!IsServer || !IsSpawned)
+            return;
+
+        TeamWipeRpc();
+    }
+
+    [Rpc(SendTo.ClientsAndHost)]
+    void TeamWipeRpc()
+    {
+        TeamWipeSequence.Begin();
+    }
+
     void HandlePlayerDied()
     {
         if (!IsServer || _isDead.Value)
@@ -158,18 +193,26 @@ public class NetworkPlayerRespawn : NetworkBehaviour
 
         networkPlayerInventory?.ServerDropAllHeldOnDeath();
         // A heavy throwable (booth ball / ring) is carried outside the hotbar via a replicated holder id, so
-        // the slot sweep above cannot reach it. Left held, the corpse keeps the id through respawn: the booth
-        // round never sees its prop released, and the respawned player's whole hotbar stays force-stashed.
+        // the slot sweep above cannot reach it. Left held, the corpse keeps the id for the rest of the section:
+        // the booth round never sees its prop released and nobody else can pick it up.
         NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(NetworkObjectId)?.ServerForceReleaseForHolderDeath();
         _isDead.Value = true;
 
         NetworkPlayerRagdoll netRagdoll = GetComponent<NetworkPlayerRagdoll>();
         netRagdoll?.NotifyDeathRagdollFromServer();
 
-        if (_respawnRoutine != null)
-            StopCoroutine(_respawnRoutine);
+        // No respawn: the body stays down until the next section replaces this avatar. If that was the last
+        // living player, the run is over.
+        TeamWipeDirector.ServerEvaluate();
+    }
 
-        _respawnRoutine = StartCoroutine(ServerRespawnRoutine());
+    void HandlePlayerDiedWithoutSession()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm != null && nm.IsListening)
+            return;
+
+        TeamWipeDirector.EvaluateWithoutSession();
     }
 
     void HandlePlayerHealthChanged()
@@ -181,79 +224,9 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         _isDead.Value = playerHealth.IsDead;
     }
 
-    IEnumerator ServerRespawnRoutine()
-    {
-        float delaySeconds = _projectSettings != null ? Mathf.Max(0f, _projectSettings.RespawnDelaySeconds) : 3f;
-        if (delaySeconds > 0f)
-            yield return new WaitForSeconds(delaySeconds);
-
-        Vector3 respawnPosition = _projectSettings != null ? _projectSettings.LevelStartPosition : transform.position;
-        Quaternion respawnRotation = _projectSettings != null ? _projectSettings.LevelStartRotation : transform.rotation;
-        if (MultiplayerSpawnRegistry.Instance != null
-            && MultiplayerSpawnRegistry.Instance.TryGetRespawnSpawn(out Vector3 registryPosition, out Quaternion registryRotation))
-        {
-            respawnPosition = registryPosition;
-            respawnRotation = registryRotation;
-        }
-
-        BeginRespawnPitKillGrace();
-        playerHealth?.RestoreFullHealth();
-        _isDead.Value = false;
-
-        GetComponent<NetworkPlayerRagdoll>()?.ForceExitRagdollFromServer();
-        ApplyRespawnTransform(respawnPosition, respawnRotation);
-
-        RespawnOwnerClientRpc(respawnPosition, respawnRotation, true, new ClientRpcParams
-        {
-            Send = new ClientRpcSendParams
-            {
-                TargetClientIds = new[] { OwnerClientId }
-            }
-        });
-
-        _respawnRoutine = null;
-    }
-
-    [ClientRpc]
-    void RespawnOwnerClientRpc(Vector3 respawnPosition, Quaternion respawnRotation, bool restoreFullHealth, ClientRpcParams clientRpcParams = default)
-    {
-        if (IsServer)
-            return;
-
-        if (restoreFullHealth)
-            playerHealth?.RestoreFullHealth();
-
-        ApplyRespawnTransform(respawnPosition, respawnRotation);
-    }
-
     void HandleDeadStateChanged(bool previousValue, bool currentValue)
     {
         ApplyHealthState(_currentHealth.Value, currentValue);
-
-        // A REMOTE player's respawn only reaches this machine as the dead flag clearing plus a teleported
-        // transform state; the local sweep below never runs for them (it is owner-gated). Re-seat this one
-        // avatar's observer transform so it does not stay parked at the death spot until they move again.
-        if (!previousValue || currentValue || IsOwner || !isActiveAndEnabled)
-            return;
-
-        if (_remoteRespawnResyncRoutine != null)
-            StopCoroutine(_remoteRespawnResyncRoutine);
-        _remoteRespawnResyncRoutine = StartCoroutine(ResyncThisObserverTransformAfterRemoteRespawn());
-    }
-
-    IEnumerator ResyncThisObserverTransformAfterRemoteRespawn()
-    {
-        // Same repeat as the owner-side sweep: the respawn settles over a couple of frames (ragdoll exit,
-        // life-state replication, the teleported transform state landing).
-        for (int i = 0; i < 3; i++)
-        {
-            if (_ownerNetworkTransform != null)
-                _ownerNetworkTransform.SnapObserverToLatestNetworkState();
-            yield return null;
-        }
-
-        Physics.SyncTransforms();
-        _remoteRespawnResyncRoutine = null;
     }
 
     void HandleCurrentHealthChanged(float previousValue, float currentValue)
@@ -302,12 +275,12 @@ public class NetworkPlayerRespawn : NetworkBehaviour
                 characterController.enabled = true;
         }
 
-        // After THIS client's own player respawns (ragdoll exit + CharacterController teleport above), the
+        // After THIS client's own player is placed (ragdoll exit + CharacterController teleport above), the
         // OwnerNetworkTransform interpolators for every OTHER (remote) player on this client can be left seated at a
         // stale Y, so remote players render "floating" above the ground even though they are grounded on their own
         // machines. Re-seat every observer transform to its latest replicated state — the same resync
         // ProceduralMazeCoordinator applies after a maze build. Gated on IsOwner so it only runs on the client whose
-        // local player actually respawned.
+        // local player actually moved.
         if (IsOwner && isActiveAndEnabled)
             StartCoroutine(ResyncRemoteObserverTransformsAfterRespawn());
     }
@@ -315,7 +288,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     IEnumerator ResyncRemoteObserverTransformsAfterRespawn()
     {
         // Repeat over a couple of frames so it corrects the stale interpolation whenever it settles during the
-        // respawn transition (ragdoll exit, health/life-state replication, CharacterController re-enable).
+        // placement transition (ragdoll exit, health/life-state replication, CharacterController re-enable).
         for (int i = 0; i < 3; i++)
         {
             ResnapRemoteObserverTransforms();

@@ -38,6 +38,7 @@ public class NetworkPlayerVoice : NetworkBehaviour
     RemoteVoiceOutput _remoteOutput;
     /// <summary>Cached because <see cref="_networkObject"/> is gone by the time we unsubscribe.</summary>
     ulong _voiceOwnerClientId;
+    PlayerHealth _speakerHealth;
 
     public override void OnNetworkSpawn()
     {
@@ -63,6 +64,8 @@ public class NetworkPlayerVoice : NetworkBehaviour
             if (anchor == null)
                 anchor = transform;
             _remoteOutput = new RemoteVoiceOutput(anchor.gameObject, minHearingDistance, maxHearingDistance);
+            _speakerHealth = GetComponent<PlayerHealth>();
+            UpdateGhostVoice();
 
             // This player's slot in the local voice mix (lobby crew card); survives the level switch.
             ApplyVoiceMix();
@@ -101,8 +104,13 @@ public class NetworkPlayerVoice : NetworkBehaviour
 
     void Update()
     {
-        if (!IsSpawned || !IsOwner)
+        if (!IsSpawned)
             return;
+        if (!IsOwner)
+        {
+            UpdateGhostVoice();
+            return;
+        }
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
             return;
         if (string.IsNullOrEmpty(_micDevice) || _micClip == null)
@@ -112,6 +120,17 @@ public class NetworkPlayerVoice : NetworkBehaviour
         if (!Microphone.IsRecording(_micDevice))
             return;
         PullMicAndSend();
+    }
+
+    /// <summary>
+    /// A dead speaker's frames only ever reach dead listeners (the server filters them — see
+    /// <see cref="ProximityVoiceSession"/>), and those listeners are spectating somewhere else entirely, so the
+    /// voice is played flat instead of from the body. Polled rather than evented: replicated life state only
+    /// raises <see cref="PlayerHealth.Died"/> on clients, never the way back.
+    /// </summary>
+    void UpdateGhostVoice()
+    {
+        _remoteOutput?.SetGhost(_speakerHealth != null && _speakerHealth.IsDead);
     }
 
     void TryWirePushToTalk()
@@ -270,6 +289,14 @@ public class NetworkPlayerVoice : NetworkBehaviour
             var clip = AudioClip.Create("ProximityVoice", SampleRate * 2, 1, SampleRate, true, PcmRead);
             _source.clip = clip;
             _source.Play();
+        }
+
+        /// <summary>Ghost (dead speaker): non-positional, so the audio occlusion pass leaves it transparent too.</summary>
+        public void SetGhost(bool ghost)
+        {
+            float blend = ghost ? 0f : 1f;
+            if (_source != null && !Mathf.Approximately(_source.spatialBlend, blend))
+                _source.spatialBlend = blend;
         }
 
         /// <summary>Per-player trim on top of the Voice mixer bus; 0 = muted for this listener only.</summary>

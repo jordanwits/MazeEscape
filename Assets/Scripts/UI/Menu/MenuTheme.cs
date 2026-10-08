@@ -31,6 +31,26 @@ public static class MenuTheme
     public static readonly Color BloodBright = Hex("C75A50");
     public static readonly Color Moss = Hex("8C9C5A");          // ready / positive
 
+    /// <summary>
+    /// One identity colour per crew slot (lobby character index), for anything that has to tell players apart
+    /// at a glance — e.g. the game-over trail map. Kept in the palette's weathered register but pulled apart in
+    /// hue (orange / green / blue / violet) and brighter than the accents, since they are drawn as thin lines
+    /// over dark plates.
+    /// </summary>
+    public static readonly Color[] PlayerColors =
+    {
+        Hex("E0914F"),
+        Hex("A7BD64"),
+        Hex("6FA6CF"),
+        Hex("B985D0"),
+    };
+
+    /// <summary>
+    /// Teleporter marks (the portal swirl on the game-over map). A saturated electric blue, kept deeper and
+    /// stronger than the third crew colour's soft steel blue so a mark never reads as somebody's line.
+    /// </summary>
+    public static readonly Color TeleporterBlue = Hex("2F86FF");
+
     public static Color WithAlpha(Color c, float a)
     {
         c.a = a;
@@ -510,6 +530,62 @@ public static class MenuTheme
                     }
 
                     float a = Mathf.Clamp01(0.5f - d / 1.25f);
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+
+            tex.SetPixels32(px);
+            tex.Apply(false, false);
+            return ToSprite(tex, Vector4.zero);
+        });
+    }
+
+    /// <summary>
+    /// Teleporter glyph: a portal swirl, two turns of a spiral winding in to the centre — the in-game orb is a
+    /// swirling energy shell, and a spiral still reads as "portal" at map-marker sizes. Distance is taken
+    /// radially to the nearest turn (the turns are far apart relative to their curvature), with round caps at
+    /// both ends; same 1.25px AA edge as <see cref="Circle"/>. Tint via Image.color.
+    /// </summary>
+    public static Sprite PortalIcon()
+    {
+        return CacheSprite("portal", () =>
+        {
+            const int size = 128;
+            const float innerRadius = 9f;
+            const float outerRadius = 56f;
+            const float turns = 2f;
+            const float halfBand = 6.5f;
+            float sweep = turns * 2f * Mathf.PI;
+            float half = size * 0.5f;
+
+            Vector2 center = new(half, half);
+            Vector2 innerEnd = center + new Vector2(innerRadius, 0f);
+            Vector2 outerEnd = center + new Vector2(outerRadius, 0f);
+
+            Texture2D tex = NewTexture(size, size);
+            var px = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    Vector2 pt = new(x + 0.5f, y + 0.5f);
+                    Vector2 rel = pt - center;
+                    float r = rel.magnitude;
+                    float angle = Mathf.Atan2(rel.y, rel.x);
+                    if (angle < 0f)
+                        angle += 2f * Mathf.PI;
+
+                    float d = Mathf.Min((pt - innerEnd).magnitude, (pt - outerEnd).magnitude);
+                    for (int k = 0; k <= Mathf.CeilToInt(turns); k++)
+                    {
+                        float theta = angle + k * 2f * Mathf.PI;
+                        if (theta > sweep)
+                            break;
+                        float spiralRadius = Mathf.Lerp(innerRadius, outerRadius, theta / sweep);
+                        d = Mathf.Min(d, Mathf.Abs(r - spiralRadius));
+                    }
+
+                    float a = Mathf.Clamp01(0.5f - (d - halfBand) / 1.25f);
                     px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
                 }
             }

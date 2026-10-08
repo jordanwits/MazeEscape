@@ -122,8 +122,9 @@ public static class LevelCarryOverStore
         PlayerHealth health = playerObject.GetComponent<PlayerHealth>();
         if (health != null)
         {
-            // A dead player is mid-respawn and will come back at full health anyway; never carry a corpse
-            // (0 HP) into the next section, where nothing would revive them.
+            // Death lasts until the section ends, and this switch is what ends it: a player who died in the
+            // section being left comes back in the next one at full health (their hotbar was already dropped
+            // where they fell). Never carry a corpse (0 HP) across — nothing over there would revive them.
             state.Health = health.IsDead ? health.MaxHealth : health.CurrentHealth;
         }
 

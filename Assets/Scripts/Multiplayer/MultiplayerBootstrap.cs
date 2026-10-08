@@ -64,6 +64,9 @@ public class MultiplayerBootstrap : MonoBehaviour
 
         if (!TryGetComponent(out ProximityVoiceSession _))
             gameObject.AddComponent<ProximityVoiceSession>();
+
+        if (!TryGetComponent(out RunTrailRecorder _))
+            gameObject.AddComponent<RunTrailRecorder>();
     }
 
     void EnsureNetworkConfig(NetworkManager networkManager, UnityTransport transport)

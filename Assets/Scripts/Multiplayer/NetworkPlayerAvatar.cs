@@ -73,6 +73,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     bool _offlineSealedInJailCell;
     bool _isDormant;
     bool _isAlive = true;
+    /// <summary>The owner's view camera has left this body for <see cref="PlayerSpectatorCamera"/>.</summary>
+    bool _spectatorViewActive;
     SkinnedMeshRenderer[] _skinnedRenderers;
     bool _skinnedRenderersOffscreenForced;
     bool _localViewHeadHidden;
@@ -889,19 +891,23 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             }
         }
 
+        // The head is hidden only while the owner's camera actually sits inside it. A spectating owner is looking
+        // at the world from somewhere else, and their own body lying in it must not be headless.
+        bool viewedFromInside = isLocalOwner && !_spectatorViewActive;
+
         if (localViewShadowOnlyRenderers != null)
         {
             foreach (Renderer rendererComponent in localViewShadowOnlyRenderers)
             {
                 if (rendererComponent != null)
-                    rendererComponent.shadowCastingMode = isLocalOwner
+                    rendererComponent.shadowCastingMode = viewedFromInside
                         ? UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly
                         : UnityEngine.Rendering.ShadowCastingMode.On;
             }
         }
         // Only the local owner's head is ShadowsOnly (hidden from the FP camera) — that is the state a
         // mirror needs to temporarily undo so the reflection isn't headless. See OnMirrorReflectionPass.
-        _localViewHeadHidden = isLocalOwner
+        _localViewHeadHidden = viewedFromInside
             && localViewShadowOnlyRenderers != null
             && localViewShadowOnlyRenderers.Length > 0;
 
@@ -1127,6 +1133,20 @@ public class NetworkPlayerAvatar : NetworkBehaviour
                     rendererComponent.enabled = true;
             }
         }
+
+        ApplyPresentation(ResolveLocalOwnerForPresentation());
+    }
+
+    /// <summary>Owner-side: <see cref="PlayerSpectatorCamera"/> took the view camera out of (or back into) this body.</summary>
+    public void SetSpectatorViewActive(bool active)
+    {
+        if (_spectatorViewActive == active)
+            return;
+
+        _spectatorViewActive = active;
+
+        if (_isDormant)
+            return;
 
         ApplyPresentation(ResolveLocalOwnerForPresentation());
     }

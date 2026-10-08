@@ -186,11 +186,17 @@ public class MazeEnvironmentZone : MonoBehaviour
 
     bool IsLocalPlayerInside()
     {
-        PlayerController local = ResolveLocalPlayer();
-        if (local == null)
-            return false;
+        // A dead player spectating someone sees that player's surroundings, so the zone follows them instead.
+        Vector3 position;
+        if (!PlayerSpectatorCamera.TryGetLocalSpectatedPosition(out position))
+        {
+            PlayerController local = ResolveLocalPlayer();
+            if (local == null)
+                return false;
+            position = local.transform.position;
+        }
 
-        Vector3 localPoint = transform.InverseTransformPoint(local.transform.position) - volumeCenter;
+        Vector3 localPoint = transform.InverseTransformPoint(position) - volumeCenter;
         Vector3 half = volumeSize * 0.5f;
         return Mathf.Abs(localPoint.x) <= half.x
             && Mathf.Abs(localPoint.y) <= half.y

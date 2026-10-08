@@ -71,7 +71,7 @@ public partial class PlayerController : MonoBehaviour
     [Tooltip("Outside pad of a key-locked exit cab (Level02) while the player IS carrying the Clown's key.")]
     [SerializeField] string elevatorUnlockPromptMessage = "Press E to unlock the elevator";
     [Tooltip("Outside pad of a key-locked exit cab while the player is NOT carrying the Clown's key.")]
-    [SerializeField] string elevatorLockedPromptMessage = "Locked - the Clown holds the key";
+    [SerializeField] string elevatorLockedPromptMessage = "Locked";
     [Tooltip("Outside pad of the exit cab while Level03's boss (the Mutant) is still alive.")]
     [SerializeField] string elevatorBossLockedPromptMessage = "Locked - it's still alive";
     [Tooltip("Shown on the cab's inside pad only when there is no occupancy gate to report (a detached dev-scene cab); the real finish elevator shows the N/M aboard count instead.")]
@@ -350,6 +350,7 @@ public partial class PlayerController : MonoBehaviour
     PlayerRagdollController _ragdollController;
     RagdollCameraCollision _ragdollCameraCollision;
     RagdollCameraDamper _ragdollCameraDamper;
+    PlayerSpectatorCamera _spectatorCamera;
     PlayerHealth _playerHealth;
 
     float _ragdollRecoverAnimatorSuppressUntil;
@@ -377,6 +378,19 @@ public partial class PlayerController : MonoBehaviour
     public Transform LookPitchTransform => cameraTransform;
     public bool UsesFirstPersonLook => firstPersonLook;
     public Transform CameraPitchNode => cameraPitchTransform;
+    /// <summary>Degrees per mouse-delta count; shared with <see cref="PlayerSpectatorCamera"/> so both views turn alike.</summary>
+    public float MouseLookSensitivity => mouseLookSensitivity;
+    /// <summary>Degrees per second at full stick deflection.</summary>
+    public float GamepadLookSensitivityDegrees => gamepadLookSensitivityDegrees;
+
+    /// <summary>
+    /// A dead player has no local control, so the control transitions never take the cursor back for them —
+    /// but spectating is mouse-driven. Same single gate as every other cursor write (<see cref="CanLockCursor"/>).
+    /// </summary>
+    public void CaptureCursorForSpectating() => ApplyCursorLock();
+
+    /// <summary>Spectator's click-to-recapture; true when the click was spent buying the cursor back.</summary>
+    public bool TryRecaptureCursorForSpectating() => TryRecaptureCursorOnClick();
 
     public void RestoreFullStamina()
     {
@@ -540,6 +554,11 @@ public partial class PlayerController : MonoBehaviour
         if (firstPersonLook && _ragdollController != null && _ragdollCameraDamper == null)
             _ragdollCameraDamper = gameObject.AddComponent<RagdollCameraDamper>();
 
+        // Death is permanent for the section: this takes the view camera off the corpse and onto a living teammate.
+        _spectatorCamera = GetComponent<PlayerSpectatorCamera>();
+        if (firstPersonLook && _spectatorCamera == null)
+            _spectatorCamera = gameObject.AddComponent<PlayerSpectatorCamera>();
+
         if (cameraPitchTransform == null)
         {
             foreach (Transform t in GetComponentsInChildren<Transform>(true))
@@ -611,7 +630,11 @@ public partial class PlayerController : MonoBehaviour
             _playerHealth.Restored -= HandlePlayerHealthStaminaReset;
         }
 
-        DetachCameraPitchFromHead();
+        // Not while the scene unloads (section switch, return to menu): the pitch node, the ragdoll proxy it rides
+        // and this avatar all go down together, and Unity refuses the hand-back mid-unload with an error. A dead
+        // player is on that proxy for the whole rest of the section now, so this is every switch, not a fluke.
+        if (gameObject.scene.isLoaded)
+            DetachCameraPitchFromHead();
         DisableInputActions();
         ReleaseCursor();
     }
@@ -2013,6 +2036,9 @@ public partial class PlayerController : MonoBehaviour
     bool ShouldRunDeadRagdollCameraUpdate()
     {
         if (_playerHealth == null || !_playerHealth.IsDead)
+            return false;
+        // Past the death cam the view camera belongs to the spectator, not the body's head.
+        if (_spectatorCamera != null && _spectatorCamera.IsSpectating)
             return false;
         if (_ragdollController == null || !_ragdollController.IsRagdolled)
             return false;

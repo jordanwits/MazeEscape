@@ -863,6 +863,9 @@ public class MultiplayerSessionController : MonoBehaviour
         {
             UnregisterLobbyClient(clientId);
             UpdateStatus($"Client {clientId} disconnected.");
+
+            // The last living player leaving with everyone else already dead loses the run just like dying would.
+            TeamWipeDirector.ServerEvaluate(clientId);
         }
     }
 

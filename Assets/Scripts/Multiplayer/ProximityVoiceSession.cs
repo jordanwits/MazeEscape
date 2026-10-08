@@ -148,9 +148,14 @@ public class ProximityVoiceSession : MonoBehaviour
         if (cmm == null)
             return;
         int payload = 8 + 2 + 2 + count * 2;
+        // Ghost chat: the dead are heard only by the dead (who play it non-positionally — see
+        // NetworkPlayerVoice). The living are heard by everyone, so a spectator still hears the player they watch.
+        bool senderDead = IsClientDead(nm, senderId);
         foreach (ulong clientId in nm.ConnectedClientsIds)
         {
             if (clientId == senderId)
+                continue;
+            if (senderDead && !IsClientDead(nm, clientId))
                 continue;
             using (FastBufferWriter w = new FastBufferWriter(payload, Allocator.Temp))
             {
@@ -166,6 +171,16 @@ public class ProximityVoiceSession : MonoBehaviour
                     NetworkDelivery.Unreliable);
             }
         }
+    }
+
+    /// <summary>Server-side: the client's player is spawned and dead (permanent until the next section).</summary>
+    static bool IsClientDead(NetworkManager nm, ulong clientId)
+    {
+        return nm.ConnectedClients.TryGetValue(clientId, out NetworkClient client)
+            && client != null
+            && client.PlayerObject != null
+            && client.PlayerObject.TryGetComponent(out PlayerHealth health)
+            && health.IsDead;
     }
 
     public static void SendVoiceFrameUp(ushort sequence, short[] samples, int count)

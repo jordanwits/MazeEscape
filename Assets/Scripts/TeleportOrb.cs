@@ -70,6 +70,9 @@ public class TeleportOrb : NetworkBehaviour
 
     public bool IsConsumed => IsSpawned ? _consumed.Value : _offlineConsumed;
 
+    /// <summary>How close (m) a player must be to use the orb.</summary>
+    public float InteractMaxDistance => interactMaxDistance;
+
     /// <summary>
     /// How long the player must hold to activate, from the Interact Hold Seconds slider. The crosshair ring
     /// fills and the interact SFX play over this time. Defaults to roughly the interact clip length.

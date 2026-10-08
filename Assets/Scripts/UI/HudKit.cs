@@ -32,6 +32,17 @@ public static class HudKit
         return canvas;
     }
 
+    /// <summary>
+    /// Shows or hides the whole in-game HUD at once (no-op before it exists). For full-screen moments that
+    /// replace gameplay, like the game-over card, where any HUD bleeding through would collide with the layout.
+    /// </summary>
+    public static void SetHudCanvasVisible(bool visible)
+    {
+        GameObject existing = GameObject.Find(CanvasName);
+        if (existing != null && existing.TryGetComponent(out Canvas canvas))
+            canvas.enabled = visible;
+    }
+
     /// <summary>Dark plate + bone frame behind a HUD element. Returns the frame for state tinting.</summary>
     public static Image AddPlate(GameObject go, float fillAlpha = 0.72f, float frameAlpha = 0.20f)
     {

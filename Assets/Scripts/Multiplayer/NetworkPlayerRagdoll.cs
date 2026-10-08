@@ -17,6 +17,12 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     // kinematic puppet. 20 Hz is fine-grained enough that the body looks continuous even during fast tumbles
     // and keeps bandwidth at ~6 KB/s per ragdolling player (~300 B / snapshot for 11 bones × pos+rot).
     const float RagdollPoseSyncIntervalSeconds = 0.05f;
+    // Death is permanent for the section, so a corpse is ragdolled until the level ends — streaming it at the
+    // full rate would cost ~6 KB/s per dead player for nothing once it has come to rest. A settled corpse
+    // keeps a slow keepalive instead: it is what a late joiner reconstructs the body from (the death snapshot
+    // only says "down", not where). Anything that moves the body again lifts it straight back to full rate.
+    const float SettledCorpsePoseSyncIntervalSeconds = 1f;
+    const float SettledCorpseHipsSpeed = 0.15f;
     // Observers interpolate between received pose snapshots over this window so motion looks smooth at render
     // rate (60+ fps) instead of stuttering at the 20 Hz send cadence. Matching the send interval means
     // observers reach the latest sample just as the next one arrives; if a sample is delayed by jitter, the
@@ -112,6 +118,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     Vector3[] _ownerPosBuffer;
     Quaternion[] _ownerRotBuffer;
     float _nextPoseSyncTime;
+    float _lastPoseSyncTime = float.NegativeInfinity;
 
     Vector3[] _observerPrevPos;
     Quaternion[] _observerPrevRot;
@@ -359,7 +366,8 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     }
 
     /// <summary>
-    /// Call from server when the player dies so the owning client runs ragdoll physics (no auto stand-up until respawn).
+    /// Call from server when the player dies so the owning client runs ragdoll physics. No auto stand-up: death is
+    /// permanent for the section, so the body stays down until the next section replaces the avatar.
     /// </summary>
     public void NotifyDeathRagdollFromServer()
     {
@@ -424,7 +432,7 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
             AllowAutoRecovery = (byte)(survived ? 1 : 0),
         };
 
-        // When the slam kills, the death flow owns recovery (stays down until respawn); don't auto-stand.
+        // When the slam kills, the body stays down for the rest of the section; don't auto-stand.
         ReleaseHeldRagdollClientRpc(worldForce, worldForcePosition, forceMode, survived);
     }
 
@@ -656,7 +664,10 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
         if (Time.time < _nextPoseSyncTime)
             return;
+        if (IsSettledCorpse() && Time.time < _lastPoseSyncTime + SettledCorpsePoseSyncIntervalSeconds)
+            return;
         _nextPoseSyncTime = Time.time + RagdollPoseSyncIntervalSeconds;
+        _lastPoseSyncTime = Time.time;
 
         int count = ragdoll.RagdollBodyCount;
         if (count == 0)
@@ -669,6 +680,13 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
         ragdoll.SampleOwnerRagdollPose(_ownerPosBuffer, _ownerRotBuffer);
         BroadcastRagdollPoseServerRpc(_ownerPosBuffer, _ownerRotBuffer);
+    }
+
+    bool IsSettledCorpse()
+    {
+        return playerHealth != null && playerHealth.IsDead
+            && ragdoll.IsRagdolled && !ragdoll.IsHeld
+            && ragdoll.HipsLinearSpeed < SettledCorpseHipsSpeed;
     }
 
     void ObserverInterpolatePose()

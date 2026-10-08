@@ -17,7 +17,10 @@ public static class OnlinePlaytestChecklist
         "Flashlight pickup, battery, toggle, drop, and remote light visuals sync.",
         "Glowstick and key inventory pickup/drop/consume behavior syncs.",
         "Zombies move only from server authority and replicate health/death/animation.",
-        "Player death, ragdoll, item drop, respawn, and HUD recovery work for host and client.",
+        "Player death, ragdoll, and item drop work for host and client; the dead stay down for the level.",
+        "Dead players spectate the living (orbit, LMB/RMB to switch) and only other dead players hear them.",
+        "The exit elevator leaves with only the living aboard; the dead come back in the next level.",
+        "When everyone is dead, all players see ALL DEAD and return to the menu.",
         "Client can leave and return to menu; host shutdown disconnects client cleanly.",
         "Play Offline still loads Level01 solo with the network unreachable from outside."
     };

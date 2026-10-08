@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 [CreateAssetMenu(menuName = "Maze Escape/Multiplayer Project Settings", fileName = "MultiplayerProjectSettings")]
 public class MultiplayerProjectSettings : ScriptableObject
@@ -25,7 +26,10 @@ public class MultiplayerProjectSettings : ScriptableObject
     [SerializeField] GameObject playerPrefab;
     [SerializeField] Vector3 levelStartPosition;
     [SerializeField] Vector3 levelStartEulerAngles;
-    [SerializeField] float respawnDelaySeconds = 3f;
+    [Tooltip("Seconds a dead player watches their own body fall before the spectator camera takes over. Death is "
+        + "permanent for the rest of the section; the next section's avatar brings them back.")]
+    [FormerlySerializedAs("respawnDelaySeconds")]
+    [SerializeField, Min(0f)] float deathCamSeconds = 3f;
 
     [Header("Lobby characters")]
     [Tooltip("Selectable characters in the menu lobby (one owner each). When empty, every player spawns the default Player Prefab.")]
@@ -43,7 +47,7 @@ public class MultiplayerProjectSettings : ScriptableObject
     public GameObject PlayerPrefab => playerPrefab;
     public Vector3 LevelStartPosition => levelStartPosition;
     public Quaternion LevelStartRotation => Quaternion.Euler(levelStartEulerAngles);
-    public float RespawnDelaySeconds => respawnDelaySeconds;
+    public float DeathCamSeconds => deathCamSeconds;
     public string BuildVersion => string.IsNullOrWhiteSpace(buildVersionOverride) ? Application.version : buildVersionOverride;
     public int MaxPlayers => maxPlayers;
 

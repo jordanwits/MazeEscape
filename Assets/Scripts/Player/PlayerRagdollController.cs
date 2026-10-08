@@ -154,6 +154,10 @@ public class PlayerRagdollController : MonoBehaviour
     /// </summary>
     public Transform HipsTransform => hipsRigidbody != null ? hipsRigidbody.transform : null;
 
+    /// <summary>Speed of the hips body while it is simulating (m/s); 0 when kinematic or unresolved.</summary>
+    public float HipsLinearSpeed =>
+        hipsRigidbody != null && !hipsRigidbody.isKinematic ? hipsRigidbody.linearVelocity.magnitude : 0f;
+
     /// <summary>
     /// Index of the hips Rigidbody inside the cached ragdoll-body list (the order streamed by
     /// <see cref="SampleOwnerRagdollPose"/>), or -1. The networking layer uses it to measure the gap

@@ -675,6 +675,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         TrySpawnMazeEnemies(root.transform, grid, start, exit, sectionSeed, cellSize, interiorPlan, mazeTrapCells, mazeTrapRoots);
         TrySpawnMazeRatBots(root.transform, sectionSeed);
         TrySpawnFinalBoss(root.transform, cellsRoot);
+        PublishFootprint(scene.name, grid, start, exit, cellSize, builtCellRoots);
         Debug.Log($"[Maze] Built seeded maze {seed} from logical size {logicalSize.x}x{logicalSize.y} into {width}x{height} cells in scene \"{scene.name}\".", this);
 
         MarkLocalMazeCollidersReadyAndResyncClientPlayer();
@@ -1372,6 +1373,89 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         GameObject child = new(childName);
         child.transform.SetParent(parent, false);
         return child.transform;
+    }
+
+    /// <summary>
+    /// Keeps the finished layout (after every stamp) for the game-over map — see <see cref="MazeFootprint"/>.
+    /// The grid is the final word on what was built: room interiors are open, room walls open only at their
+    /// authored doorways, and cells pruned to None were never placed.
+    ///
+    /// The grid is not the whole story, though: a piece can be bigger than the cells it was given. Level01's
+    /// start room takes the single-cell start placement but is a ~3x3-cell room that reaches out past the edge of
+    /// the maze, and every spawn point is in that overhang. Any piece whose solid geometry covers ground no floor
+    /// cell covers is therefore recorded as an extra floor area, or the map would show players starting in rock.
+    /// </summary>
+    void PublishFootprint(string sceneName, MazeCell[,] grid, Vector2Int start, Vector2Int exit, float cellSize,
+        Dictionary<Vector2Int, Transform> builtCellRoots)
+    {
+        int width = grid.GetLength(0);
+        int height = grid.GetLength(1);
+        var cells = new MazeFaceMask[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+                cells[y * width + x] = grid[x, y].Openings;
+        }
+
+        var spills = new List<Rect>();
+        foreach (KeyValuePair<Vector2Int, Transform> built in builtCellRoots)
+        {
+            if (TryGetSolidBoundsXZ(built.Value, out Rect bounds) && CoversGroundOffGrid(bounds, grid, cellSize))
+                spills.Add(bounds);
+        }
+
+        MazeFootprint.Publish(sceneName, width, height, _config.Origin, cellSize, cells, start, exit, spills);
+    }
+
+    /// <summary>World X/Z extent of a built piece's non-trigger colliders.</summary>
+    static bool TryGetSolidBoundsXZ(Transform pieceRoot, out Rect bounds)
+    {
+        bounds = default;
+        bool any = false;
+        Bounds total = default;
+        foreach (Collider collider in pieceRoot.GetComponentsInChildren<Collider>())
+        {
+            if (collider == null || collider.isTrigger)
+                continue;
+            if (!any)
+            {
+                total = collider.bounds;
+                any = true;
+            }
+            else
+            {
+                total.Encapsulate(collider.bounds);
+            }
+        }
+
+        if (any)
+            bounds = Rect.MinMaxRect(total.min.x, total.min.z, total.max.x, total.max.z);
+        return any;
+    }
+
+    /// <summary>
+    /// True when the inside of <paramref name="bounds"/> reaches cells that are not floor (or off the grid).
+    /// Inset first: every piece's walls overhang its cell edge a little, and a jail's back wall reaches ~2m
+    /// into the next cell without being somewhere a player can stand.
+    /// </summary>
+    bool CoversGroundOffGrid(Rect bounds, MazeCell[,] grid, float cellSize)
+    {
+        const float inset = 2f;
+        const float step = 1.5f;
+        int width = grid.GetLength(0);
+        int height = grid.GetLength(1);
+        for (float z = bounds.yMin + inset; z <= bounds.yMax - inset; z += step)
+        {
+            for (float x = bounds.xMin + inset; x <= bounds.xMax - inset; x += step)
+            {
+                int cx = Mathf.RoundToInt((x - _config.Origin.x) / cellSize);
+                int cz = Mathf.RoundToInt((z - _config.Origin.z) / cellSize);
+                if (cx < 0 || cz < 0 || cx >= width || cz >= height || grid[cx, cz].Openings == MazeFaceMask.None)
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     Vector3 CellToWorld(int x, int y, float cellSize)

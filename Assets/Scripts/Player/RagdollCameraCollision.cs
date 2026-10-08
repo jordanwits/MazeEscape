@@ -74,6 +74,7 @@ public class RagdollCameraCollision : MonoBehaviour
     Camera _cam;
     PlayerController _playerController;
     NetworkPlayerAvatar _avatar;
+    PlayerSpectatorCamera _spectatorCamera;
     Animator _animator;
 
     Collider[] _playerColliders;
@@ -129,6 +130,17 @@ public class RagdollCameraCollision : MonoBehaviour
 
     void OnDisable()
     {
+        ReleaseView();
+    }
+
+    /// <summary>
+    /// Gives the camera and the body back: authored near clip, body drawn with its authored shadow modes.
+    /// <see cref="PlayerSpectatorCamera"/> calls this the moment it takes the camera, so this restore lands
+    /// BEFORE it reveals the head — the authored head mode is ShadowsOnly, and a restore arriving a frame
+    /// later would hide the head of the body the spectator is now looking at from outside.
+    /// </summary>
+    public void ReleaseView()
+    {
         RestoreNearClip();
         if (_bodyHidden)
             SetBodyHidden(false);
@@ -157,6 +169,8 @@ public class RagdollCameraCollision : MonoBehaviour
 
     void Start()
     {
+        // Added at runtime by PlayerController.Awake, possibly after this Awake ran.
+        _spectatorCamera = GetComponent<PlayerSpectatorCamera>();
         FindCameraReferences();
     }
 
@@ -198,15 +212,14 @@ public class RagdollCameraCollision : MonoBehaviour
         if (ragdollController == null)
             return;
 
+        // A spectating (dead) owner's camera has left the body entirely; there is no head view to protect.
         bool active = IsLocalView()
-            && (ragdollController.IsRagdolled || ragdollController.IsGettingUp || ragdollController.IsHeld);
+            && (ragdollController.IsRagdolled || ragdollController.IsGettingUp || ragdollController.IsHeld)
+            && (_spectatorCamera == null || !_spectatorCamera.IsSpectating);
 
         if (!active)
         {
-            RestoreNearClip();
-            if (_bodyHidden)
-                SetBodyHidden(false);
-            _isActive = false;
+            ReleaseView();
             return;
         }
 

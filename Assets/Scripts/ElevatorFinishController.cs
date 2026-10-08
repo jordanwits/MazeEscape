@@ -82,6 +82,47 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
     public int LivingInsideDisplay => IsSpawned ? _livingInside.Value : 0;
     public int LivingRequiredDisplay => IsSpawned ? _livingRequired.Value : 0;
 
+    /// <summary>
+    /// Server-only: a close was authorized with every living player aboard and the doors are shutting, so this
+    /// cab is taking the group out.
+    /// </summary>
+    bool ServerIsDeparting
+    {
+        get
+        {
+            if (!IsServer || !IsSpawned)
+                return false;
+
+            // Sliding cab: once committed the pads stop answering, so the doors cannot come open again.
+            if (_runCommitted)
+                return true;
+
+            // Hinge cab: the authorized close only arms the advance. Each leaf is an ordinary door that can be
+            // swung open again, so the cab is only really leaving while every leaf is shut or shutting —
+            // otherwise a group that walked back out could never be called wiped.
+            return _pendingSceneAfterDoorsIdle
+                && _doorA != null && !_doorA.IsOpen
+                && (_doorB == null || !_doorB.IsOpen);
+        }
+    }
+
+    /// <summary>
+    /// Server-only: whether any exit cab in the level is already departing. Death is permanent for the section,
+    /// but a cab that left with the living aboard brings everyone back in the next one, so
+    /// <see cref="TeamWipeDirector"/> must not call a wipe on a death that lands during the departure.
+    /// </summary>
+    public static bool ServerAnyCabDeparting()
+    {
+        ElevatorFinishController[] cabs = FindObjectsByType<ElevatorFinishController>();
+        for (int i = 0; i < cabs.Length; i++)
+        {
+            if (cabs[i] != null && cabs[i].ServerIsDeparting)
+                return true;
+        }
+
+        return false;
+    }
+
     /// <summary>No session at all (single-player play mode): this instance drives the elevator locally.</summary>
     static bool IsOfflineSession
     {
@@ -808,7 +849,11 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         RequestReturnToMainMenuLocal();
     }
 
-    static void RequestReturnToMainMenuLocal()
+    /// <summary>
+    /// This peer leaves the session and loads the main menu. Also the exit of a lost run
+    /// (<see cref="TeamWipeSequence"/>).
+    /// </summary>
+    public static void RequestReturnToMainMenuLocal()
     {
         MultiplayerSceneFlow flow = FindAnyObjectByType<MultiplayerSceneFlow>(FindObjectsInactive.Include);
         if (flow != null)
