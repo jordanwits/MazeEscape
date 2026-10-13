@@ -413,12 +413,11 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         if (!IsServer || ragdoll == null)
             return;
 
-        bool survived = true;
         if (playerHealth != null && damageAmount > 0f)
-        {
             playerHealth.TakeDamage(damageAmount);
-            survived = !playerHealth.IsDead;
-        }
+        // Read after the damage, and even for a zero-damage release: a victim who died while held must not be let go
+        // into a ragdoll that stands back up.
+        bool survived = playerHealth == null || !playerHealth.IsDead;
 
         // The rigid held pose is over (it becomes a transient slam ragdoll handled by the Rpc path), so
         // clear the late-join snapshot. A client joining after this sees the player standing/recovering,
@@ -564,6 +563,10 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
     void NotifyRecoveryStartedServerRpc(Vector3 rootPosition, Quaternion rootRotation, bool onBack)
     {
         if (!_serverRagdollActive)
+            return;
+        // A get-up that crossed the death on the wire: the death ragdoll already went out and must stand, or every
+        // peer (and every late joiner, through the cleared snapshot) would see the corpse back on its feet.
+        if (playerHealth != null && playerHealth.IsDead)
             return;
 
         _serverRagdollActive = false;

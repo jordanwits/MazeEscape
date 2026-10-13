@@ -44,12 +44,20 @@ public class MultiplayerProjectSettings : ScriptableObject
     [Tooltip("Hard cap including the host. Connection approval rejects further joins once the lobby is full.")]
     [SerializeField, Min(1)] int maxPlayers = 4;
 
+    [Header("Steam")]
+    [Tooltip("The game's Steamworks app id — the one place it is set (SteamworksBootstrap and the build's "
+        + "steam_appid.txt both read it). 480 is Valve's Spacewar test app: friends see 'Spacewar' and an invite "
+        + "accepted with the game closed launches Spacewar. With a real id, release builds relaunch themselves "
+        + "through Steam and ship no steam_appid.txt; the Editor and development builds still run outside Steam.")]
+    [SerializeField] uint steamAppId = SteamworksBootstrap.SpacewarAppId;
+
     public GameObject PlayerPrefab => playerPrefab;
     public Vector3 LevelStartPosition => levelStartPosition;
     public Quaternion LevelStartRotation => Quaternion.Euler(levelStartEulerAngles);
     public float DeathCamSeconds => deathCamSeconds;
     public string BuildVersion => string.IsNullOrWhiteSpace(buildVersionOverride) ? Application.version : buildVersionOverride;
     public int MaxPlayers => maxPlayers;
+    public uint SteamAppId => steamAppId != 0 ? steamAppId : SteamworksBootstrap.SpacewarAppId;
 
     public GameObject MenuPreviewFlashlightPrefab => menuPreviewFlashlightPrefab;
 

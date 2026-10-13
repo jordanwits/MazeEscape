@@ -498,8 +498,11 @@ public class MultiplayerSessionController : MonoBehaviour
         ProximityVoiceSession.InvalidateProximityMessaging();
         _networkManager.Shutdown();
         _isOfflineSession = false;
-        SelectDirectIpTransport();
-        ConfigureDirectClientTransport(defaultAddress, defaultPort);
+        // No transport swap here. NetworkManager.Shutdown only flags the teardown; NGO disconnects every client and
+        // shuts the transport down a frame or two later, through whatever NetworkConfig names at THAT moment. Swapping
+        // to UnityTransport now sent a Steam host's disconnects and shutdown to a transport that never started, so
+        // friends stayed connected to a host that had left, and the Steam transport kept stale connections that broke
+        // the next join. Every Start* method selects its own transport anyway.
         UpdateStatus("Session stopped.");
     }
 

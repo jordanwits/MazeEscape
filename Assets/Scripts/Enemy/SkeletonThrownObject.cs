@@ -257,14 +257,25 @@ public class SkeletonThrownObject : NetworkBehaviour
             if (ph == null || ph.IsDead)
                 continue;
 
-            ApplyHit(ph);
-            // Deal damage but don't shatter: ricochet off the player and roll. The roll phase doesn't re-run this
-            // check, so damage is only applied once.
-            StartRolling(position, BounceVelocity(position, arcVelocity, ph.transform.position));
+            HitAndRicochet(ph, position, arcVelocity);
             return true;
         }
 
-        return false;
+        // Joined clients have no collider the overlap above can find on the server; test their stand-in capsule.
+        PlayerHealth standIn = PlayerHealthRegistry.FindStandInHitInSphere(position, hitRadius);
+        if (standIn == null)
+            return false;
+
+        HitAndRicochet(standIn, position, arcVelocity);
+        return true;
+    }
+
+    void HitAndRicochet(PlayerHealth ph, Vector3 position, Vector3 arcVelocity)
+    {
+        ApplyHit(ph);
+        // Deal damage but don't shatter: ricochet off the player and roll. The roll phase doesn't re-run this
+        // check, so damage is only applied once.
+        StartRolling(position, BounceVelocity(position, arcVelocity, ph.transform.position));
     }
 
     /// <summary>Velocity for the skull as it bounces off a player it just struck — pushed back away from them with an upward pop.</summary>

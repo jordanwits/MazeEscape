@@ -65,6 +65,7 @@ public class PlayerRagdollController : MonoBehaviour
     readonly List<Collider> _ragdollColliders = new List<Collider>();
     MovementViewBob _movementViewBob;
     NetworkPlayerAvatar _networkPlayerAvatar;
+    PlayerHealth _playerHealth;
 
     Coroutine _autoRecoverRoutine;
     Coroutine _landRecoverRoutine;
@@ -183,6 +184,7 @@ public class PlayerRagdollController : MonoBehaviour
 
         _movementViewBob = GetComponent<MovementViewBob>();
         _networkPlayerAvatar = GetComponent<NetworkPlayerAvatar>();
+        _playerHealth = GetComponent<PlayerHealth>();
 
         _getUpBackHash = Animator.StringToHash(getUpBackTrigger);
         _getUpFrontHash = Animator.StringToHash(getUpFrontTrigger);
@@ -266,7 +268,13 @@ public class PlayerRagdollController : MonoBehaviour
     public void ActivateRagdoll(Vector3 worldForce, Vector3 worldForcePosition, ForceMode forceMode = ForceMode.Impulse, bool allowAutoRecovery = true)
     {
         if (IsRagdolled)
+        {
+            // Already down from a knockdown that will stand back up. A death landing now must cancel that stand-up,
+            // or the corpse gets up when the earlier recovery fires.
+            if (!allowAutoRecovery)
+                StopRecoveryCoroutines();
             return;
+        }
 
         if (_ragdollBodies.Count == 0)
             return;
@@ -557,7 +565,7 @@ public class PlayerRagdollController : MonoBehaviour
         {
             yield return new WaitForFixedUpdate();
 
-            if (!IsRagdolled)
+            if (!IsRagdolled || (_playerHealth != null && _playerHealth.IsDead))
                 yield break;
 
             ResolveHips();
@@ -632,6 +640,10 @@ public class PlayerRagdollController : MonoBehaviour
     public void DeactivateRagdoll()
     {
         if (!IsRagdolled)
+            return;
+        // The dead stay down for the rest of the section. Backs up the cancel in ActivateRagdoll for a death that
+        // reaches this peer as replicated state before (or without) its ragdoll RPC.
+        if (_playerHealth != null && _playerHealth.IsDead)
             return;
 
         ClearHeldState();
@@ -1138,12 +1150,23 @@ public class PlayerRagdollController : MonoBehaviour
         if (_movementViewBob != null)
             _movementViewBob.enabled = true;
 
-        if (characterController != null)
-            characterController.enabled = true;
+        RestoreCharacterControllerAfterRagdoll();
 
         PlayerController playerController = GetComponent<PlayerController>();
         if (playerController != null)
             playerController.ResetLocomotionAfterRagdollRecover();
+    }
+
+    /// <summary>
+    /// Only the copy that should simulate gets its CharacterController back (see
+    /// <see cref="NetworkPlayerAvatar.WantsCharacterControllerEnabled"/>). Another peer's copy of a player keeps it
+    /// off, as NetworkPlayerAvatar keeps it at spawn; turning it on there after a get-up handed server physics queries
+    /// a standing capsule they never had before the knockdown.
+    /// </summary>
+    void RestoreCharacterControllerAfterRagdoll()
+    {
+        if (characterController != null)
+            characterController.enabled = _networkPlayerAvatar == null || _networkPlayerAvatar.WantsCharacterControllerEnabled;
     }
 
     /// <summary>
@@ -1168,8 +1191,7 @@ public class PlayerRagdollController : MonoBehaviour
         if (_movementViewBob != null)
             _movementViewBob.enabled = true;
 
-        if (characterController != null)
-            characterController.enabled = true;
+        RestoreCharacterControllerAfterRagdoll();
 
         IsRagdolled = false;
         IsGettingUp = false;

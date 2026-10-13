@@ -54,6 +54,7 @@ public class ProximityVoiceSession : MonoBehaviour
         s_HandlersRegistered = false;
         VoiceClientRegistry.Clear();
         VoicePlayerMixSettings.Clear();
+        s_SpeakingUntil.Clear();
     }
 
     /// <summary>
@@ -135,8 +136,40 @@ public class ProximityVoiceSession : MonoBehaviour
             reader.ReadValueSafe(out short s);
             s_ServerVoicePcmScratch[i] = s;
         }
-        ServerProximityVoiceNotifications.NotifyVoiceFrameFromClient(senderId);
+        if (IsSpeech(senderId, s_ServerVoicePcmScratch, count))
+            ServerProximityVoiceNotifications.NotifyVoiceFrameFromClient(senderId);
         RelayToOthers(senderId, seq, count, s_ServerVoicePcmScratch);
+    }
+
+    /// <summary>
+    /// RMS level a frame needs before the AI counts it as someone talking: about -40 dBFS, above a headset's room
+    /// noise floor and below quiet speech.
+    /// </summary>
+    const float SpeechRmsThreshold = 32767f * 0.01f;
+    /// <summary>Keeps a speaker "talking" through the quiet gaps between syllables and words.</summary>
+    const float SpeechHangoverSeconds = 0.35f;
+    static readonly System.Collections.Generic.Dictionary<ulong, float> s_SpeakingUntil = new();
+
+    /// <summary>
+    /// Open mic is the default and sends every frame, silence included, so the Jailor and the Clown were told about
+    /// every silent open-mic player within earshot and walked straight to them through walls. Only frames loud
+    /// enough to be speech (plus a short hangover) reach the AI now. Every frame is still relayed to the players.
+    /// </summary>
+    static bool IsSpeech(ulong senderId, short[] samples, int count)
+    {
+        double sumSquares = 0d;
+        for (int i = 0; i < count; i++)
+            sumSquares += samples[i] * (double)samples[i];
+        float rms = (float)System.Math.Sqrt(sumSquares / count);
+
+        float now = Time.unscaledTime;
+        if (rms >= SpeechRmsThreshold)
+        {
+            s_SpeakingUntil[senderId] = now + SpeechHangoverSeconds;
+            return true;
+        }
+
+        return s_SpeakingUntil.TryGetValue(senderId, out float until) && now < until;
     }
 
     static void RelayToOthers(ulong senderId, ushort seq, int count, short[] samples)

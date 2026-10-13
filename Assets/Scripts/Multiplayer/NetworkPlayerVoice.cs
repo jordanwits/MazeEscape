@@ -10,6 +10,17 @@ public class NetworkPlayerVoice : NetworkBehaviour
     public const int SampleRate = 16000;
     public const int FrameSamples = 320; // 20ms @ 16kHz mono
 
+    /// <summary>
+    /// Most capture a sender lets queue up before skipping to the newest audio (300 ms). Must stay well above the
+    /// size of one capture burst: a USB sound card measured here hands Unity up to 160 ms of samples at once, and a
+    /// 150 ms budget threw most of each burst away.
+    /// </summary>
+    const int MaxMicLatencySamples = SampleRate * 300 / 1000;
+    /// <summary>Per-Update send cap, a little over the latency budget above.</summary>
+    const int MaxMicFramesPerUpdate = 16;
+    /// <summary>A gap this long between reads (a hitch, a stall) may have let the 1 s capture ring lap the cursor.</summary>
+    const float MicResyncGapSeconds = 0.5f;
+
     [Header("3D (others hear you here)")]
     [Tooltip("If null, resolved to CameraPitch or player camera.")]
     [SerializeField] Transform voiceAnchor;
@@ -26,6 +37,9 @@ public class NetworkPlayerVoice : NetworkBehaviour
     string _micDevice;
     AudioClip _micClip;
     int _micReadPosition;
+    /// <summary>Sending stopped (push-to-talk released, nothing read yet): the next read starts from "now".</summary>
+    bool _micReadCursorStale = true;
+    float _lastMicPullRealtime;
     readonly float[] _micFloatScratch = new float[FrameSamples];
     readonly short[] _micSendScratch = new short[FrameSamples];
     float[] _wrap1;
@@ -116,7 +130,10 @@ public class NetworkPlayerVoice : NetworkBehaviour
         if (string.IsNullOrEmpty(_micDevice) || _micClip == null)
             return;
         if (!CanSendThisFrame())
+        {
+            _micReadCursorStale = true;
             return;
+        }
         if (!Microphone.IsRecording(_micDevice))
             return;
         PullMicAndSend();
@@ -204,18 +221,46 @@ public class NetworkPlayerVoice : NetworkBehaviour
         _micClip = null;
     }
 
+    /// <summary>
+    /// Sends every whole 20 ms frame the mic has captured since the last call, not one per Update: real time needs
+    /// 50 frames a second, so below 50 fps a one-frame read fell behind, the 1 s capture ring lapped it, and listeners
+    /// heard choppy speech with whole seconds missing. A backlog past <see cref="MaxMicLatencySamples"/> is skipped
+    /// rather than sent late, and the cursor jumps to "now" after any pause in sending (push-to-talk released, a long
+    /// hitch), so audio from before a press is never sent and the writer can never lap the reader.
+    /// </summary>
     void PullMicAndSend()
     {
         int w = Microphone.GetPosition(_micDevice);
         if (w < 0)
             return;
         int len = _micClip.samples;
-        int r = _micReadPosition;
-        int available = w - r;
+
+        float now = Time.realtimeSinceStartup;
+        if (_micReadCursorStale || now - _lastMicPullRealtime > MicResyncGapSeconds)
+        {
+            _micReadPosition = w;
+            _micReadCursorStale = false;
+        }
+        _lastMicPullRealtime = now;
+
+        int available = w - _micReadPosition;
         if (available < 0)
             available += len;
-        if (available < FrameSamples)
-            return;
+        if (available > MaxMicLatencySamples)
+        {
+            _micReadPosition = (w - FrameSamples + len) % len;
+            available = FrameSamples;
+        }
+
+        for (int sent = 0; available >= FrameSamples && sent < MaxMicFramesPerUpdate; sent++)
+        {
+            SendMicFrame(_micReadPosition, len);
+            available -= FrameSamples;
+        }
+    }
+
+    void SendMicFrame(int r, int len)
+    {
         if (r + FrameSamples <= len)
         {
             _micClip.GetData(_micFloatScratch, r);

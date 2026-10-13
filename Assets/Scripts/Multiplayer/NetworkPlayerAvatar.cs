@@ -835,6 +835,63 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         avatarAnimator.SetBool(carriedByJailorAnimatorParameter, carried);
     }
 
+    /// <summary>
+    /// Client-authoritative transform: remote player proxies should not run CharacterController physics (no Move on
+    /// the host or another client's copy); that wastes work and fights NetworkTransform. The dead and the carried
+    /// have it off too.
+    /// </summary>
+    bool CharacterControllerWanted(bool isLocalOwner, bool inNetSession) =>
+        _isAlive && (!inNetSession || isLocalOwner) && !IsCarriedByJailor;
+
+    /// <summary>
+    /// Whether this copy's CharacterController should be on right now. Ragdoll recovery asks this instead of turning
+    /// it on unconditionally: on another peer's copy that re-enable used to leave a standing Player-layer capsule
+    /// behind after every get-up, so server hazard and enemy queries saw a client only once it had been knocked down.
+    /// </summary>
+    public bool WantsCharacterControllerEnabled
+    {
+        get
+        {
+            NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
+            bool inNetSession = nm != null && nm.IsListening;
+            return CharacterControllerWanted(ResolveLocalOwnerForPresentation(), inNetSession);
+        }
+    }
+
+    /// <summary>
+    /// Server: the body a hazard (axe blade, thrown skull) should test for a player its physics query cannot see. A
+    /// joined client's copy on the server has its CharacterController off and its blocking proxy on Ignore Raycast,
+    /// so a Player-layer overlap never finds it. The capsule comes from the proxy, which follows that player's crouch.
+    /// False whenever a physics query already covers the player (CharacterController on, or the ragdoll's bone
+    /// colliders while down), and for anyone dead, carried or getting up — states no hazard hits through physics either.
+    /// </summary>
+    public bool TryGetHazardStandInCapsule(out Vector3 point0, out Vector3 point1, out float radius)
+    {
+        point0 = point1 = Vector3.zero;
+        radius = 0f;
+
+        if (!_isAlive || IsCarriedByJailor || _isDormant)
+            return false;
+        if (characterController == null || characterController.enabled)
+            return false;
+        if (TryGetComponent(out PlayerRagdollController ragdoll)
+            && (ragdoll.IsRagdolled || ragdoll.IsHeld || ragdoll.IsGettingUp))
+            return false;
+
+        CapsuleCollider proxyCapsule = _blockingProxyRoot != null ? _blockingProxyRoot.GetComponent<CapsuleCollider>() : null;
+        Transform space = proxyCapsule != null ? proxyCapsule.transform : transform;
+        Vector3 center = proxyCapsule != null ? proxyCapsule.center : characterController.center;
+        float height = proxyCapsule != null ? proxyCapsule.height : characterController.height;
+        float localRadius = proxyCapsule != null ? proxyCapsule.radius : characterController.radius;
+
+        Vector3 scale = space.lossyScale;
+        radius = localRadius * Mathf.Max(Mathf.Abs(scale.x), Mathf.Abs(scale.z));
+        float halfSegment = Mathf.Max(0f, height * 0.5f - localRadius);
+        point0 = space.TransformPoint(center - Vector3.up * halfSegment);
+        point1 = space.TransformPoint(center + Vector3.up * halfSegment);
+        return true;
+    }
+
     void ApplyPresentation(bool isLocalOwner)
     {
         if (_isDormant)
@@ -862,12 +919,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         bool inNetSession = nm != null && nm.IsListening;
 
         if (characterController != null)
-        {
-            // Client-authoritative transform: remote player proxies should not run CharacterController
-            // physics (no Move on host/client observer); that wastes work and can fight NetworkTransform.
-            bool enableCc = _isAlive && (!inNetSession || isLocalOwner) && !jailorCarried;
-            characterController.enabled = enableCc;
-        }
+            characterController.enabled = CharacterControllerWanted(isLocalOwner, inNetSession);
 
         // CharacterControllers do not collide with each other in Unity. Remotes also have CC off.
         // A kinematic capsule on a child gives other players' CharacterControllers something solid to slide against.

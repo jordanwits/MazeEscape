@@ -5,8 +5,11 @@ using UnityEditor.Build.Reporting;
 using UnityEngine;
 
 /// <summary>
-/// Copies steam_appid.txt from the project root next to the built executable.
-/// SteamAPI.Init fails in standalone builds without this file; the Editor often works because the process cwd is the project folder.
+/// Writes steam_appid.txt next to the built executable for builds that start Steam on their own (see
+/// <see cref="SteamworksBootstrap.RunsOutsideSteam"/>): development builds, and any build still on the Spacewar
+/// placeholder. The id comes from <see cref="MultiplayerProjectSettings.SteamAppId"/>, the one place it is set.
+/// A release build under the real id ships without the file — Steam launches it, and a leftover file would stop
+/// SteamAPI.RestartAppIfNecessary from sending a direct exe launch back through Steam.
 /// </summary>
 public sealed class CopySteamAppIdPostprocessor : IPostprocessBuildWithReport
 {
@@ -35,18 +38,20 @@ public sealed class CopySteamAppIdPostprocessor : IPostprocessBuildWithReport
         if (string.IsNullOrEmpty(buildFolder))
             return;
 
-        string projectRoot = Path.GetDirectoryName(Application.dataPath);
-        string src = Path.Combine(projectRoot, "steam_appid.txt");
         string dst = Path.Combine(buildFolder, "steam_appid.txt");
+        uint appId = SteamworksBootstrap.ConfiguredAppId;
+        bool development = (report.summary.options & BuildOptions.Development) != 0;
 
-        if (!File.Exists(src))
+        if (!development && appId != SteamworksBootstrap.SpacewarAppId)
         {
-            Debug.LogWarning(
-                $"[Steam] steam_appid.txt not found at {src}. Steam will not initialize in this build unless you add it next to the executable.");
+            // Building over an earlier development build would otherwise leave its file behind.
+            if (File.Exists(dst))
+                File.Delete(dst);
+            Debug.Log($"[Steam] Release build for app {appId}: no steam_appid.txt shipped (Steam launches the game).");
             return;
         }
 
-        File.Copy(src, dst, overwrite: true);
-        Debug.Log($"[Steam] Copied steam_appid.txt to {dst}");
+        File.WriteAllText(dst, appId.ToString());
+        Debug.Log($"[Steam] Wrote steam_appid.txt ({appId}) to {dst}");
     }
 }

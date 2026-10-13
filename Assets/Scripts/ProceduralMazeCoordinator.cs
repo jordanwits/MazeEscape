@@ -2853,6 +2853,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         {
             MazePieceMatch forcedMatch = interiorRoomEntry.Match;
             GameObject forcedPiece = Instantiate(forcedMatch.Prefab, parent.position, forcedMatch.Rotation, parent);
+            AssignPieceItemIds(forcedPiece, seed, cellCoordinates);
             _placedCellPrefabs[cellCoordinates] = forcedMatch.Prefab;
             if (_config != null && forcedMatch.Prefab == _config.ExitHallPiecePrefab)
                 _exitHallInstance = forcedPiece.transform;
@@ -2893,6 +2894,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
                     out MazePieceMatch jailMatch))
             {
                 GameObject jailPiece = Instantiate(jailMatch.Prefab, parent.position, jailMatch.Rotation, parent);
+                AssignPieceItemIds(jailPiece, seed, cellCoordinates);
                 _placedCellPrefabs[cellCoordinates] = jailMatch.Prefab;
                 TrySpawnElevatorFinishSyncIfPresent(jailPiece);
                 TrySpawnUseKeyHingeNetworkObjectsIfPresent(jailPiece);
@@ -2935,6 +2937,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         GameObject matchPiece = Instantiate(match.Prefab, parent.position, match.Rotation, parent);
+        AssignPieceItemIds(matchPiece, seed, cellCoordinates);
         _placedCellPrefabs[cellCoordinates] = match.Prefab;
         WarnIfExitCellHasNoElevator(matchPiece, isExit, cellCoordinates);
         TrySpawnElevatorFinishSyncIfPresent(matchPiece);
@@ -4985,6 +4988,40 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
     static ulong ComputeMazeItemPickupId(int mazeSeed, Vector2Int cell, int markerIndex, int prefabIndex)
     {
         return ComputeStableItemHash($"maze-item:{mazeSeed}:{cell.x}:{cell.y}:{markerIndex}:{prefabIndex}");
+    }
+
+    /// <summary>
+    /// Gives every pickup authored inside a maze piece (MG_Start's start Key, sword, flare gun, ammo and grenades) an
+    /// id every peer derives the same way: section seed, cell, and the item's path inside the piece. Left to
+    /// <see cref="GrabbableInventoryItem"/>'s own hierarchy-path id, the id took in the GeneratedMaze root's sibling
+    /// index, which differs per peer — the host builds before any level NetworkObject exists, a client only after its
+    /// avatar and the enemies are already scene roots — so clients could never pick these up and saw the host's
+    /// pickups as ghosts. Runs straight after the piece is instantiated, before anything reparents its children.
+    /// Spawned NetworkObject items keep their own network id.
+    /// </summary>
+    static void AssignPieceItemIds(GameObject piece, int sectionSeed, Vector2Int cell)
+    {
+        if (piece == null)
+            return;
+
+        GrabbableInventoryItem[] items = piece.GetComponentsInChildren<GrabbableInventoryItem>(true);
+        if (items.Length == 0)
+            return;
+
+        var path = new System.Text.StringBuilder();
+        Transform pieceRoot = piece.transform;
+        for (int i = 0; i < items.Length; i++)
+        {
+            GrabbableInventoryItem item = items[i];
+            if (item == null || item.GetComponent<NetworkObject>() != null)
+                continue;
+
+            path.Clear();
+            for (Transform t = item.transform; t != null && t != pieceRoot; t = t.parent)
+                path.Insert(0, $"/{t.name}[{t.GetSiblingIndex()}]");
+
+            item.AssignNetworkItemId(ComputeStableItemHash($"piece-item:{sectionSeed}:{cell.x}:{cell.y}:{path}"));
+        }
     }
 
     static ulong ComputeStableItemHash(string key)

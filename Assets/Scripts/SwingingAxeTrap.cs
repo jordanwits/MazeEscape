@@ -94,6 +94,7 @@ public class SwingingAxeTrap : NetworkBehaviour
     bool _activeLatched;          // true once tripped; stays true until every player is past resetDistance
     readonly Dictionary<PlayerHealth, float> _nextHitTime = new();
     readonly Collider[] _overlap = new Collider[OverlapBufferSize];
+    readonly List<PlayerHealth> _standInHits = new();
     AudioSource _audio;
 
     // Client-side interpolation of the server-replicated swing angle. The server writes _netAngleDeg every frame but
@@ -381,30 +382,40 @@ public class SwingingAxeTrap : NetworkBehaviour
                 if (col == null)
                     continue;
 
-                PlayerHealth ph = col.GetComponentInParent<PlayerHealth>();
-                if (ph == null || ph.IsDead)
-                    continue;
-
-                if (_nextHitTime.TryGetValue(ph, out float next) && Time.time < next)
-                    continue;
-                _nextHitTime[ph] = Time.time + perPlayerHitCooldown;
-
-                Vector3 pushDir = bladeVel;
-                pushDir.y = 0f;
-                if (pushDir.sqrMagnitude < 1e-4f)
-                {
-                    // Stationary frame / fallback: shove away from the pivot, horizontally.
-                    pushDir = ph.transform.position - pivot.position;
-                    pushDir.y = 0f;
-                }
-                pushDir = pushDir.sqrMagnitude > 1e-6f ? pushDir.normalized : transform.forward;
-
-                ApplyHit(ph, pushDir, center);
+                TryBladeHit(col.GetComponentInParent<PlayerHealth>(), pivot, center, bladeVel);
             }
+
+            // Joined clients have no collider the overlap above can find on the server; test their stand-in capsule.
+            _standInHits.Clear();
+            PlayerHealthRegistry.CollectStandInHitsInBox(center, bladeHitHalfExtents, pivot.rotation, _standInHits);
+            for (int h = 0; h < _standInHits.Count; h++)
+                TryBladeHit(_standInHits[h], pivot, center, bladeVel);
         }
 
         _hasPrevBlade = true;
         PruneHitCooldowns();
+    }
+
+    void TryBladeHit(PlayerHealth ph, Transform pivot, Vector3 bladeCenter, Vector3 bladeVel)
+    {
+        if (ph == null || ph.IsDead)
+            return;
+
+        if (_nextHitTime.TryGetValue(ph, out float next) && Time.time < next)
+            return;
+        _nextHitTime[ph] = Time.time + perPlayerHitCooldown;
+
+        Vector3 pushDir = bladeVel;
+        pushDir.y = 0f;
+        if (pushDir.sqrMagnitude < 1e-4f)
+        {
+            // Stationary frame / fallback: shove away from the pivot, horizontally.
+            pushDir = ph.transform.position - pivot.position;
+            pushDir.y = 0f;
+        }
+        pushDir = pushDir.sqrMagnitude > 1e-6f ? pushDir.normalized : transform.forward;
+
+        ApplyHit(ph, pushDir, bladeCenter);
     }
 
     void ApplyHit(PlayerHealth ph, Vector3 pushDirHorizontal, Vector3 impactPosition)

@@ -725,7 +725,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (norm.sqrMagnitude < 0.0001f)
             norm = transform.forward;
         norm.Normalize();
-        Vector3 finalDropPosition = dropPosition + norm * 0.35f;
+        Vector3 finalDropPosition = ServerKeepDropPointInOpenSpace(dropPosition + norm * 0.35f);
         finalDropPosition.y = Mathf.Max(finalDropPosition.y, transform.position.y + 0.1f);
         Quaternion finalDropRotation = item.transform.rotation;
         Vector3 throwImpulse = norm * dropThrowImpulse;
@@ -800,6 +800,75 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
         if (g is FlashlightItem dropped)
             dropped.SetLightEnabled(lightOn);
+    }
+
+    /// <summary>Clearance kept between a dropped item's centre and the first wall in front of the player.</summary>
+    const float DropWallClearanceRadius = 0.15f;
+    /// <summary>Where the wall test starts: inside the player's capsule, low enough to stay inside it while crouched.</summary>
+    const float DropWallTestOriginHeight = 0.6f;
+
+    static int s_dropWallMask;
+
+    /// <summary>World geometry a drop must stay on this side of; players and enemies are left out, triggers ignored.</summary>
+    static int DropWallMask
+    {
+        get
+        {
+            if (s_dropWallMask == 0)
+            {
+                int actors = 0;
+                foreach (string layer in new[] { "Player", "Enemy", "Jailor", "Clown" })
+                {
+                    int index = LayerMask.NameToLayer(layer);
+                    if (index >= 0)
+                        actors |= 1 << index;
+                }
+                s_dropWallMask = Physics.DefaultRaycastLayers & ~actors;
+            }
+
+            return s_dropWallMask;
+        }
+    }
+
+    /// <summary>
+    /// Server: pulls a drop point back to this side of the first wall between the player's body and it. Drops land
+    /// about a metre in front of the player, which is inside the wall when they stand against one; the item then
+    /// depenetrated out of the far face, and behind an outer wall there is no floor, so it fell forever — a lost Key
+    /// or ClownKey soft-locked the run. Every peer is handed this point, so all of them place the item the same way.
+    /// </summary>
+    Vector3 ServerKeepDropPointInOpenSpace(Vector3 desired)
+    {
+        const float skin = 0.02f;
+        Vector3 origin = transform.position + Vector3.up * DropWallTestOriginHeight;
+
+        // Already touching something at the start (a stale remote position against a wall): use the feet.
+        if (Physics.CheckSphere(origin, DropWallClearanceRadius, DropWallMask, QueryTriggerInteraction.Ignore))
+            return transform.position + Vector3.up * 0.1f;
+
+        // Two straight legs rather than one diagonal: up through the player's own column to the drop height (stops
+        // under a low ceiling or inside a vent), then level toward the drop point (stops at a wall, but passes over a
+        // table or crate the player is facing, so the item still lands on it).
+        float legY = Mathf.Max(desired.y, origin.y);
+        float rise = legY - origin.y;
+        if (rise > 1e-4f && Physics.SphereCast(origin, DropWallClearanceRadius, Vector3.up, out RaycastHit ceiling, rise,
+                DropWallMask, QueryTriggerInteraction.Ignore))
+            legY = origin.y + Mathf.Max(0f, ceiling.distance - skin);
+
+        Vector3 legStart = new Vector3(origin.x, legY, origin.z);
+        Vector3 across = new Vector3(desired.x - origin.x, 0f, desired.z - origin.z);
+        float distance = across.magnitude;
+        Vector3 placed = new Vector3(desired.x, legY, desired.z);
+        if (distance > 1e-4f)
+        {
+            Vector3 direction = across / distance;
+            if (Physics.SphereCast(legStart, DropWallClearanceRadius, direction, out RaycastHit wall, distance, DropWallMask,
+                    QueryTriggerInteraction.Ignore))
+                placed = legStart + direction * Mathf.Max(0f, wall.distance - skin);
+        }
+
+        // A drop meant to land low (the disconnect scatter at foot height) keeps its height once it is clear.
+        placed.y = Mathf.Min(placed.y, desired.y);
+        return placed;
     }
 
     ulong ComputeRuntimeDroppedItemId(ulong templateItemId, uint sequence)
@@ -1025,6 +1094,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             // Small forward fan so multiple slots do not land exactly on top of one another.
             Vector3 dropPosition = basePosition + forward * (0.35f + 0.2f * i);
             dropPosition.y = basePosition.y + 0.1f;
+            dropPosition = ServerKeepDropPointInOpenSpace(dropPosition);
             Quaternion dropRotation = g.transform.rotation;
 
             if (g is FlashlightItem flashlight)

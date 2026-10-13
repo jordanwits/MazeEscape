@@ -250,6 +250,8 @@ public partial class PlayerController : MonoBehaviour
     InputAction _attackAction;
     InputAction _crouchAction;
     InputAction _reloadAction;
+    InputAction _previousSlotAction;
+    InputAction _nextSlotAction;
     InputActionAsset _runtimeInputActions;
 
     float _lookYawDegrees;
@@ -1456,6 +1458,8 @@ public partial class PlayerController : MonoBehaviour
         _attackAction?.Disable();
         _crouchAction?.Disable();
         _reloadAction?.Disable();
+        _previousSlotAction?.Disable();
+        _nextSlotAction?.Disable();
         _lookAction?.Enable();
         ApplyCursorLock();
     }
@@ -1519,6 +1523,9 @@ public partial class PlayerController : MonoBehaviour
         _attackAction ??= _playerMap.FindAction("Attack");
         _crouchAction ??= _playerMap.FindAction("Crouch");
         _reloadAction ??= _playerMap.FindAction("Reload");   // absent from the asset is fine — R-key fallback covers it
+        // Hotbar cycling (d-pad left/right, keyboard 1/2 in the shipped asset); the mouse wheel is read directly.
+        _previousSlotAction ??= _playerMap.FindAction("Previous");
+        _nextSlotAction ??= _playerMap.FindAction("Next");
 
         if (!_playerMap.enabled)
             _playerMap.Enable();

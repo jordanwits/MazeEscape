@@ -2740,8 +2740,19 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (IsLureHoldingAttention)
             return; // a decoy is still calling; a voice does not outrank it
 
-        SetInvestigationPoint(voice.transform.position);
+        // Speech arrives 50 frames a second; re-aiming at the same spot that often only kept resetting the search.
+        Vector3 voicePosition = voice.transform.position;
+        if (Time.time < _nextVoiceInvestigateTime && (voicePosition - _lastVoiceInvestigatePoint).sqrMagnitude < 1f)
+            return;
+        _nextVoiceInvestigateTime = Time.time + VoiceInvestigateIntervalSeconds;
+        _lastVoiceInvestigatePoint = voicePosition;
+
+        SetInvestigationPoint(voicePosition);
     }
+
+    const float VoiceInvestigateIntervalSeconds = 0.25f;
+    float _nextVoiceInvestigateTime;
+    Vector3 _lastVoiceInvestigatePoint;
 
     void RefreshTargetFromSightAndHearing()
     {

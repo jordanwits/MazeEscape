@@ -563,6 +563,30 @@ public partial class PlayerController
         t.text = count.ToString();
     }
 
+    /// <summary>
+    /// -1 for the previous hotbar slot, +1 for the next, 0 for neither. The Previous/Next actions carry the gamepad
+    /// d-pad: without them a pad player could never leave the slot a pickup force-selects (every pickup does), so a
+    /// lit flashlight or a bandage picked up earlier was out of reach. Wheel down moves to the next slot.
+    /// </summary>
+    int ReadHotbarCycleInput()
+    {
+        bool previous = _previousSlotAction != null
+            ? _previousSlotAction.WasPressedThisFrame()
+            : Gamepad.current != null && Gamepad.current.dpad.left.wasPressedThisFrame;
+        bool next = _nextSlotAction != null
+            ? _nextSlotAction.WasPressedThisFrame()
+            : Gamepad.current != null && Gamepad.current.dpad.right.wasPressedThisFrame;
+        if (previous != next)
+            return next ? 1 : -1;
+
+        if (Mouse.current == null)
+            return 0;
+        float y = Mouse.current.scroll.ReadValue().y;
+        if (Mathf.Abs(y) < 0.01f)
+            return 0;
+        return y < 0f ? 1 : -1;
+    }
+
     void HandleInventoryScrollInUpdate()
     {
         if (PauseMenuController.BlocksGameplayInput)
@@ -576,13 +600,10 @@ public partial class PlayerController
         }
         if (!_hasLocalControl)
             return;
-        if (Mouse.current == null)
-            return;
 
-        float y = Mouse.current.scroll.ReadValue().y;
-        if (Mathf.Abs(y) < 0.01f)
+        int sign = ReadHotbarCycleInput();
+        if (sign == 0)
             return;
-        int sign = y < 0f ? 1 : -1;
         if (IsUsingNetworkedInventory)
             _networkPlayerInventory.TryCycleSelection(sign);
         else
