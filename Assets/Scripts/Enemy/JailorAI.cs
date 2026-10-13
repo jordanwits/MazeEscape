@@ -565,6 +565,21 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         return avatar != null && avatar.IsSealedInJailCell;
     }
 
+    /// <summary>
+    /// Down (a trap knockdown), held, or still getting up. He waits for them to stand, like the Clown and the
+    /// guard do: a ragdoll's root stays where the hit landed, so the reach test passes on a body lying there, and
+    /// carrying one makes the root server-authoritative while the owner's ragdoll recovery is still pending — that
+    /// recovery then fails partway on the client and leaves them stuck down for the rest of the section.
+    /// </summary>
+    static bool IsPlayerDowned(PlayerHealth health)
+    {
+        if (health == null)
+            return false;
+
+        PlayerRagdollController ragdoll = health.GetComponent<PlayerRagdollController>();
+        return ragdoll != null && (ragdoll.IsRagdolled || ragdoll.IsHeld || ragdoll.IsGettingUp);
+    }
+
     void OnEnable()
     {
         // Voice notifications stay keyed to the ENABLED component on purpose: they drive server-side AI
@@ -1640,6 +1655,9 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (_targetHealth != null && ShouldJailorIgnorePlayer(_targetHealth))
             return false;
 
+        if (IsPlayerDowned(_targetHealth))
+            return false;
+
         return IsTargetWithinGrabReach();
     }
 
@@ -1779,8 +1797,9 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         // into the carry pose from wherever they now are — so without this a player who sprinted clear during
         // the ~1 s wind-up gets yanked backwards into his arms and an initiated grab is unmissable. Let them go
         // and give chase instead; the retry delay stops a target hovering at the range edge from locking him
-        // into a wind-up/abort stutter on the spot.
-        if (!IsTargetWithinGrabReach())
+        // into a wind-up/abort stutter on the spot. A target knocked down during the wind-up is let go the same way
+        // (see IsPlayerDowned).
+        if (!IsTargetWithinGrabReach() || IsPlayerDowned(_targetHealth))
         {
             _nextGrabAllowedTime = Time.time + GrabAbortRetryDelaySeconds;
             EnterChase();

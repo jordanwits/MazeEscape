@@ -2500,6 +2500,12 @@ public partial class PlayerController : MonoBehaviour
     bool PlayerHasKeyInInventory() => PlayerHasKeyInInventory<KeyItem>(GrabbableInventoryItem.TypeIdKey);
 
     /// <summary>
+    /// Local hotbar read for a door key, for the no-session path only; in a session the server asks
+    /// <see cref="NetworkPlayerInventory.ServerHasKeyItem"/> instead.
+    /// </summary>
+    public bool HasDoorKeyInHotbar => PlayerHasKeyInInventory();
+
+    /// <summary>
     /// Local read for the elevator pad prompt: does this player carry the Clown's key? Only ever decides which
     /// message is drawn — the server re-checks the real hotbar before it unlocks anything.
     /// </summary>

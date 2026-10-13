@@ -24,8 +24,17 @@ public class JailCellSealedReleaseZone : MonoBehaviour
     readonly HashSet<NetworkPlayerAvatar> _sealedByThisZone = new();
     readonly Dictionary<NetworkPlayerAvatar, float> _sealedOutsideSince = new();
     readonly List<NetworkPlayerAvatar> _avatarScratch = new();
+    /// <summary>Prisoners with no way left out of this cell, and since when (see <see cref="HasNoWayOut"/>).</summary>
+    readonly Dictionary<NetworkPlayerAvatar, float> _noWayOutSince = new();
+    static readonly List<JailCellSealedReleaseZone> s_activeZones = new();
+    Collider _volume;
 
     const float SealedOutsideClearSeconds = 1f;
+    /// <summary>
+    /// How long a prisoner must have had no way out before it can end the run. Covers the skeleton's losing
+    /// banner (the overlay's suspense beat plus its match-over hold) so the loss lands before the game-over card.
+    /// </summary>
+    const float NoWayOutGraceSeconds = 3f;
 
     [Tooltip("How often to reconcile door bypass vs door open/lock state (covers unlock-from-key without triggers).")]
     [SerializeField] float jailorDoorBypassPollSeconds = 0.25f;
@@ -35,22 +44,27 @@ public class JailCellSealedReleaseZone : MonoBehaviour
     {
         if (jailDoor == null && autoFindDoor)
             jailDoor = JailorAI.FindNearestHingeDoorInLocalPrefabHierarchy(transform, transform.position);
+        _volume = GetComponent<Collider>();
     }
 
     void OnEnable()
     {
         if (jailDoor != null)
             jailDoor.OnJailUnlockedByPlayerKey += OnJailUnlockedByPlayerKey;
+        if (!s_activeZones.Contains(this))
+            s_activeZones.Add(this);
     }
 
     void OnDisable()
     {
         if (jailDoor != null)
             jailDoor.OnJailUnlockedByPlayerKey -= OnJailUnlockedByPlayerKey;
+        s_activeZones.Remove(this);
 
         StopAllJailorDoorIgnores();
         _sealedByThisZone.Clear();
         _sealedOutsideSince.Clear();
+        _noWayOutSince.Clear();
     }
 
     /// <summary>True while a live Jailor stands in the cell interior — the tripwire waits on this before sealing.</summary>
@@ -93,6 +107,7 @@ public class JailCellSealedReleaseZone : MonoBehaviour
         }
         _sealedByThisZone.Clear();
         _sealedOutsideSince.Clear();
+        _noWayOutSince.Clear();
 
         RefreshJailorTrappedInsideDoorBypass();
     }
@@ -167,7 +182,8 @@ public class JailCellSealedReleaseZone : MonoBehaviour
     {
         if (!IsAuthority())
             return;
-        if (_jailorsInCell.Count == 0 && _jailorsIgnoringDoor.Count == 0 && _sealedByThisZone.Count == 0)
+        if (_jailorsInCell.Count == 0 && _jailorsIgnoringDoor.Count == 0 && _sealedByThisZone.Count == 0
+            && _noWayOutSince.Count == 0)
             return;
 
         if (Time.unscaledTime < _nextBypassPollTime)
@@ -176,6 +192,135 @@ public class JailCellSealedReleaseZone : MonoBehaviour
 
         RefreshJailorTrappedInsideDoorBypass();
         ReconcileSealedFlagsAgainstOccupancy();
+        TrackPrisonersWithNoWayOut();
+    }
+
+    /// <summary>
+    /// Server / offline: true when <paramref name="player"/> is alive, locked in a jail cell with no way out, and has
+    /// been for <see cref="NoWayOutGraceSeconds"/>. Nobody inside can free them any more, so for the team-wipe check
+    /// (<see cref="TeamWipeDirector"/>) they are out of the run exactly like a dead player.
+    /// </summary>
+    public static bool IsJailedWithNoWayOut(PlayerHealth player)
+    {
+        if (player == null || player.IsDead || !IsAuthority())
+            return false;
+
+        NetworkPlayerAvatar avatar = player.GetComponent<NetworkPlayerAvatar>();
+        if (avatar == null)
+            return false;
+
+        for (int i = 0; i < s_activeZones.Count; i++)
+        {
+            JailCellSealedReleaseZone zone = s_activeZones[i];
+            if (zone == null || !zone._noWayOutSince.TryGetValue(avatar, out float since))
+                continue;
+
+            // Re-checked live: the poll that recorded the entry can be a quarter second old.
+            return Time.unscaledTime - since >= NoWayOutGraceSeconds && zone.HasNoWayOut(avatar);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Times every prisoner of this cell who has run out of ways out, and asks for the team-wipe check once one has
+    /// been stuck for the grace period. The check itself decides: it only ends the run when every living player is
+    /// out — so a free teammate, or a cellmate who still has their match to play, keeps it going.
+    /// </summary>
+    void TrackPrisonersWithNoWayOut()
+    {
+        float now = Time.unscaledTime;
+        bool anyPastGrace = false;
+        foreach (NetworkPlayerAvatar avatar in _sealedByThisZone)
+        {
+            if (!HasNoWayOut(avatar))
+            {
+                _noWayOutSince.Remove(avatar);
+                continue;
+            }
+
+            if (!_noWayOutSince.TryGetValue(avatar, out float since))
+                _noWayOutSince[avatar] = now;
+            else if (now - since >= NoWayOutGraceSeconds)
+                anyPastGrace = true;
+        }
+
+        // A prisoner this zone no longer holds (released, escaped, gone) must not keep an old start time: a later
+        // capture would otherwise skip the grace period entirely.
+        _avatarScratch.Clear();
+        foreach (NetworkPlayerAvatar avatar in _noWayOutSince.Keys)
+        {
+            if (avatar == null || !_sealedByThisZone.Contains(avatar))
+                _avatarScratch.Add(avatar);
+        }
+        for (int i = 0; i < _avatarScratch.Count; i++)
+            _noWayOutSince.Remove(_avatarScratch[i]);
+
+        if (anyPastGrace)
+            TeamWipeDirector.EvaluateAsAuthority();
+    }
+
+    /// <summary>
+    /// The cell is shut and locked, and this prisoner holds no key, no loose key lies in the cell, and their one
+    /// match against the skeleton is spent (lost, or refused on a second capture). The only ways out left need
+    /// someone outside the cell.
+    /// </summary>
+    bool HasNoWayOut(NetworkPlayerAvatar avatar)
+    {
+        if (avatar == null || !avatar.IsSealedInJailCell)
+            return false;
+
+        PlayerHealth health = avatar.GetComponent<PlayerHealth>();
+        if (health == null || health.IsDead || !_occupants.Contains(health))
+            return false;
+
+        if (!IsCellShut())
+            return false;
+
+        if (HoldsDoorKey(health) || HasLooseKeyInCell())
+            return false;
+
+        SkeletonRpsChallenge skeleton = SkeletonRpsChallenge.FindForDoor(jailDoor);
+        // Offline the skeleton keys every match as player 0; in a session it keys them by the thrower's client id.
+        ulong clientKey = avatar.IsSpawned ? avatar.OwnerClientId : 0UL;
+        return skeleton == null || !skeleton.ServerHasChanceLeft(clientKey);
+    }
+
+    bool IsCellShut()
+    {
+        if (jailDoor == null || !jailDoor.IsLocked || jailDoor.IsOpen)
+            return false;
+
+        HingeInteractDoor pairedLeaf = jailDoor.PairedLeaf;
+        return pairedLeaf == null || !pairedLeaf.IsOpen;
+    }
+
+    static bool HoldsDoorKey(PlayerHealth health)
+    {
+        NetworkPlayerInventory inventory = health.GetComponent<NetworkPlayerInventory>();
+        if (inventory != null && inventory.IsSpawned)
+            return inventory.ServerHasKeyItem();
+
+        PlayerController controller = health.GetComponent<PlayerController>();
+        return controller != null && controller.HasDoorKeyInHotbar;
+    }
+
+    /// <summary>A key lying loose inside the cell (dropped there) can still be picked up and used on the door.</summary>
+    bool HasLooseKeyInCell()
+    {
+        if (_volume == null)
+            return false;
+
+        Bounds cell = _volume.bounds;
+        cell.Expand(0.5f);
+        foreach (GrabbableInventoryItem item in GrabbableInventoryItem.GetRegisteredItems())
+        {
+            if (item is KeyItem && item != null && !item.IsHeld && item.gameObject.activeInHierarchy
+                && cell.Contains(item.transform.position))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>

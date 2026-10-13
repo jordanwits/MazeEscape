@@ -171,19 +171,20 @@ public class NetworkPlayerRespawn : NetworkBehaviour
     /// <summary>
     /// Server: the team is wiped. Sent through this player's object only because a spawned NetworkBehaviour
     /// is needed to reach every peer; every peer — the host included — runs its own exit sequence.
+    /// <paramref name="everyoneDead"/> is false when someone was left alive but locked in the jail for good.
     /// </summary>
-    public void ServerBroadcastTeamWipe()
+    public void ServerBroadcastTeamWipe(bool everyoneDead)
     {
         if (!IsServer || !IsSpawned)
             return;
 
-        TeamWipeRpc();
+        TeamWipeRpc(everyoneDead);
     }
 
     [Rpc(SendTo.ClientsAndHost)]
-    void TeamWipeRpc()
+    void TeamWipeRpc(bool everyoneDead)
     {
-        TeamWipeSequence.Begin();
+        TeamWipeSequence.Begin(everyoneDead);
     }
 
     void HandlePlayerDied()

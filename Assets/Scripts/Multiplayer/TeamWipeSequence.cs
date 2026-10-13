@@ -8,7 +8,8 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Peer-local end of a lost run (see <see cref="TeamWipeDirector"/>): a short beat for the last body to land,
-/// an "ALL DEAD" card over everything — with a map of the section that replays where every player walked
+/// an "ALL DEAD" card over everything ("NO WAY OUT" when someone is left alive but locked in the jail for good)
+/// — with a map of the section that replays where every player walked
 /// (<see cref="RunTrailMap"/>) — then the session ends and this peer returns to the main menu, the same exit
 /// <see cref="ElevatorFinishController"/> takes after the final section.
 ///
@@ -42,17 +43,22 @@ public sealed class TeamWipeSequence : MonoBehaviour
 
     CanvasGroup _cardGroup;
     RunTrailMap _map;
+    bool _everyoneDead = true;
 
     public static bool IsRunning => s_instance != null;
 
-    /// <summary>Starts this peer's wipe sequence once; repeated calls are ignored.</summary>
-    public static void Begin()
+    /// <summary>
+    /// Starts this peer's wipe sequence once; repeated calls are ignored. <paramref name="everyoneDead"/> is false
+    /// when someone is still alive but locked in the jail with no way out, which changes the card's title.
+    /// </summary>
+    public static void Begin(bool everyoneDead = true)
     {
         if (s_instance != null)
             return;
 
         var go = new GameObject(nameof(TeamWipeSequence));
         s_instance = go.AddComponent<TeamWipeSequence>();
+        s_instance._everyoneDead = everyoneDead;
     }
 
     void Start()
@@ -154,15 +160,18 @@ public sealed class TeamWipeSequence : MonoBehaviour
         block.sizeDelta = new Vector2(1200f, TitleHeight);
         block.localRotation = Quaternion.Euler(0f, 0f, -0.6f);
 
+        // A prisoner left alive in the jail with nobody to free them ends the run too, but they are not dead.
+        string titleText = _everyoneDead ? "ALL DEAD" : "NO WAY OUT";
+
         // Same misprint treatment as the pause title, in blood instead of amber.
-        TextMeshProUGUI misprint = MenuWidgets.CreateText(block, "TitleMisprint", "ALL DEAD", 104f,
+        TextMeshProUGUI misprint = MenuWidgets.CreateText(block, "TitleMisprint", titleText, 104f,
             MenuTheme.WithAlpha(MenuTheme.Blood, 0.85f), MenuWidgets.FontKind.Display,
             TextAlignmentOptions.Center, 8f, FontStyles.Bold);
         misprint.rectTransform.SetStretch();
         misprint.rectTransform.anchoredPosition = new Vector2(7f, -5f);
         misprint.textWrappingMode = TextWrappingModes.NoWrap;
 
-        TextMeshProUGUI title = MenuWidgets.CreateText(block, "Title", "ALL DEAD", 104f, MenuTheme.Bone,
+        TextMeshProUGUI title = MenuWidgets.CreateText(block, "Title", titleText, 104f, MenuTheme.Bone,
             MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 8f, FontStyles.Bold);
         title.rectTransform.SetStretch();
         title.textWrappingMode = TextWrappingModes.NoWrap;

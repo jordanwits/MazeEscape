@@ -249,6 +249,20 @@ public class MultiplayerSessionController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Run In Background is on in Player Settings: a listen-server host whose player loop stops on focus loss
+    /// freezes every client, stops pumping Steam callbacks and lets direct-IP peers time out, and an unfocused
+    /// client stands frozen while the host's enemies keep attacking it. A solo run has no one else to stall, so
+    /// it alone keeps the old behaviour of stopping while the window is unfocused — nothing can kill a player
+    /// who has alt-tabbed away. Re-applied every frame so every start/stop path is covered.
+    /// </summary>
+    void Update()
+    {
+        bool runInBackground = !(_isOfflineSession && IsSessionActive);
+        if (Application.runInBackground != runInBackground)
+            Application.runInBackground = runInBackground;
+    }
+
     // Direct-IP host/join is the LAN transport fallback. It has no menu entry point any more —
     // players host from Play > Host Game and join by invite — but the path is kept for
     // transport-level debugging and for StartOnlineHost's fallback when the platform layer is down.

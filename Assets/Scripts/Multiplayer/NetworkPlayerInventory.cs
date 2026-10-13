@@ -1935,7 +1935,8 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         return false;
     }
 
-    bool ServerHasKeyItem() => ServerHasKeyItemOfType<KeyItem>(GrabbableInventoryItem.TypeIdKey);
+    /// <summary>Server-side "is this player carrying a door key" — what unlocks a keyed door, the jail cell included.</summary>
+    public bool ServerHasKeyItem() => ServerHasKeyItemOfType<KeyItem>(GrabbableInventoryItem.TypeIdKey);
 
     /// <summary>Server-side "is this player carrying the Clown's elevator key" — the cab's unlock gate.</summary>
     public bool ServerHasClownKeyItem() =>

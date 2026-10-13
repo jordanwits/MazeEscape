@@ -530,9 +530,18 @@ public class PlayerRagdollController : MonoBehaviour
         hipsRigidbody.MoveRotation(_heldTarget.rotation * _heldLocalRot);
     }
 
+    /// <summary>
+    /// No stand-up while a Jailor is carrying this player: the root is parented under him and server-authoritative,
+    /// so a recovery would re-enable the CharacterController under his arm and wipe the carry pose. The Jailor no
+    /// longer grabs a downed player; this covers anything that ever puts one in his arms anyway.
+    /// </summary>
+    bool IsRecoveryHeldByJailorCarry => _networkPlayerAvatar != null && _networkPlayerAvatar.IsCarriedByJailor;
+
     IEnumerator AutoRecoverAfterDelay()
     {
         yield return new WaitForSeconds(autoRecoverAfterSeconds);
+        while (IsRecoveryHeldByJailorCarry)
+            yield return null;
         _autoRecoverRoutine = null;
         DeactivateRagdoll();
     }
@@ -554,6 +563,14 @@ public class PlayerRagdollController : MonoBehaviour
             ResolveHips();
             if (hipsRigidbody == null)
                 yield break;
+
+            // Carried: hold everything, the fallback clock included, so the body is put down before it stands.
+            if (IsRecoveryHeldByJailorCarry)
+            {
+                ragdollStart += Time.fixedDeltaTime;
+                stable = 0f;
+                continue;
+            }
 
             float elapsed = Time.time - ragdollStart;
             if (recoverFallbackAfterSeconds > 0f && elapsed >= recoverFallbackAfterSeconds)

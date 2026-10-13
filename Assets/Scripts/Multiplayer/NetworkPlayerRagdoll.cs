@@ -220,7 +220,10 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         // Vector3.one, not the current localScale: the player invariant is unit scale (see
         // NetworkPlayerAvatar.EnforceUnitWorldScale), so passing whatever scale happens to be on the root at
         // recovery would re-cement a corrupted value instead of letting the invariant repair it.
-        if (ownerNetTransform != null)
+        // Only with transform authority: a Jailor carry hands the root to the server, NetworkTransform.Teleport
+        // throws on a non-authority, and the exception would kill this recovery before the server hears of it,
+        // leaving the player stuck ragdolled (the same guard as NetworkPlayerRespawn.ApplyRespawnTransform).
+        if (ownerNetTransform != null && ownerNetTransform.CanCommitToTransform)
             ownerNetTransform.Teleport(rootPosition, rootRotation, Vector3.one);
 
         NotifyRecoveryStartedServerRpc(rootPosition, rootRotation, onBack);

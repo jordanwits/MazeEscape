@@ -210,6 +210,30 @@ public class SkeletonRpsChallenge : MonoBehaviour
         return challenge != null;
     }
 
+    /// <summary>The skeleton guarding <paramref name="door"/> (its own leaf, or the mate of a paired pair), or null.</summary>
+    public static SkeletonRpsChallenge FindForDoor(HingeInteractDoor door)
+    {
+        if (door == null)
+            return null;
+
+        foreach (SkeletonRpsChallenge candidate in s_registered.Values)
+        {
+            if (candidate == null || candidate.jailDoor == null)
+                continue;
+            if (candidate.jailDoor == door || candidate.jailDoor == door.PairedLeaf || candidate.jailDoor.PairedLeaf == door)
+                return candidate;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Server / offline only: can this player still win the cell open — no match played yet, or one still under
+    /// way? False once their one match is lost (or was won, but a win opens the cell).
+    /// </summary>
+    public bool ServerHasChanceLeft(ulong clientKey) =>
+        !_serverPlayed.Contains(clientKey) || _serverMatches.ContainsKey(clientKey);
+
     public bool IsInInteractRange(Vector3 worldPosition, float extraSlack = 0f)
     {
         float max = interactMaxDistance + Mathf.Max(0f, extraSlack);
