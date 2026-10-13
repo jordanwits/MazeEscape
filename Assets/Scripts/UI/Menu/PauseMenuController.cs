@@ -2,7 +2,6 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
-using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
 
 /// <summary>
@@ -26,7 +25,6 @@ public sealed class PauseMenuController : MonoBehaviour
     TextMeshProUGUI _statusLabel;
     TextMeshProUGUI _sceneLabel;
     TMP_Text _leaveLabel;
-    GameObject _ownEventSystem;
     bool _isOpen;
     bool _settingsOpen;
 
@@ -108,7 +106,7 @@ public sealed class PauseMenuController : MonoBehaviour
         Cursor.visible = true;
         MenuTheme.ApplyCursor();
 
-        EnsureEventSystem();
+        UiEventSystem.Ensure();
         RefreshStatics();
         RefreshDynamic();
     }
@@ -124,11 +122,12 @@ public sealed class PauseMenuController : MonoBehaviour
         if (_modal != null)
             _modal.Close();
 
-        if (_ownEventSystem != null)
-        {
-            Destroy(_ownEventSystem);
-            _ownEventSystem = null;
-        }
+        // The shared EventSystem outlives this menu (it used to own a throwaway one), so let go of a pause plate it
+        // still has selected rather than carry that selection into gameplay.
+        EventSystem eventSystem = EventSystem.current;
+        if (eventSystem != null && _root != null && eventSystem.currentSelectedGameObject != null
+            && eventSystem.currentSelectedGameObject.transform.IsChildOf(_root.transform))
+            eventSystem.SetSelectedGameObject(null);
 
         // Re-lock the cursor here, exactly as every other blocking overlay does on close (blackjack, skeleton
         // RPS, prize counter). The old note claimed PlayerController picks this up once BlocksGameplayInput
@@ -143,16 +142,6 @@ public sealed class PauseMenuController : MonoBehaviour
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
         }
-    }
-
-    void EnsureEventSystem()
-    {
-        if (EventSystem.current != null || FindAnyObjectByType<EventSystem>() != null)
-            return;
-        _ownEventSystem = new GameObject("EventSystem (Pause)");
-        _ownEventSystem.transform.SetParent(transform, false);
-        _ownEventSystem.AddComponent<EventSystem>();
-        _ownEventSystem.AddComponent<InputSystemUIInputModule>();
     }
 
     // ================================================================ build

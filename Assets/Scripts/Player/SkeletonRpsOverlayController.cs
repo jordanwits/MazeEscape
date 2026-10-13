@@ -1,8 +1,6 @@
 using TMPro;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
-using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
@@ -125,8 +123,7 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
         _answeredThrow = _submittedThrow;
 
         EnsureUiBuilt();
-        // Re-checked on every show: the event system is a plain object that a scene load or the pause menu can take.
-        EnsureEventSystem();
+        UiEventSystem.Ensure();
         RefreshPips(challenge.LocalKnownPlayerWins, challenge.LocalKnownSkeletonWins);
         EnterChoosing(challenge.LocalPlayerHasUnfinishedMatch ? "FIRST TO 2 TAKES IT — GAME IN PROGRESS" : "FIRST TO 2 TAKES IT");
         SetShown(true);
@@ -597,20 +594,6 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
         scaler.referenceResolution = new Vector2(1920, 1080);
         canvasGo.AddComponent<GraphicRaycaster>();
         return canvas;
-    }
-
-    /// <summary>
-    /// The canvas outlives scene loads, so the event system feeding it has to as well — a scene-bound one dies
-    /// on the next level and leaves the plates unclickable.
-    /// </summary>
-    static void EnsureEventSystem()
-    {
-        if (EventSystem.current != null || FindAnyObjectByType<EventSystem>() != null)
-            return;
-        GameObject es = new("EventSystem (SkeletonRps)");
-        DontDestroyOnLoad(es);
-        es.AddComponent<EventSystem>();
-        es.AddComponent<InputSystemUIInputModule>();
     }
 
     static TMP_Text MakeLabel(Transform parent, string text, float fontSize, Color color, TextAlignmentOptions alignment,

@@ -67,6 +67,9 @@ public class MultiplayerBootstrap : MonoBehaviour
 
         if (!TryGetComponent(out RunTrailRecorder _))
             gameObject.AddComponent<RunTrailRecorder>();
+
+        // Before the first scene loads, so the menu (and every overlay after it) finds the one shared EventSystem.
+        UiEventSystem.Ensure();
     }
 
     void EnsureNetworkConfig(NetworkManager networkManager, UnityTransport transport)

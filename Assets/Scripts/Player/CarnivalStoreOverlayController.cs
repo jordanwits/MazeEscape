@@ -1,7 +1,5 @@
 using TMPro;
 using UnityEngine;
-using UnityEngine.EventSystems;
-using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
@@ -273,7 +271,7 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         if (_root != null)
             return;
 
-        EnsureEventSystem();
+        UiEventSystem.Ensure();
         if (_canvas == null)
             _canvas = CreateOwnedCanvas();
 
@@ -501,15 +499,6 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         scaler.referenceResolution = new Vector2(1920, 1080);
         canvasGo.AddComponent<GraphicRaycaster>();
         return canvas;
-    }
-
-    static void EnsureEventSystem()
-    {
-        if (EventSystem.current != null || FindAnyObjectByType<EventSystem>() != null)
-            return;
-        GameObject es = new("EventSystem (CarnivalStore)");
-        es.AddComponent<EventSystem>();
-        es.AddComponent<InputSystemUIInputModule>();
     }
 
     static TMP_Text MakeLabel(Transform parent, string text, float fontSize, Color color, TextAlignmentOptions alignment,

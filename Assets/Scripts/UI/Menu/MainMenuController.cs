@@ -2,8 +2,6 @@ using System.Collections.Generic;
 using TMPro;
 using Unity.Netcode;
 using UnityEngine;
-using UnityEngine.EventSystems;
-using UnityEngine.InputSystem.UI;
 using UnityEngine.UI;
 
 /// <summary>
@@ -134,7 +132,7 @@ public sealed class MainMenuController : MonoBehaviour
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
         MenuTheme.ApplyCursor();
-        EnsureEventSystem();
+        UiEventSystem.Ensure();
 
         // Tape treatment for the hallway behind the UI; disables itself when this menu goes away.
         if (GetComponent<MenuVhsFx>() == null)
@@ -164,15 +162,6 @@ public sealed class MainMenuController : MonoBehaviour
         {
             _session.LobbyStateChanged -= OnLobbyStateChanged;
         }
-    }
-
-    static void EnsureEventSystem()
-    {
-        if (EventSystem.current != null || FindAnyObjectByType<EventSystem>() != null)
-            return;
-        var go = new GameObject("EventSystem (Menu)");
-        go.AddComponent<EventSystem>();
-        go.AddComponent<InputSystemUIInputModule>();
     }
 
     // ================================================================ build

@@ -1,8 +1,6 @@
 using TMPro;
 using Unity.Netcode;
 using UnityEngine;
-using UnityEngine.EventSystems;
-using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
@@ -87,8 +85,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         }
 
         EnsureUiBuilt();
-        // Re-checked on every sit: the event system is a plain object that a scene load or the pause menu can take.
-        EnsureEventSystem();
+        UiEventSystem.Ensure();
         Refresh();
     }
 
@@ -507,20 +504,6 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         scaler.referenceResolution = new Vector2(1920, 1080);
         canvasGo.AddComponent<GraphicRaycaster>();
         return canvas;
-    }
-
-    /// <summary>
-    /// The canvas outlives scene loads, so the event system feeding it has to as well — a scene-bound one dies on
-    /// the next level and leaves the plates unclickable with the player frozen in the seat.
-    /// </summary>
-    static void EnsureEventSystem()
-    {
-        if (EventSystem.current != null || FindAnyObjectByType<EventSystem>() != null)
-            return;
-        GameObject es = new("EventSystem (Blackjack)");
-        UnityEngine.Object.DontDestroyOnLoad(es);
-        es.AddComponent<EventSystem>();
-        es.AddComponent<InputSystemUIInputModule>();
     }
 
     // --- builders ---
