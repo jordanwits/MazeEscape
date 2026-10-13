@@ -140,10 +140,13 @@ public class SteamworksBootstrap : MonoBehaviour
     {
         string appId = configuredAppId.ToString();
 
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SteamAppId")))
+        // A player keeps what Steam put there when Steam launched it. The Editor is never launched by Steam and its
+        // process outlives play sessions, so a value from an earlier session (before the id changed) must not stick.
+        bool overwrite = Application.isEditor;
+        if (overwrite || string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SteamAppId")))
             Environment.SetEnvironmentVariable("SteamAppId", appId);
 
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SteamGameId")))
+        if (overwrite || string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SteamGameId")))
             Environment.SetEnvironmentVariable("SteamGameId", appId);
 
         if (!Application.isEditor && !Debug.isDebugBuild)

@@ -15,7 +15,7 @@ MonoBehaviour:
   playerPrefab: {fileID: 4447047592272457077, guid: 8eaec518c4aba58469f998bbf52cec8e, type: 3}
   levelStartPosition: {x: -12.549, y: 1.01, z: -8.656}
   levelStartEulerAngles: {x: 0, y: 3.262, z: 0}
-  respawnDelaySeconds: 3
+  deathCamSeconds: 3
   lobbyCharacters:
   - displayName: DRIFTER
     playerPrefab: {fileID: 4447047592272457077, guid: 8eaec518c4aba58469f998bbf52cec8e, type: 3}
@@ -36,3 +36,4 @@ MonoBehaviour:
   menuPreviewFlashlightPrefab: {fileID: 7328506109978203443, guid: 4f1b1ddb8a2d50848aa35c5643acaa6b, type: 3}
   buildVersionOverride: 
   maxPlayers: 4
+  steamAppId: 5042850
