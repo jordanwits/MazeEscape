@@ -694,6 +694,7 @@ public partial class PlayerController : MonoBehaviour
 
     void OnDestroy()
     {
+        KeybindSettings.Changed -= HandleKeybindsChanged;
         if (_runtimeInputActions != null)
             Destroy(_runtimeInputActions);
         UnhookCarnivalTickets();
@@ -1573,7 +1574,12 @@ public partial class PlayerController : MonoBehaviour
         }
 
         if (_runtimeInputActions == null)
+        {
             _runtimeInputActions = Instantiate(inputActions);
+            // The player's rebinds from settings; reapplied live when they change mid-game (pause menu).
+            KeybindSettings.ApplyTo(_runtimeInputActions);
+            KeybindSettings.Changed += HandleKeybindsChanged;
+        }
 
         _playerMap ??= _runtimeInputActions.FindActionMap("Player");
         if (_playerMap == null)
@@ -1591,7 +1597,7 @@ public partial class PlayerController : MonoBehaviour
         _flashlightAction ??= _playerMap.FindAction("Flashlight");
         _attackAction ??= _playerMap.FindAction("Attack");
         _crouchAction ??= _playerMap.FindAction("Crouch");
-        _reloadAction ??= _playerMap.FindAction("Reload");   // absent from the asset is fine — R-key fallback covers it
+        _reloadAction ??= _playerMap.FindAction("Reload");
         // Hotbar cycling (d-pad left/right, keyboard 1/2 in the shipped asset); the mouse wheel is read directly.
         _previousSlotAction ??= _playerMap.FindAction("Previous");
         _nextSlotAction ??= _playerMap.FindAction("Next");
@@ -1603,6 +1609,11 @@ public partial class PlayerController : MonoBehaviour
     void DisableInputActions()
     {
         _playerMap?.Disable();
+    }
+
+    void HandleKeybindsChanged()
+    {
+        KeybindSettings.ApplyTo(_runtimeInputActions);
     }
 
     /// <summary>

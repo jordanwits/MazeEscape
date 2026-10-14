@@ -3,7 +3,7 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// Shared settings content (audio, display, graphics, voice) used by both the main menu and the pause
+/// Shared settings content (audio, display, graphics, voice, controls) used by both the main menu and the pause
 /// menu. Builds widgets into a scrollable vertical layout and binds them to the live managers
 /// (<see cref="GameAudioManager"/>, <see cref="GameDisplayBrightness"/>, <see cref="GameGraphicsSettings"/>).
 /// </summary>
@@ -23,6 +23,7 @@ public sealed class MenuSettingsPanel : MonoBehaviour
     TextMeshProUGUI _voiceValue;
     TextMeshProUGUI _brightnessValue;
     MenuSegmented _voiceMode;
+    TextMeshProUGUI _pttHint;
 
     // Graphics
     MenuSegmented _quality;
@@ -114,10 +115,14 @@ public sealed class MenuSettingsPanel : MonoBehaviour
                 VoiceUserSettings.SetOpenMic();
         };
 
-        MenuWidgets.CreateText(_content, "VoiceHint", "PTT KEY — V", 12.5f,
+        _pttHint = MenuWidgets.CreateText(_content, "VoiceHint", string.Empty, 12.5f,
             MenuTheme.WithAlpha(MenuTheme.Faint, 0.9f), MenuWidgets.FontKind.Display,
             TMPro.TextAlignmentOptions.Right, 3f);
 
+        MenuWidgets.CreateSection(_content, "CONTROLS");
+        MenuControlsSection.Build(_content);
+
+        KeybindSettings.Changed += UpdatePushToTalkHint;
         SyncFromManagers();
     }
 
@@ -193,6 +198,17 @@ public sealed class MenuSettingsPanel : MonoBehaviour
         SyncFromManagers();
     }
 
+    void OnDestroy()
+    {
+        KeybindSettings.Changed -= UpdatePushToTalkHint;
+    }
+
+    void UpdatePushToTalkHint()
+    {
+        if (_pttHint != null)
+            _pttHint.text = "PTT KEY — " + KeybindSettings.GetKeyboardLabel("PushToTalk", "V");
+    }
+
     public void SyncFromManagers()
     {
         if (_master == null)
@@ -227,6 +243,7 @@ public sealed class MenuSettingsPanel : MonoBehaviour
         }
 
         _voiceMode.Set(VoiceUserSettings.IsPushToTalk ? 1 : 0, false);
+        UpdatePushToTalkHint();
         UpdateValueLabels();
     }
 

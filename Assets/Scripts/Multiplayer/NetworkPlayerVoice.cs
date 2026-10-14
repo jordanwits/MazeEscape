@@ -66,6 +66,7 @@ public class NetworkPlayerVoice : NetworkBehaviour
     ushort _lastReceivedSequence;
     float _lastReceivedRealtime = float.NegativeInfinity;
 
+    InputActionAsset _runtimeInputActions;
     InputAction _pushToTalkAction;
     bool _pttWired;
     float _pushToTalkTailUntil;
@@ -133,6 +134,12 @@ public class NetworkPlayerVoice : NetworkBehaviour
         }
 
         _pushToTalkAction = null;
+        KeybindSettings.Changed -= HandleKeybindsChanged;
+        if (_runtimeInputActions != null)
+        {
+            Destroy(_runtimeInputActions);
+            _runtimeInputActions = null;
+        }
         _remoteOutput?.Dispose();
         _remoteOutput = null;
     }
@@ -179,10 +186,23 @@ public class NetworkPlayerVoice : NetworkBehaviour
             return;
         }
 
-        _pushToTalkAction = inputActions.FindActionMap(playerMapName, true)
+        // A private copy carrying the player's rebinds (see KeybindSettings), so push-to-talk follows settings.
+        if (_runtimeInputActions == null)
+        {
+            _runtimeInputActions = Instantiate(inputActions);
+            KeybindSettings.ApplyTo(_runtimeInputActions);
+            KeybindSettings.Changed += HandleKeybindsChanged;
+        }
+
+        _pushToTalkAction = _runtimeInputActions.FindActionMap(playerMapName, true)
             .FindAction(pushToTalkActionName, true);
         _pushToTalkAction?.Enable();
         _pttWired = _pushToTalkAction != null;
+    }
+
+    void HandleKeybindsChanged()
+    {
+        KeybindSettings.ApplyTo(_runtimeInputActions);
     }
 
     bool CanSendThisFrame()

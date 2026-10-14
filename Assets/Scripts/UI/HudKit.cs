@@ -136,6 +136,9 @@ public sealed class HudPrompt : MonoBehaviour
 {
     CanvasGroup _group;
     GameObject _keycap;
+    TextMeshProUGUI _keycapLabel;
+    LayoutElement _keycapLayout;
+    string _keycapKey;
     Image _icon;
     TextMeshProUGUI _label;
     bool _shown;
@@ -180,6 +183,8 @@ public sealed class HudPrompt : MonoBehaviour
         fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
         _keycap = HudKit.CreateKeycap(transform, "E").gameObject;
+        _keycapLabel = _keycap.GetComponentInChildren<TextMeshProUGUI>(true);
+        _keycapLayout = _keycap.GetComponent<LayoutElement>();
 
         var iconGo = new GameObject("Icon", typeof(RectTransform));
         iconGo.layer = 5;
@@ -208,7 +213,10 @@ public sealed class HudPrompt : MonoBehaviour
         _label.raycastTarget = false;
     }
 
-    /// <summary>Show a prompt message; leading "Press E (to)" collapses into the keycap.</summary>
+    /// <summary>
+    /// Show a prompt message; leading "Press E (to)" collapses into the keycap, which shows whatever Interact is
+    /// bound to (see <see cref="KeybindSettings"/>). "Hold E to ..." keeps its wording with the bound key swapped in.
+    /// </summary>
     public void ShowMessage(string message)
     {
         if (string.IsNullOrWhiteSpace(message))
@@ -231,6 +239,10 @@ public sealed class HudPrompt : MonoBehaviour
             label = label.Substring(prefix.Length);
             keycap = true;
         }
+        else if (label.StartsWith("Hold E ", System.StringComparison.OrdinalIgnoreCase))
+        {
+            label = "Hold " + InteractKey() + label.Substring("Hold E".Length);
+        }
 
         Apply(keycap, null, label.ToUpperInvariant());
     }
@@ -245,6 +257,8 @@ public sealed class HudPrompt : MonoBehaviour
     {
         if (_keycap.activeSelf != keycap)
             _keycap.SetActive(keycap);
+        if (keycap)
+            SetKeycapKey(InteractKey());
         bool hasIcon = icon != null;
         if (_icon.gameObject.activeSelf != hasIcon)
             _icon.gameObject.SetActive(hasIcon);
@@ -252,6 +266,24 @@ public sealed class HudPrompt : MonoBehaviour
             _icon.sprite = icon;
         _label.text = text;
         _shown = true;
+    }
+
+    static string InteractKey() => KeybindSettings.GetKeyboardLabel("Interact", "E");
+
+    void SetKeycapKey(string key)
+    {
+        if (key == _keycapKey || _keycapLabel == null)
+            return;
+
+        _keycapKey = key;
+        _keycapLabel.text = key;
+        // Square for one letter, widening for "LMB" / "MOUSE 4".
+        if (_keycapLayout != null)
+        {
+            float width = Mathf.Max(_keycapLayout.minHeight, _keycapLabel.GetPreferredValues(key).x + 12f);
+            _keycapLayout.minWidth = width;
+            _keycapLayout.preferredWidth = width;
+        }
     }
 
     public void Hide()
