@@ -3350,18 +3350,22 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
 
         if (_config.MazeTrapCount > 0)
         {
-            if (_config.MazeTrapPrefab == null)
+            List<GameObject> trapPrefabs = _config.ResolveMazeTrapPrefabs();
+            if (trapPrefabs.Count == 0)
             {
                 LogMazeWarningOnce(
                     "maze-trap-count-no-prefab",
-                    "[Maze] Maze Trap Count is greater than zero but Maze Trap Prefab is empty.",
+                    "[Maze] Maze Trap Count is greater than zero but Maze Trap Prefab and Maze Trap Variant Prefabs are empty.",
                     this);
             }
-            else if (_config.MazeTrapPrefab.GetComponent<NetworkObject>() == null)
+
+            foreach (GameObject trapPrefab in trapPrefabs)
             {
+                if (trapPrefab.GetComponent<NetworkObject>() != null)
+                    continue;
                 LogMazeWarningOnce(
-                    $"maze-trap-no-networkobject:{_config.MazeTrapPrefab.name}",
-                    $"[Maze] Maze Trap Prefab \"{_config.MazeTrapPrefab.name}\" has no NetworkObject. It will not replicate to clients in multiplayer.",
+                    $"maze-trap-no-networkobject:{trapPrefab.name}",
+                    $"[Maze] Maze trap prefab \"{trapPrefab.name}\" has no NetworkObject. It will not replicate to clients in multiplayer.",
                     this);
             }
         }
@@ -4322,9 +4326,9 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
     {
         HashSet<Vector2Int> spawnedTrapCells = new();
         List<Transform> spawnedTrapRoots = new();
-        GameObject prefab = _config.MazeTrapPrefab;
+        List<GameObject> trapPrefabs = _config.ResolveMazeTrapPrefabs();
         int requestedCount = _config.MazeTrapCount;
-        if (prefab == null || requestedCount <= 0)
+        if (trapPrefabs.Count == 0 || requestedCount <= 0)
             return (spawnedTrapCells, spawnedTrapRoots);
 
         if (_networkManager != null && _networkManager.IsListening && !_networkManager.IsServer)
@@ -4369,7 +4373,12 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             return (spawnedTrapCells, spawnedTrapRoots);
         }
 
-        ShuffleList(candidates, new System.Random(MixSeed(seed, unchecked((int)0x2D6E7A11))));
+        System.Random trapRandom = new(MixSeed(seed, unchecked((int)0x2D6E7A11)));
+        ShuffleList(candidates, trapRandom);
+
+        // Variants are dealt round-robin from a seeded order, so a count of 6 over 3 variants is exactly 2 each and a
+        // trimmed run (too few anchors) drops a different variant from seed to seed.
+        ShuffleList(trapPrefabs, trapRandom);
 
         Transform trapsRoot = CreateChild(mazeRoot, "GeneratedTraps");
         bool spawnWithNetcode = _networkManager != null && _networkManager.IsListening;
@@ -4386,6 +4395,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
                 continue;
 
             placedTrapPositions.Add(position);
+            GameObject prefab = trapPrefabs[spawnedCount % trapPrefabs.Count];
             GameObject instance = Instantiate(prefab, Vector3.zero, Quaternion.identity, trapsRoot);
             AlignTrapInstanceToAnchor(instance.transform, candidate.Anchor);
             spawnedCount++;

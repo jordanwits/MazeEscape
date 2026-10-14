@@ -182,6 +182,9 @@ public class ProceduralMazeConfig : ScriptableObject
     [Header("Maze Traps (Anchor-Based)")]
     [Tooltip("Prefab spawned at child transforms named TrapAnchor or TrapAnchor2 on generated maze pieces. Use a NetworkObject prefab for multiplayer. Leave empty to skip.")]
     [SerializeField] GameObject mazeTrapPrefab;
+    [Tooltip("Optional mix of trap prefabs. When any are set, Maze Trap Prefab is ignored and spawns cycle through " +
+             "these in a seeded order, so each variant gets an even share of Maze Trap Count.")]
+    [SerializeField] GameObject[] mazeTrapVariantPrefabs;
     [SerializeField] int mazeTrapCount;
     [Tooltip("Minimum graph distance from the start cell along open passages. Start cell is never used.")]
     [SerializeField] int mazeTrapMinCellsFromStart = 2;
@@ -381,6 +384,19 @@ public class ProceduralMazeConfig : ScriptableObject
             ? "JailorCarryDestination"
             : jailorCarryDestinationMarkerName.Trim();
     public GameObject MazeTrapPrefab => mazeTrapPrefab;
+    public GameObject[] MazeTrapVariantPrefabs => mazeTrapVariantPrefabs ?? EmptyPrefabs;
+
+    /// <summary>The trap prefabs this level spawns: the non-empty variants, or else the single Maze Trap Prefab.</summary>
+    public List<GameObject> ResolveMazeTrapPrefabs()
+    {
+        List<GameObject> result = new();
+        foreach (GameObject variant in MazeTrapVariantPrefabs)
+            if (variant != null)
+                result.Add(variant);
+        if (result.Count == 0 && mazeTrapPrefab != null)
+            result.Add(mazeTrapPrefab);
+        return result;
+    }
     public int MazeTrapCount => Mathf.Max(0, mazeTrapCount);
     public int MazeTrapMinCellsFromStart => Mathf.Max(0, mazeTrapMinCellsFromStart);
     public bool MazeTrapExcludeExitCell => mazeTrapExcludeExitCell;
