@@ -12,7 +12,7 @@ rem Usage:   upload.bat ^<steam-account-name^>
 rem steamcmd asks for the password and Steam Guard code itself. Never put them in this file.
 rem The build uploads without going live. Set it live on a branch in Steamworks (SteamPipe > Builds).
 
-if "%STEAMWORKS_SDK%"=="" set "STEAMWORKS_SDK=C:\steamworks_sdk\sdk"
+if "%STEAMWORKS_SDK%"=="" set "STEAMWORKS_SDK=H:\steamworks_sdk\sdk"
 set "STEAMCMD=%STEAMWORKS_SDK%\tools\ContentBuilder\builder\steamcmd.exe"
 set "BUILD=%~dp0..\Builds\Detour_Release"
 
