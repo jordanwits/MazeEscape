@@ -93,6 +93,10 @@ public class MultiplayerSceneFlow : MonoBehaviour
         if (nm == null || clientId != nm.LocalClientId || nm.IsHost)
             return;
 
+        // A lost run's card stays up until this player presses its LEAVE, even when the host leaves first.
+        if (TeamWipeSequence.IsRunning)
+            return;
+
         Scene active = SceneManager.GetActiveScene();
         if (active.IsValid() && IsMazeGameplayScene(active.name))
             SceneManager.LoadScene(MenuSceneName, LoadSceneMode.Single);

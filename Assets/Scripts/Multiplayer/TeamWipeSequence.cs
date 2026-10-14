@@ -1,7 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
 using TMPro;
-using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
@@ -10,11 +9,17 @@ using UnityEngine.UI;
 /// Peer-local end of a lost run (see <see cref="TeamWipeDirector"/>): a short beat for the last body to land,
 /// an "ALL DEAD" card over everything ("NO WAY OUT" when someone is left alive but locked in the jail for good)
 /// — with a map of the section that replays where every player walked
-/// (<see cref="RunTrailMap"/>) — then the session ends and this peer returns to the main menu, the same exit
-/// <see cref="ElevatorFinishController"/> takes after the final section.
+/// (<see cref="RunTrailMap"/>). The card stays until this player presses LEAVE, which ends their session and
+/// returns them to the main menu, the same exit <see cref="ElevatorFinishController"/> takes after the final
+/// section.
+///
+/// While it runs it owns input: <see cref="PauseMenuController.BlocksGameplayInput"/> reads
+/// <see cref="IsRunning"/>, so the view no longer turns with the mouse behind the card, nothing re-locks the
+/// cursor, and the pause menu stays shut. A client whose host leaves first keeps its card too
+/// (<see cref="MultiplayerSceneFlow"/> skips its disconnect-to-menu while this runs).
 ///
 /// Every peer draws the map from its own recording (<see cref="RunTrailRecorder"/>) and its own build of the
-/// maze, and every peer runs the same timeline, so nothing about the card is networked.
+/// maze, so nothing about the card is networked.
 ///
 /// Lives in the gameplay scene, so <see cref="IsRunning"/> clears by itself when the menu load tears it down.
 /// </summary>
@@ -25,24 +30,23 @@ public sealed class TeamWipeSequence : MonoBehaviour
     const float CardFadeInSeconds = 0.9f;
     /// <summary>How long the paths take to draw, however long the section actually lasted.</summary>
     const float TraceSeconds = 5f;
-    /// <summary>Time to take in the finished map before leaving.</summary>
-    const float CardHoldSeconds = 3.5f;
-    // The host shuts the session down, so it leaves last: clients that are still loading out when the host
-    // stops would otherwise be dropped mid-card (they still land in the menu, just without the hold).
-    const float HostExtraHoldSeconds = 1f;
     const int CardSortingOrder = 5000; // above the pause menu (4000) and the HUD
 
-    // Layout on the 1920x1080 reference canvas: title band on top, map in the middle, legend underneath.
+    // Layout on the 1920x1080 reference canvas: title band on top, map in the middle, legend and LEAVE underneath.
     const float TitleTop = 40f;
     const float TitleHeight = 130f;
     static readonly Vector2 MapMaxSize = new(1280f, 640f);
     const float MapCenterY = -20f;
-    const float LegendBottom = 70f;
+    const float LegendBottom = 128f;
+    const float LeaveBottom = 40f;
+    static readonly Vector2 LeaveSize = new(300f, 62f);
 
     static TeamWipeSequence s_instance;
 
     CanvasGroup _cardGroup;
     RunTrailMap _map;
+    Button _leaveButton;
+    Camera _fallbackCamera;
     bool _everyoneDead = true;
 
     public static bool IsRunning => s_instance != null;
@@ -84,20 +88,33 @@ public sealed class TeamWipeSequence : MonoBehaviour
         }
         _cardGroup.alpha = 1f;
 
-        // A fixed wait rather than waiting on the map: every peer must leave on the same clock, and the host
-        // (which ends the session) last of all.
+        // Clickable only once fully shown, so a click already in flight when the last player went down (a punch,
+        // a spectator switch) can't land on LEAVE before the card has even been seen.
+        _cardGroup.blocksRaycasts = true;
+        _cardGroup.interactable = true;
+
         if (_map != null && _map.HasTrails)
-        {
             _map.Play(TraceSeconds);
-            yield return new WaitForSecondsRealtime(TraceSeconds);
+    }
+
+    void Update()
+    {
+        // A client whose host left first is disconnected, and NGO destroyed every avatar — and the player camera
+        // with them. Nothing would clear the screen behind the card then, so draw a blank backdrop instead.
+        if (_cardGroup != null && _fallbackCamera == null && Camera.allCamerasCount == 0)
+        {
+            var go = new GameObject("TeamWipeBackdropCamera");
+            go.transform.SetParent(transform, false);
+            _fallbackCamera = go.AddComponent<Camera>();
+            _fallbackCamera.clearFlags = CameraClearFlags.SolidColor;
+            _fallbackCamera.backgroundColor = MenuTheme.Ink;
+            _fallbackCamera.cullingMask = 0;
         }
+    }
 
-        float hold = CardHoldSeconds;
-        NetworkManager nm = NetworkManager.Singleton;
-        if (nm != null && nm.IsListening && nm.IsServer)
-            hold += HostExtraHoldSeconds;
-        yield return new WaitForSecondsRealtime(hold);
-
+    void Leave()
+    {
+        _leaveButton.interactable = false; // one press: the menu load takes a frame or more
         ElevatorFinishController.RequestReturnToMainMenuLocal();
     }
 
@@ -106,6 +123,13 @@ public sealed class TeamWipeSequence : MonoBehaviour
         // The card replaces the game from here on; the spectator panel and the rest of the HUD sit exactly where
         // the legend goes and would show through the dim.
         HudKit.SetHudCanvasVisible(false);
+
+        // The player's own controller no longer locks the cursor while this runs (see BlocksGameplayInput), but
+        // it was locked for play when the run ended.
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+        MenuTheme.ApplyCursor();
+        UiEventSystem.Ensure();
 
         Canvas canvas = MenuWidgets.CreateCanvas("TeamWipeCard", CardSortingOrder, transform);
         _cardGroup = canvas.gameObject.AddComponent<CanvasGroup>();
@@ -121,6 +145,7 @@ public sealed class TeamWipeSequence : MonoBehaviour
         vignette.rectTransform.SetStretch();
 
         BuildTitle(canvas.transform);
+        BuildLeaveButton(canvas.transform);
 
         // The recorder froze the moment the wipe began; the footprint is only the right map if this peer's last
         // build was this section.
@@ -148,6 +173,20 @@ public sealed class TeamWipeSequence : MonoBehaviour
         legend.pivot = new Vector2(0.5f, 0f);
         legend.anchoredPosition = new Vector2(0f, LegendBottom);
         legend.sizeDelta = new Vector2(1600f, 30f);
+    }
+
+    void BuildLeaveButton(Transform parent)
+    {
+        // Danger, like every other LEAVE in the game (blackjack table, pause confirm).
+        MenuButtonFx fx = MenuWidgets.CreatePlate(parent, "Btn_LEAVE", "LEAVE", Leave,
+            MenuWidgets.PlateStyle.Danger, LeaveSize.y, 24f);
+        RectTransform rt = (RectTransform)fx.transform;
+        rt.anchorMin = new Vector2(0.5f, 0f);
+        rt.anchorMax = new Vector2(0.5f, 0f);
+        rt.pivot = new Vector2(0.5f, 0f);
+        rt.anchoredPosition = new Vector2(0f, LeaveBottom);
+        rt.sizeDelta = LeaveSize;
+        _leaveButton = fx.button;
     }
 
     void BuildTitle(Transform parent)

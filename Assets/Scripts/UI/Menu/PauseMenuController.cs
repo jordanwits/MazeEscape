@@ -13,7 +13,13 @@ using UnityEngine.SceneManagement;
 [DisallowMultipleComponent]
 public sealed class PauseMenuController : MonoBehaviour
 {
-    public static bool BlocksGameplayInput { get; private set; }
+    static bool s_open;
+
+    /// <summary>
+    /// True while a full-screen menu owns the mouse: this pause menu, or the game-over card
+    /// (<see cref="TeamWipeSequence"/>). Player look/move, the spectator orbit and every cursor re-lock check it.
+    /// </summary>
+    public static bool BlocksGameplayInput => s_open || TeamWipeSequence.IsRunning;
 
     MultiplayerSessionController _session;
     MultiplayerSceneFlow _flow;
@@ -38,8 +44,8 @@ public sealed class PauseMenuController : MonoBehaviour
     void OnDestroy()
     {
         SceneManager.sceneLoaded -= OnSceneLoaded;
-        if (BlocksGameplayInput && _isOpen)
-            BlocksGameplayInput = false;
+        if (_isOpen)
+            s_open = false;
     }
 
     void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -56,6 +62,15 @@ public sealed class PauseMenuController : MonoBehaviour
     void Update()
     {
         if (!InGameplayScene())
+        {
+            if (_isOpen)
+                Close(true);
+            return;
+        }
+
+        // The game-over card owns the screen and the cursor until its own LEAVE; this menu would open underneath
+        // it (lower sort order) and its close would re-lock the cursor.
+        if (TeamWipeSequence.IsRunning)
         {
             if (_isOpen)
                 Close(true);
@@ -100,7 +115,7 @@ public sealed class PauseMenuController : MonoBehaviour
         _root.SetActive(true);
         ShowSettings(false, true);
         _isOpen = true;
-        BlocksGameplayInput = true;
+        s_open = true;
 
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
@@ -114,7 +129,7 @@ public sealed class PauseMenuController : MonoBehaviour
     public void Close(bool instant)
     {
         _isOpen = false;
-        BlocksGameplayInput = false;
+        s_open = false;
         _settingsOpen = false;
 
         if (_root != null)
@@ -135,6 +150,7 @@ public sealed class PauseMenuController : MonoBehaviour
         // pausing never causes. So the cursor stayed free after unpausing until the player clicked — and that
         // recapture click fell straight through into an unintended punch or throw.
         if (InGameplayScene()
+            && !TeamWipeSequence.IsRunning
             && !BlackjackOverlayController.IsInteractive
             && !SkeletonRpsOverlayController.IsInteractive
             && !CarnivalStoreOverlayController.IsInteractive)
