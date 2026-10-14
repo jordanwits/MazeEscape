@@ -2442,7 +2442,7 @@ MonoBehaviour:
   speedParameter: Speed
   strideRateParameter: StrideRate
   crawlingParameter: Crawling
-  walkClipGroundSpeed: 0.45
+  walkClipGroundSpeed: 1.48
   crawlClipGroundSpeed: 2.9
   walkStrideRange: {x: 0.5, y: 4}
   crawlStrideRange: {x: 0.6, y: 2.5}
@@ -2544,8 +2544,8 @@ MonoBehaviour:
   doorBackOffSpeed: 2
   doorBackOffMaxSeconds: 1.25
   walkStepPhases:
-  - 0
-  - 0.51
+  - 0.22
+  - 0.7
   crawlContactHeight: 0.05
   crawlLiftResetHeight: 0.1
   footstepClips:

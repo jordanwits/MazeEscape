@@ -95,8 +95,8 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
     [SerializeField] string strideRateParameter = "StrideRate";
     [SerializeField] string crawlingParameter = "Crawling";
     [Tooltip("Ground speed the in-place clips were authored for, measured from planted-foot travel on this rig: " +
-             "CreepWalk 0.45, RunningCrawl 2.9 m/s. Re-measure if a clip is swapped.")]
-    [SerializeField, Min(0.05f)] float walkClipGroundSpeed = 0.45f;
+             "MutantWalk 1.48, RunningCrawl 2.9 m/s. Re-measure if a clip is swapped.")]
+    [SerializeField, Min(0.05f)] float walkClipGroundSpeed = 1.48f;
     [SerializeField, Min(0.05f)] float crawlClipGroundSpeed = 2.9f;
     [SerializeField] Vector2 walkStrideRange = new Vector2(0.5f, 4f);
     [SerializeField] Vector2 crawlStrideRange = new Vector2(0.6f, 2.5f);
@@ -231,10 +231,9 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
     [SerializeField, Min(0f)] float doorBackOffMaxSeconds = 1.25f;
 
     [Header("Footsteps")]
-    [Tooltip("The creeping walk is a shuffle — the toes never leave the floor by more than 2-7 cm — so its steps " +
-             "are keyed to the cycle instead of foot height: the normalized Walk-state phases where each foot " +
-             "plants (its forward motion reverses). Measured on CreepWalk: right 0.00, left 0.51.")]
-    [SerializeField] float[] walkStepPhases = { 0f, 0.51f };
+    [Tooltip("Walk steps are keyed to the cycle instead of foot height: the normalized Walk-state phases where " +
+             "each foot plants (its forward motion reverses). Measured on MutantWalk: left 0.22, right 0.70.")]
+    [SerializeField] float[] walkStepPhases = { 0.22f, 0.70f };
     [Tooltip("On all fours: a toe or hand dropping below this height (m above his root) lands; it must rise past " +
              "Lift Reset to re-arm. 0.05/0.10 gives exactly one contact per limb per RunningCrawl cycle.")]
     [SerializeField] float crawlContactHeight = 0.05f;
