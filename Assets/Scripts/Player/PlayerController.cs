@@ -104,6 +104,8 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] AudioClip footstepClip2;
     [SerializeField] float walkFootstepInterval = 0.48f;
     [SerializeField] float runFootstepInterval = 0.34f;
+    [Tooltip("Seconds between steps while crouch-walking. Matches the crouch-walk clips' stride at crouchWalkSpeed.")]
+    [SerializeField] float crouchFootstepInterval = 0.6f;
     [SerializeField] float footstepVolume = 0.5f;
     [SerializeField] float minimumFootstepSpeed = 0.15f;
     [SerializeField] AudioClip flashlightClickClip;
@@ -1282,7 +1284,7 @@ public partial class PlayerController : MonoBehaviour
             return;
         }
 
-        float interval = Mathf.Max(0.05f, _isSprinting ? runFootstepInterval : walkFootstepInterval);
+        float interval = FootstepInterval(_isSprinting, _isCrouching);
         _footstepTimer -= Time.deltaTime;
         if (_footstepTimer > 0f)
             return;
@@ -1290,6 +1292,9 @@ public partial class PlayerController : MonoBehaviour
         PlayFootstepOneShot();
         _footstepTimer = interval;
     }
+
+    float FootstepInterval(bool sprinting, bool crouching) =>
+        Mathf.Max(0.05f, crouching ? crouchFootstepInterval : sprinting ? runFootstepInterval : walkFootstepInterval);
 
     void TryPlayLandFootstep(bool wasGroundedBeforeMove, bool groundedAfterMove)
     {
@@ -1299,7 +1304,7 @@ public partial class PlayerController : MonoBehaviour
         PlayFootstepOneShot();
 
         if (_currentHorizontalSpeed >= minimumFootstepSpeed)
-            _footstepTimer = Mathf.Max(0.05f, _isSprinting ? runFootstepInterval : walkFootstepInterval);
+            _footstepTimer = FootstepInterval(_isSprinting, _isCrouching);
     }
 
     void PlayFootstepOneShot()

@@ -109,14 +109,14 @@ public partial class PlayerController
         }
 
         // No replicated sprint flag, so the cadence is picked off the speed itself: anything past the midpoint
-        // of walk and run is a sprint.
+        // of walk and run is a sprint. Crouching does replicate (the Crouching animator bool).
         bool sprinting = _observerSmoothedSpeed > (walkSpeed + runSpeed) * 0.5f;
         _observerFootstepTimer -= dt;
         if (_observerFootstepTimer > 0f)
             return;
 
         PlayObserverFootstepOneShot();
-        _observerFootstepTimer = Mathf.Max(0.05f, sprinting ? runFootstepInterval : walkFootstepInterval);
+        _observerFootstepTimer = FootstepInterval(sprinting, IsCrouching);
     }
 
     void PrimeObserverFootsteps(Vector3 position)
