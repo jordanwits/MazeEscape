@@ -78,7 +78,15 @@ public sealed class RingTossGameController : NetworkBehaviour, ICarnivalGameStar
         public Transform spawnAnchor;
         public bool wasHeld;
         public bool thrown;
+        public float driftRestSeconds; // how long it has sat still away from its anchor without ever being held
     }
+
+    /// <summary>A never-held ring resting farther than this from its anchor is put back (metres).</summary>
+    const float UnheldDriftResetDistance = 0.5f;
+    /// <summary>How long a drifted, never-held ring must sit still before it is put back.</summary>
+    const float UnheldDriftResetSettleSeconds = 1f;
+    /// <summary>Below this speed a drifted ring counts as sitting still.</summary>
+    const float UnheldDriftRestSpeed = 0.05f;
 
     readonly List<TrackedRing> _rings = new List<TrackedRing>();
     bool _resolving;
@@ -317,7 +325,7 @@ public sealed class RingTossGameController : NetworkBehaviour, ICarnivalGameStar
                 continue;
 
             Transform t = r.net.transform;
-            if (t.position.y > ringOutOfBoundsYThreshold)
+            if (t.position.y > ringOutOfBoundsYThreshold && !ServerTickUnheldDrift(r, t))
                 continue;
 
             t.position = r.spawnAnchor.position;
@@ -329,6 +337,43 @@ public sealed class RingTossGameController : NetworkBehaviour, ICarnivalGameStar
                 rb.angularVelocity = Vector3.zero;
             }
         }
+    }
+
+    /// <summary>
+    /// True once a ring nobody has picked up yet has sat still for <see cref="UnheldDriftResetSettleSeconds"/> more
+    /// than <see cref="UnheldDriftResetDistance"/> from its anchor. A throw or a body bump can knock a waiting ring
+    /// onto the peg deck behind the barrier, out of reach; it then never counted as thrown, so the round never
+    /// resolved and the booth read "in progress" for the rest of the section.
+    /// </summary>
+    bool ServerTickUnheldDrift(TrackedRing r, Transform t)
+    {
+        if (r.wasHeld)
+            return false;
+
+        // Horizontal only: a prop that merely dropped from its anchor onto the surface below it has not drifted.
+        Vector3 drift = t.position - r.spawnAnchor.position;
+        drift.y = 0f;
+        if (drift.sqrMagnitude <= UnheldDriftResetDistance * UnheldDriftResetDistance)
+        {
+            r.driftRestSeconds = 0f;
+            return false;
+        }
+
+        Rigidbody rb = r.net.GetComponent<Rigidbody>();
+        bool still = rb == null || rb.isKinematic || rb.IsSleeping()
+            || rb.linearVelocity.sqrMagnitude <= UnheldDriftRestSpeed * UnheldDriftRestSpeed;
+        if (!still)
+        {
+            r.driftRestSeconds = 0f;
+            return false;
+        }
+
+        r.driftRestSeconds += Time.fixedDeltaTime;
+        if (r.driftRestSeconds < UnheldDriftResetSettleSeconds)
+            return false;
+
+        r.driftRestSeconds = 0f;
+        return true;
     }
 
     void ServerResolveRound()

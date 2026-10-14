@@ -672,7 +672,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         }
         TryRebuildRuntimeNavMesh(root);
         TrySpawnMazeItemPickups(root.transform, builtCellRoots, sectionSeed);
-        TrySpawnMazeEnemies(root.transform, grid, start, exit, sectionSeed, cellSize, interiorPlan, mazeTrapCells, mazeTrapRoots);
+        TrySpawnMazeEnemies(root.transform, grid, start, exit, jailDeadEndCell, sectionSeed, cellSize, interiorPlan, mazeTrapCells, mazeTrapRoots);
         TrySpawnMazeRatBots(root.transform, sectionSeed);
         TrySpawnFinalBoss(root.transform, cellsRoot);
         PublishFootprint(scene.name, grid, start, exit, cellSize, builtCellRoots);
@@ -3816,6 +3816,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         MazeCell[,] grid,
         Vector2Int start,
         Vector2Int exit,
+        Vector2Int? jailDeadEndCell,
         int seed,
         float cellSize,
         InteriorRoomBuildPlan interiorPlan,
@@ -3862,6 +3863,12 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
                     continue;
 
                 if (_config.MazeEnemyExcludeExitCell && x == exit.x && y == exit.y)
+                    continue;
+
+                // Nothing spawns inside the Jailor's cell: an enemy idling there gets shut in with whoever he
+                // delivers next. Excluding it here also keeps it out of the hunter cells and the hunter respawn
+                // pool, which are both drawn from this list.
+                if (jailDeadEndCell.HasValue && cellKey == jailDeadEndCell.Value)
                     continue;
 
                 // The exit hall is one long finish piece; its anchor cell is a normal built cell, so

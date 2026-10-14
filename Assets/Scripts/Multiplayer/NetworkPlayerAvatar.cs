@@ -192,8 +192,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         float waited = 0f;
         while (transform.parent != null && waited < maxWaitSeconds)
         {
-            // Unscaled: the pause menu sets timeScale to 0, where deltaTime never advances and this bail-out
-            // would wait forever on an unparent that never lands.
+            // Unscaled, so this bail-out still counts down if time is ever scaled to 0 and can't wait forever on
+            // an unparent that never lands. (Nothing scales it today: the pause menu only blocks input.)
             waited += Time.unscaledDeltaTime;
             yield return null;
         }

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Audio;
 using UnityEngine.SceneManagement;
@@ -41,11 +42,19 @@ public sealed class GameAudioManager : MonoBehaviour
     [Tooltip("If set, used instead of Resources.Load(GameAudio/MainMixer).")]
     [SerializeField] AudioMixer mainMixerOverride;
 
+    // 0.1176 ≈ -18.6 dB, the level the Ui fader was authored at. Until 2026-10 'UiVolume' was exposed on the Voice
+    // fader by mistake, so the Ui fader sat at that authored level and that is the click loudness everyone tuned
+    // against; this default keeps it now that the parameter really drives the Ui fader.
     [Header("UI Sounds")]
     [Tooltip("Editor-only volume for the mixer's Ui bus (all click/hover sounds, menus + blackjack). Drives the 'UiVolume' exposed mixer parameter directly — not exposed to players in game.")]
-    [SerializeField, Range(0f, 1f)] float uiSoundVolume = 1f;
+    [SerializeField, Range(0f, 1f)] float uiSoundVolume = 0.1176f;
+
+    /// <summary>Exposed names a SetFloat has already warned about (the mixer lacks them), so each warns once.</summary>
+    static readonly HashSet<string> s_missingExposedParams = new();
 
     AudioMixer _mixer;
+    /// <summary>Start has run, so the mixer is initialised and SetFloat sticks (see <see cref="Start"/>).</summary>
+    bool _mixerReady;
     AudioMixerGroup _musicGroup;
     AudioMixerGroup _sfxGroup;
     AudioMixerGroup _voiceGroup;
@@ -88,17 +97,27 @@ public sealed class GameAudioManager : MonoBehaviour
 
         CacheGroups();
         LoadPrefs();
-        ApplyAllToMixer();
-        ApplyBus(ExposedUiVolume, uiSoundVolume);
 
         SceneManager.sceneLoaded += HandleSceneLoaded;
         RouteSceneAmbientBed(); // in case a level scene is already active when the manager comes up
     }
 
+    /// <summary>
+    /// The saved bus levels go to the mixer here, not in Awake: Unity documents AudioMixer.SetFloat as unreliable
+    /// from Awake/OnEnable/scene-load callbacks (the mixer is not initialised yet, and its snapshot can overwrite
+    /// the value), and this Awake runs even earlier — from the BeforeSceneLoad bootstrap.
+    /// </summary>
+    void Start()
+    {
+        _mixerReady = true;
+        ApplyAllToMixer();
+    }
+
     void OnValidate()
     {
         // Let the editor slider tune the Ui bus live in play mode.
-        ApplyBus(ExposedUiVolume, uiSoundVolume);
+        if (_mixerReady)
+            ApplyBus(ExposedUiVolume, uiSoundVolume);
     }
 
     void OnDestroy()
@@ -112,6 +131,11 @@ public sealed class GameAudioManager : MonoBehaviour
     void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         RouteSceneAmbientBed();
+
+        // Cheap insurance that the saved levels are what's playing in every scene. The first scene's load fires
+        // before Start, where SetFloat isn't safe yet — Start covers that one.
+        if (_mixerReady)
+            ApplyAllToMixer();
     }
 
     /// <summary>
@@ -204,6 +228,7 @@ public sealed class GameAudioManager : MonoBehaviour
         ApplyBus(ExposedMusicVolume, _musicLinear);
         ApplyBus(ExposedSfxVolume, _sfxLinear);
         ApplyBus(ExposedVoiceVolume, _voiceLinear);
+        ApplyBus(ExposedUiVolume, uiSoundVolume);
     }
 
     void ApplyBus(string exposedName, float linear01)
@@ -211,7 +236,14 @@ public sealed class GameAudioManager : MonoBehaviour
         if (_mixer == null)
             return;
 
-        _mixer.SetFloat(exposedName, LinearToDecibels(linear01));
+        // SetFloat returns false for a name the mixer doesn't expose, and the setting then silently does nothing
+        // (the Voice Chat slider was dead that way). Say so once per name.
+        if (!_mixer.SetFloat(exposedName, LinearToDecibels(linear01)) && s_missingExposedParams.Add(exposedName))
+        {
+            Debug.LogWarning(
+                $"GameAudioManager: mixer \"{_mixer.name}\" has no exposed parameter \"{exposedName}\"; that volume setting has no effect.",
+                this);
+        }
     }
 
     /// <summary>
@@ -339,5 +371,46 @@ public sealed class GameAudioManager : MonoBehaviour
         if (linear <= 0.0001f)
             return -80f;
         return Mathf.Log10(linear) * 20f;
+    }
+
+    /// <summary>
+    /// Unity's Logarithmic rolloff never reaches silence — past maxDistance it only keeps falling as 1/distance
+    /// (the Mutant's breathing, when it used that law, measured -31 dB at 90 m relative to 1 m: plainly audible) —
+    /// and <see cref="AudioOcclusionManager"/> stops muffling anything past maxDistance on the assumption it is
+    /// inaudible there. So such a source was faintly audible, unmuffled, from anywhere in the level. This keeps the
+    /// same 1/distance law up close and fades it to exactly zero over the far half of the range. Times are
+    /// distance / maxDistance, as the Custom rolloff curve expects.
+    /// </summary>
+    public static AnimationCurve FadingLogRolloff(float minDistance, float maxDistance)
+    {
+        var curve = new AnimationCurve();
+        curve.AddKey(0f, 1f);
+
+        float max = Mathf.Max(maxDistance, minDistance + 0.5f);
+        for (float d = Mathf.Max(0.05f, minDistance); ; d *= 1.35f)
+        {
+            float t = Mathf.Min(1f, d / max);
+            float fade = Mathf.Clamp01((1f - t) * 2f); // 1 up to half the range, 0 at the max
+            fade = fade * fade * (3f - 2f * fade);
+            curve.AddKey(t, Mathf.Min(1f, minDistance / Mathf.Min(d, max)) * fade);
+            if (t >= 1f)
+                break;
+        }
+        return curve;
+    }
+
+    /// <summary>
+    /// A 3D source that fades to silence at <paramref name="maxDistance"/> (see <see cref="FadingLogRolloff"/>)
+    /// instead of Unity's never-silent Logarithmic law.
+    /// </summary>
+    public static void ApplyFadingLogRolloff(AudioSource source, float minDistance, float maxDistance)
+    {
+        if (source == null)
+            return;
+
+        source.minDistance = minDistance;
+        source.maxDistance = maxDistance;
+        source.rolloffMode = AudioRolloffMode.Custom;
+        source.SetCustomCurve(AudioSourceCurveType.CustomRolloff, FadingLogRolloff(minDistance, maxDistance));
     }
 }

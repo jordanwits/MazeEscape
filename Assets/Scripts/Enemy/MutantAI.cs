@@ -60,7 +60,7 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
     [Header("Waiting / waking")]
     [Tooltip("With the hall door open, any player he can see within this range wakes him.")]
     [SerializeField, Min(1f)] float wakeSightDistance = 40f;
-    [Tooltip("Anyone this close wakes him whether the door is open or not.")]
+    [Tooltip("Anyone he can see this close wakes him whether the door is open or not. Walls still hide you.")]
     [SerializeField, Min(0f)] float wakeProximity = 9f;
     [Tooltip("While he waits, his head follows players he can see within this range — the body never moves.")]
     [SerializeField, Min(0f)] float dormantWatchDistance = 34f;
@@ -313,6 +313,8 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
     Vector3 _issuedDestination;
     float _driveSpeed;
     float _driveUntil;
+    // Who the drive closes on: the ability's committed target, not whoever last hit him.
+    Transform _driveTarget;
     EnemyBlindEffect _blindEffect;
     PlayerHealth _risingTarget;
     float _riseGraceUntil;
@@ -559,7 +561,9 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
             float d = Vector3.Distance(transform.position, p.transform.position);
             bool seen = d <= Mathf.Max(wakeSightDistance, dormantWatchDistance) && HasLineOfSight(p);
 
-            if (d <= wakeProximity || (doorOpen && seen && d <= wakeSightDistance))
+            // Proximity needs line of sight too: the corridors beside the hall run within 9 m of him, so a raw
+            // distance woke him through the side wall and the blink then carried him out into the maze.
+            if (seen && (d <= wakeProximity || (doorOpen && d <= wakeSightDistance)))
             {
                 ServerWake(p);
                 return;
@@ -882,13 +886,13 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
             return Vector3.zero;
         }
 
-        if (_driveSpeed <= 0.01f || Time.time >= _driveUntil || _target == null)
+        if (_driveSpeed <= 0.01f || Time.time >= _driveUntil || _driveTarget == null)
         {
             _intendedMoveSpeed = 0f;
             return Vector3.zero;
         }
 
-        Vector3 gap = _target.position - transform.position;
+        Vector3 gap = _driveTarget.position - transform.position;
         gap.y = 0f;
         if (gap.magnitude <= 1.1f)
         {
@@ -907,6 +911,10 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
     IEnumerator ReachRoutine()
     {
         const int side = (int)MutantLimbRig.ArmSide.Right;
+        // The reach belongs to the player it was chosen for. A hit re-targets him (OnDamageTaken), and reading the
+        // live target here fired the arm at whoever punched him — skipping the range, lane and sight checks that
+        // picked this reach, and usually catching the rescuer point-blank. They become his prey once it's over.
+        PlayerHealth reachTarget = _targetHealth;
         PlayState("Reach", 0.1f);
         Broadcast_ReachWindup(side, reachWindupSeconds);
 
@@ -914,12 +922,12 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
         float lockTime = fireTime - reachCommitLead;
         while (Time.time < fireTime)
         {
-            if (Time.time < lockTime && _target != null)
-                RotateTowards(_target.position, 540f);
+            if (Time.time < lockTime && reachTarget != null)
+                RotateTowards(reachTarget.transform.position, 540f);
             yield return null;
         }
 
-        if (_targetHealth == null || !IsTargetable(_targetHealth))
+        if (reachTarget == null || !IsTargetable(reachTarget))
         {
             Broadcast_ReachRetract(side, reachRetractSeconds);
             PlayState("Idle", 0.2f);
@@ -929,7 +937,7 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
 
         // Aim where the target is NOW (after the commit lock, a side-step makes this empty air).
         Vector3 shoulder = limbRig.ShoulderWorldPosition(MutantLimbRig.ArmSide.Right);
-        Vector3 aim = ChestPoint(_targetHealth);
+        Vector3 aim = ChestPoint(reachTarget);
         Vector3 toAim = aim - shoulder;
         Vector3 dir = toAim.sqrMagnitude > 1e-4f ? toAim.normalized : transform.forward;
         float natural = limbRig.NaturalArmLength(MutantLimbRig.ArmSide.Right);
@@ -1214,26 +1222,29 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
     IEnumerator ClawRoutine()
     {
         PlayState("Claw", 0.1f);
+        // Committed to the player it was chosen for, like the reach: a hit mid-swipe re-targets him for later only.
+        PlayerHealth clawTarget = _targetHealth;
         float hitAt = Time.time + clawHitTime;
         float lockAt = hitAt - 0.2f;
         _driveSpeed = clawDriveSpeed;
         _driveUntil = hitAt;
+        _driveTarget = clawTarget != null ? clawTarget.transform : null;
         while (Time.time < hitAt)
         {
-            if (Time.time < lockAt && _target != null)
-                RotateTowards(_target.position, 420f);
+            if (Time.time < lockAt && clawTarget != null)
+                RotateTowards(clawTarget.transform.position, 420f);
             yield return null;
         }
         _driveSpeed = 0f;
 
-        if (!IsBlinded && CanLandCommitted(_targetHealth, transform.forward, clawRange + 0.35f, clawHitHalfAngle))
+        if (!IsBlinded && CanLandCommitted(clawTarget, transform.forward, clawRange + 0.35f, clawHitHalfAngle))
         {
-            _targetHealth.TakeDamage(clawDamage);
-            Vector3 push = _targetHealth.transform.position - transform.position;
+            clawTarget.TakeDamage(clawDamage);
+            Vector3 push = clawTarget.transform.position - transform.position;
             push.y = 0f;
             push = push.sqrMagnitude > 1e-4f ? push.normalized : transform.forward;
-            PushPlayer(_targetHealth, push * clawPushSpeed, clawPushUpSpeed, clawPushLockSeconds);
-            Broadcast_Sfx(SfxKind.ClawHit, _targetHealth.transform.position + Vector3.up * 1.2f);
+            PushPlayer(clawTarget, push * clawPushSpeed, clawPushUpSpeed, clawPushLockSeconds);
+            Broadcast_Sfx(SfxKind.ClawHit, clawTarget.transform.position + Vector3.up * 1.2f);
         }
 
         yield return new WaitForSeconds(clawRecovery);
@@ -2416,7 +2427,7 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
     void ConfigureAudioSources(bool allowCreate = true, bool route = false)
     {
         footstepAudioSource = ConfigureSource(footstepAudioSource, FootstepAudioChildName, allowCreate, route, 1.5f, 26f, AudioRolloffMode.Linear);
-        // Custom = the logarithmic law faded to silence (see FadingLogRolloff), not Unity's Logarithmic.
+        // Custom = the logarithmic law faded to silence (see GameAudioManager.FadingLogRolloff), not Unity's Logarithmic.
         fxAudioSource = ConfigureSource(fxAudioSource, FxAudioChildName, allowCreate, route, 2f, 34f, AudioRolloffMode.Custom);
         voiceAudioSource = ConfigureSource(voiceAudioSource, VoiceAudioChildName, allowCreate, route, 2.5f, 40f, AudioRolloffMode.Custom);
         breathAudioSource = ConfigureSource(breathAudioSource, BreathAudioChildName, allowCreate, route,
@@ -2454,37 +2465,11 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
         source.maxDistance = maxDistance;
         source.rolloffMode = rolloff;
         if (rolloff == AudioRolloffMode.Custom)
-            source.SetCustomCurve(AudioSourceCurveType.CustomRolloff, FadingLogRolloff(minDistance, maxDistance));
+            source.SetCustomCurve(AudioSourceCurveType.CustomRolloff, GameAudioManager.FadingLogRolloff(minDistance, maxDistance));
         source.dopplerLevel = 0f;
         if (route && Application.isPlaying)
             GameAudioManager.RouteSfxSource(source);
         return source;
-    }
-
-    /// <summary>
-    /// Unity's Logarithmic rolloff never reaches silence — past maxDistance it only keeps falling as 1/distance
-    /// (his breathing, when it shared this law, measured -31 dB at 90 m relative to 1 m: plainly audible) — and
-    /// <see cref="AudioOcclusionManager"/> stops muffling anything past maxDistance on the assumption it is inaudible
-    /// there. So he was faintly audible, unmuffled, from anywhere in the level. This keeps the same 1/distance law
-    /// up close and fades it to exactly zero over the far half of the range. Times are distance / maxDistance, as
-    /// the Custom rolloff curve expects.
-    /// </summary>
-    static AnimationCurve FadingLogRolloff(float minDistance, float maxDistance)
-    {
-        var curve = new AnimationCurve();
-        curve.AddKey(0f, 1f);
-
-        float max = Mathf.Max(maxDistance, minDistance + 0.5f);
-        for (float d = Mathf.Max(0.05f, minDistance); ; d *= 1.35f)
-        {
-            float t = Mathf.Min(1f, d / max);
-            float fade = Mathf.Clamp01((1f - t) * 2f); // 1 up to half the range, 0 at the max
-            fade = fade * fade * (3f - 2f * fade);
-            curve.AddKey(t, Mathf.Min(1f, minDistance / Mathf.Min(d, max)) * fade);
-            if (t >= 1f)
-                break;
-        }
-        return curve;
     }
 
     /// <summary>Closest distance between segments p1-q1 and p2-q2; <paramref name="s"/> is the fraction along the first.</summary>

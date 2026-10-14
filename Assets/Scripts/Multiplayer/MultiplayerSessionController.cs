@@ -47,6 +47,7 @@ public class MultiplayerSessionController : MonoBehaviour
     const string LobbyCharacterRequestMessageName = "lobby-character-request";
     const string LobbyNameRequestMessageName = "lobby-name-request";
     const string LobbyStateMessageName = "lobby-state";
+    const string SessionEndingMessageName = "session-ending";
     const byte NoCharacterByte = 0xFF;
     const int MaxDisplayNameLength = 24;
     const string OnlineUnavailableStatus = "Online play is unavailable right now.";
@@ -79,9 +80,28 @@ public class MultiplayerSessionController : MonoBehaviour
     bool _allLobbyPlayersReady;
     bool _gameStartRequested;
     int _localCharacterIndex = -1;
+    bool _localClientConnected;
+    bool _localShutdownRequested;
+    bool _hostAnnouncedSessionEnd;
+    bool _hasPendingSessionFailure;
+    string _pendingSessionFailureTitle = string.Empty;
+    string _pendingSessionFailureBody = string.Empty;
+
+    const string CouldNotJoinTitle = "COULDN'T JOIN";
+    const string DisconnectedTitle = "DISCONNECTED";
+    // Approval refusals reach the client as NGO disconnect reasons; this build sends them as finished display lines
+    // (older hosts sent sentences, see DescribeDisconnectReason).
+    const string VersionMismatchReasonPrefix = "VERSION MISMATCH";
+    const string LobbyFullReasonPrefix = "LOBBY FULL";
 
     public event Action<string> StatusChanged;
     public event Action LobbyStateChanged;
+
+    /// <summary>
+    /// A join failed, or this client was dropped from a session it had joined. The menu reads the message with
+    /// <see cref="TryConsumeSessionFailure"/>; it stays pending across the return-to-menu load when it happens in game.
+    /// </summary>
+    public event Action SessionFailed;
 
     public string DefaultAddress => defaultAddress;
     public ushort DefaultPort => defaultPort;
@@ -226,6 +246,7 @@ public class MultiplayerSessionController : MonoBehaviour
         {
             _steamLobby.LobbyReadyToJoin += HandleSteamLobbyReadyToJoin;
             _steamLobby.StatusChanged += HandleSteamLobbyStatusChanged;
+            _steamLobby.LobbyJoinFailed += HandleSteamLobbyJoinFailed;
         }
     }
 
@@ -246,6 +267,7 @@ public class MultiplayerSessionController : MonoBehaviour
         {
             _steamLobby.LobbyReadyToJoin -= HandleSteamLobbyReadyToJoin;
             _steamLobby.StatusChanged -= HandleSteamLobbyStatusChanged;
+            _steamLobby.LobbyJoinFailed -= HandleSteamLobbyJoinFailed;
         }
     }
 
@@ -323,6 +345,7 @@ public class MultiplayerSessionController : MonoBehaviour
         defaultPort = port;
 
         _isOfflineSession = false;
+        BeginLocalClientAttempt();
         SelectDirectIpTransport();
         ConfigurePlayerPrefab();
         ConfigureDirectClientTransport(defaultAddress, defaultPort);
@@ -332,6 +355,8 @@ public class MultiplayerSessionController : MonoBehaviour
         UpdateStatus(started
             ? $"Joining lobby at {defaultAddress}:{defaultPort}..."
             : "Client start failed. Check the Unity console for details.");
+        if (!started)
+            RaiseSessionFailure(CouldNotJoinTitle, "HOST UNREACHABLE");
     }
 
     /// <summary>
@@ -434,16 +459,19 @@ public class MultiplayerSessionController : MonoBehaviour
         if (hostUserId == 0UL)
         {
             UpdateStatus("That invite is no longer valid.");
+            RaiseSessionFailure(CouldNotJoinTitle, "INVITE EXPIRED");
             return;
         }
 
         if (!SelectSteamTransport())
         {
             UpdateStatus(OnlineUnavailableStatus);
+            RaiseSessionFailure(CouldNotJoinTitle, "ONLINE UNAVAILABLE");
             return;
         }
 
         _isOfflineSession = false;
+        BeginLocalClientAttempt();
         _steamTransport.ConnectToSteamID = hostUserId;
         ConfigurePlayerPrefab();
         bool started = _networkManager.StartClient();
@@ -452,6 +480,8 @@ public class MultiplayerSessionController : MonoBehaviour
         UpdateStatus(started
             ? "Connecting to the host..."
             : "Could not connect to the host. Check the Unity console for details.");
+        if (!started)
+            RaiseSessionFailure(CouldNotJoinTitle, "HOST UNREACHABLE");
     }
 
     public void JoinLobbyFromInvite(ulong lobbyId)
@@ -459,6 +489,7 @@ public class MultiplayerSessionController : MonoBehaviour
         if (_steamLobby == null)
         {
             UpdateStatus(OnlineUnavailableStatus);
+            RaiseSessionFailure(CouldNotJoinTitle, "ONLINE UNAVAILABLE");
             return;
         }
 
@@ -492,6 +523,10 @@ public class MultiplayerSessionController : MonoBehaviour
 
         CancelPendingGameLoad();
         CancelAllPendingSpawnMoves();
+        // This player chose to leave: the disconnect that follows is not a failure to report (ReportLocalSessionLost).
+        _localShutdownRequested = true;
+        if (_networkManager.IsServer)
+            AnnounceSessionEndingToClients();
         _steamLobby?.LeaveLobby();
         ClearLobbyState();
         UnregisterLobbyMessageHandlers();
@@ -792,7 +827,8 @@ public class MultiplayerSessionController : MonoBehaviour
         if (!string.Equals(clientVersion, expectedVersion, System.StringComparison.Ordinal))
         {
             response.Approved = false;
-            response.Reason = $"Build version mismatch (server: {expectedVersion}, client: {clientVersion}).";
+            // Shown as-is on the refused player's menu (see ReportLocalSessionLost).
+            response.Reason = $"{VersionMismatchReasonPrefix} · HOST {expectedVersion}";
             return;
         }
 
@@ -802,7 +838,7 @@ public class MultiplayerSessionController : MonoBehaviour
         if (_networkManager != null && _networkManager.ConnectedClientsIds.Count >= max)
         {
             response.Approved = false;
-            response.Reason = $"Lobby is full ({max}/{max}).";
+            response.Reason = $"{LobbyFullReasonPrefix} {max}/{max}";
             return;
         }
 
@@ -850,6 +886,7 @@ public class MultiplayerSessionController : MonoBehaviour
 
         if (clientId == _networkManager.LocalClientId)
         {
+            _localClientConnected = true;
             EnsureLobbyMessageHandlersRegistered();
             SendNameRequest(LocalDisplayName());
             UpdateStatus("Connected.");
@@ -873,6 +910,7 @@ public class MultiplayerSessionController : MonoBehaviour
             _steamLobby?.LeaveLobby();
             ClearLobbyState();
             UpdateStatus("Disconnected from host.");
+            ReportLocalSessionLost(_networkManager.DisconnectReason);
             return;
         }
 
@@ -916,6 +954,80 @@ public class MultiplayerSessionController : MonoBehaviour
         Debug.Log($"[Multiplayer] {_status}", this);
     }
 
+    /// <summary>The menu's half of <see cref="SessionFailed"/>: hands over the pending message, once.</summary>
+    public bool TryConsumeSessionFailure(out string title, out string body)
+    {
+        title = _pendingSessionFailureTitle;
+        body = _pendingSessionFailureBody;
+        if (!_hasPendingSessionFailure)
+            return false;
+
+        _hasPendingSessionFailure = false;
+        return true;
+    }
+
+    /// <summary>A new join attempt: forget how the previous session ended.</summary>
+    void BeginLocalClientAttempt()
+    {
+        _localClientConnected = false;
+        _localShutdownRequested = false;
+        _hostAnnouncedSessionEnd = false;
+        _hasPendingSessionFailure = false;
+    }
+
+    /// <summary>
+    /// Tells the menu why this client's session ended: a refused or failed join, or a drop after joining (mid-game
+    /// included; the message waits out the return-to-menu load). Status lines have no menu home by design, so every
+    /// one of these used to look like a dead invite. Nothing is shown for a leave this player chose, or while the
+    /// game-over card is up — that card owns LEAVE.
+    /// </summary>
+    void ReportLocalSessionLost(string reason)
+    {
+        bool chosen = _localShutdownRequested;
+        bool wasConnected = _localClientConnected;
+        bool hostLeft = _hostAnnouncedSessionEnd;
+        _localShutdownRequested = false;
+        _localClientConnected = false;
+        _hostAnnouncedSessionEnd = false;
+
+        if (!string.IsNullOrWhiteSpace(reason))
+            Debug.Log($"[Multiplayer] Disconnect reason: {reason}", this);
+        if (chosen || TeamWipeSequence.IsRunning)
+            return;
+
+        RaiseSessionFailure(
+            wasConnected ? DisconnectedTitle : CouldNotJoinTitle,
+            DescribeDisconnectReason(reason, wasConnected, hostLeft));
+    }
+
+    /// <summary>One terse data line for the failure modal's body.</summary>
+    static string DescribeDisconnectReason(string reason, bool wasConnected, bool hostLeft)
+    {
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            if (reason.StartsWith(VersionMismatchReasonPrefix, StringComparison.Ordinal)
+                || reason.StartsWith(LobbyFullReasonPrefix, StringComparison.Ordinal))
+                return reason;
+            // Hosts on older builds sent sentences.
+            if (reason.StartsWith("Build version mismatch", StringComparison.OrdinalIgnoreCase))
+                return VersionMismatchReasonPrefix;
+            if (reason.StartsWith("Lobby is full", StringComparison.OrdinalIgnoreCase))
+                return LobbyFullReasonPrefix;
+        }
+
+        if (hostLeft)
+            return "HOST LEFT";
+        return wasConnected ? "CONNECTION LOST" : "HOST UNREACHABLE";
+    }
+
+    void RaiseSessionFailure(string title, string body)
+    {
+        _pendingSessionFailureTitle = title;
+        _pendingSessionFailureBody = body;
+        _hasPendingSessionFailure = true;
+        SessionFailed?.Invoke();
+    }
+
     void HandleSteamLobbyReadyToJoin(ulong lobbyId, ulong hostSteamId)
     {
         if (_networkManager != null && _networkManager.IsListening)
@@ -928,6 +1040,11 @@ public class MultiplayerSessionController : MonoBehaviour
     {
         if (!string.IsNullOrWhiteSpace(message))
             UpdateStatus(message);
+    }
+
+    void HandleSteamLobbyJoinFailed(string reason)
+    {
+        RaiseSessionFailure(CouldNotJoinTitle, reason);
     }
 
     void EnsureLobbyMessageHandlersRegistered()
@@ -944,6 +1061,7 @@ public class MultiplayerSessionController : MonoBehaviour
         }
 
         _networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LobbyStateMessageName, HandleLobbyStateMessage);
+        _networkManager.CustomMessagingManager.RegisterNamedMessageHandler(SessionEndingMessageName, HandleSessionEndingMessage);
         _lobbyMessageHandlersRegistered = true;
     }
 
@@ -963,8 +1081,43 @@ public class MultiplayerSessionController : MonoBehaviour
             _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbyNameRequestMessageName);
         }
         _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LobbyStateMessageName);
+        _networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(SessionEndingMessageName);
         _lobbyMessageHandlersRegistered = false;
         _lobbyReadyRequestHandlerRegistered = false;
+    }
+
+    /// <summary>
+    /// Host leaving on purpose: tell every joined player before NGO's deferred shutdown drops them, so their menu can
+    /// say the host left rather than that the connection was lost (the teardown itself carries no reason). Queued
+    /// before <see cref="NetworkManager.Shutdown"/>, which only flags the teardown, so it should go out ahead of the
+    /// disconnects; a client that never gets it falls back to "CONNECTION LOST".
+    /// </summary>
+    void AnnounceSessionEndingToClients()
+    {
+        if (_networkManager == null || _networkManager.CustomMessagingManager == null)
+            return;
+
+        using FastBufferWriter writer = new(sizeof(byte), Allocator.Temp);
+        writer.WriteValueSafe((byte)1);
+        foreach (ulong clientId in _networkManager.ConnectedClientsIds)
+        {
+            if (clientId == _networkManager.LocalClientId)
+                continue;
+
+            _networkManager.CustomMessagingManager.SendNamedMessage(
+                SessionEndingMessageName,
+                clientId,
+                writer,
+                NetworkDelivery.ReliableSequenced);
+        }
+    }
+
+    void HandleSessionEndingMessage(ulong senderClientId, FastBufferReader reader)
+    {
+        if (_networkManager == null || _networkManager.IsServer || senderClientId != NetworkManager.ServerClientId)
+            return;
+
+        _hostAnnouncedSessionEnd = true;
     }
 
     void HandleLobbyReadyRequest(ulong senderClientId, FastBufferReader reader)

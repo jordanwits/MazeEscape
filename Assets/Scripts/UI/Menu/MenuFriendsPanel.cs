@@ -8,7 +8,8 @@ using UnityEngine.UI;
 /// Invites go through the matchmaking API rather than the game overlay, so this works in the Unity
 /// Editor too — the overlay is only injected into processes Steam itself launched and never appears
 /// in the editor. Built in the shared plate language (<see cref="MenuWidgets"/>), same as
-/// <see cref="MenuModal"/>.
+/// <see cref="MenuModal"/>, and like it a navigation scope of its own while open: a pad lands on the first INVITE
+/// still to send (DONE when there is none) and B / Esc closes it.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class MenuFriendsPanel : MonoBehaviour
@@ -28,6 +29,8 @@ public sealed class MenuFriendsPanel : MonoBehaviour
     CanvasGroup _group;
     RectTransform _listContent;
     TextMeshProUGUI _emptyLabel;
+    Button _doneButton;
+    UiNavScope _navScope;
     bool _shown;
     float _refreshTimer;
     long _renderedSignature = -1;
@@ -82,12 +85,19 @@ public sealed class MenuFriendsPanel : MonoBehaviour
         _listContent = MenuWidgets.CreateScrollView(content, ListMaxHeight);
 
         MenuWidgets.CreateSpacer(content, 6f);
-        MenuWidgets.CreateGhostButton(content, "DONE", Close, false, 50f);
+        _doneButton = MenuWidgets.CreateGhostButton(content, "DONE", Close, false, 50f);
+
+        _navScope = new UiNavScope(root, DefaultNavSelection, Close);
 
         _group.alpha = 0f;
         _group.blocksRaycasts = false;
         _group.interactable = false;
         gameObject.SetActive(false);
+    }
+
+    void OnDestroy()
+    {
+        UiEventSystem.Close(_navScope);
     }
 
     public void Open()
@@ -100,6 +110,7 @@ public sealed class MenuFriendsPanel : MonoBehaviour
         _group.interactable = true;
         _refreshTimer = 0f;
         Refresh();
+        UiEventSystem.Open(_navScope);
     }
 
     public void Close()
@@ -107,6 +118,17 @@ public sealed class MenuFriendsPanel : MonoBehaviour
         _shown = false;
         _group.blocksRaycasts = false;
         _group.interactable = false;
+        UiEventSystem.Close(_navScope);
+    }
+
+    Selectable DefaultNavSelection()
+    {
+        for (int i = 0; i < _rows.Count; i++)
+        {
+            if (_rows[i].Invite != null && _rows[i].Invite.interactable)
+                return _rows[i].Invite;
+        }
+        return _doneButton;
     }
 
     void Update()

@@ -254,7 +254,7 @@ public class SkeletonThrownObject : NetworkBehaviour
                 continue;
 
             PlayerHealth ph = col.GetComponentInParent<PlayerHealth>();
-            if (ph == null || ph.IsDead)
+            if (ph == null || ph.IsDead || IsSparedFromSkull(ph))
                 continue;
 
             HitAndRicochet(ph, position, arcVelocity);
@@ -263,11 +263,26 @@ public class SkeletonThrownObject : NetworkBehaviour
 
         // Joined clients have no collider the overlap above can find on the server; test their stand-in capsule.
         PlayerHealth standIn = PlayerHealthRegistry.FindStandInHitInSphere(position, hitRadius);
-        if (standIn == null)
+        if (standIn == null || IsSparedFromSkull(standIn))
             return false;
 
         HitAndRicochet(standIn, position, arcVelocity);
         return true;
+    }
+
+    /// <summary>
+    /// A skull already in the air when its target was sealed in the jail cell, or knocked down, flies on past
+    /// them: <see cref="SkeletonAI"/> never attacks either, and the cell bars don't stop the skull. Down = the
+    /// same ragdolled / held / getting-up test the stand-in capsule already applies to joined clients.
+    /// </summary>
+    static bool IsSparedFromSkull(PlayerHealth ph)
+    {
+        NetworkPlayerAvatar avatar = ph.GetComponent<NetworkPlayerAvatar>();
+        if (avatar != null && avatar.IsSealedInJailCell)
+            return true;
+
+        PlayerRagdollController ragdoll = ph.GetComponent<PlayerRagdollController>();
+        return ragdoll != null && (ragdoll.IsRagdolled || ragdoll.IsHeld || ragdoll.IsGettingUp);
     }
 
     void HitAndRicochet(PlayerHealth ph, Vector3 position, Vector3 arcVelocity)

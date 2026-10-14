@@ -64,6 +64,10 @@ public partial class PlayerController
                 byte itemType = _networkPlayerInventory.GetSlotItemTypeId(i);
                 if (id == 0UL && itemType == GrabbableInventoryItem.TypeIdNone)
                     continue;
+                // Already put in the world by the server's drop RPC, which overtakes this slot's clear on a pure
+                // client; re-holding it here is what dropped it again from the hand, dark, once the clear landed.
+                if (_networkPlayerInventory.IsAwaitingSlotClear(id))
+                    continue;
 
                 GrabbableInventoryItem g = null;
                 bool found = GrabbableInventoryItem.TryGetRegistered(id, out g) && g != null;
@@ -921,7 +925,10 @@ public partial class PlayerController
                 continue;
             _localInventorySlots[i] = null;
             _localSlotStacks[i] = 0;
-            SelectAfterDropLocal();
+            // Same rule as the networked consume: the key counts from any slot, so keep the selection unless the
+            // key itself was in hand.
+            if (i == _localSelectedSlot)
+                SelectAfterDropLocal();
             Destroy(k.gameObject);
             RefreshLocalInventoryView();
             door.ApplyLocalUnlock();
@@ -944,7 +951,8 @@ public partial class PlayerController
 
             _localInventorySlots[i] = null;
             _localSlotStacks[i] = 0;
-            SelectAfterDropLocal();
+            if (i == _localSelectedSlot)
+                SelectAfterDropLocal();
             Destroy(key.gameObject);
             RefreshLocalInventoryView();
             return true;

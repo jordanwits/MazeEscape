@@ -145,22 +145,41 @@ public class ProximityVoiceSession : MonoBehaviour
     /// RMS level a frame needs before the AI counts it as someone talking: about -40 dBFS, above a headset's room
     /// noise floor and below quiet speech.
     /// </summary>
-    const float SpeechRmsThreshold = 32767f * 0.01f;
+    public const float SpeechRmsThreshold = 32767f * 0.01f;
     /// <summary>Keeps a speaker "talking" through the quiet gaps between syllables and words.</summary>
-    const float SpeechHangoverSeconds = 0.35f;
+    public const float SpeechHangoverSeconds = 0.35f;
+    /// <summary>
+    /// RMS level at which open mic starts transmitting (<see cref="NetworkPlayerVoice"/>'s voice gate): about
+    /// -45 dBFS, a little under <see cref="SpeechRmsThreshold"/> so quiet speech reaches the other players even when
+    /// it is too quiet to draw the AI.
+    /// </summary>
+    public const float VoiceActivationRmsThreshold = 32767f * 0.0056f;
+    /// <summary>How long open mic keeps transmitting after the last frame above <see cref="VoiceActivationRmsThreshold"/>.</summary>
+    public const float VoiceActivationHangoverSeconds = 0.4f;
     static readonly System.Collections.Generic.Dictionary<ulong, float> s_SpeakingUntil = new();
+
+    /// <summary>Root-mean-square level of one PCM16 frame, in sample units (0..32767).</summary>
+    public static float FrameRms(short[] samples, int count)
+    {
+        if (samples == null || count <= 0)
+            return 0f;
+
+        double sumSquares = 0d;
+        for (int i = 0; i < count; i++)
+            sumSquares += samples[i] * (double)samples[i];
+        return (float)System.Math.Sqrt(sumSquares / count);
+    }
 
     /// <summary>
     /// Open mic is the default and sends every frame, silence included, so the Jailor and the Clown were told about
     /// every silent open-mic player within earshot and walked straight to them through walls. Only frames loud
     /// enough to be speech (plus a short hangover) reach the AI now. Every frame is still relayed to the players.
+    /// Senders gate open mic themselves now too (at a lower level), but this stays: it is what the AI trusts, and it
+    /// covers push-to-talk, which sends everything while the key is held.
     /// </summary>
     static bool IsSpeech(ulong senderId, short[] samples, int count)
     {
-        double sumSquares = 0d;
-        for (int i = 0; i < count; i++)
-            sumSquares += samples[i] * (double)samples[i];
-        float rms = (float)System.Math.Sqrt(sumSquares / count);
+        float rms = FrameRms(samples, count);
 
         float now = Time.unscaledTime;
         if (rms >= SpeechRmsThreshold)

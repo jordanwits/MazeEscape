@@ -284,6 +284,8 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
     WindupMonkeyAI _attackTargetMonkey;
     // The wind-up monkey whose clap last lured the Clown; smashed on arrival when no player is around to chase.
     WindupMonkeyAI _lureMonkey;
+    // Whoever hit him during a swing; becomes his target when the swing ends (see OnDamageTaken).
+    PlayerHealth _pendingAttacker;
     float _suppressAttackAndChaseUntil;
 
     const string EnemyLayerName = "Enemy";
@@ -483,9 +485,8 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         clownFootstepAudioSource.playOnAwake = false;
         clownFootstepAudioSource.loop = false;
         clownFootstepAudioSource.spatialBlend = 1f;
-        clownFootstepAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
-        clownFootstepAudioSource.minDistance = 1.5f;
-        clownFootstepAudioSource.maxDistance = 25f;
+        // Unity's Logarithmic law never reaches silence, so he was faintly audible (unmuffled) level-wide.
+        GameAudioManager.ApplyFadingLogRolloff(clownFootstepAudioSource, 1.5f, 25f);
         clownFootstepAudioSource.dopplerLevel = 0f;
         GameAudioManager.RouteSfxSource(clownFootstepAudioSource);
     }
@@ -500,9 +501,7 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         clownVoiceAudioSource.playOnAwake = false;
         clownVoiceAudioSource.loop = false;
         clownVoiceAudioSource.spatialBlend = 1f;
-        clownVoiceAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
-        clownVoiceAudioSource.minDistance = 2f;
-        clownVoiceAudioSource.maxDistance = 30f;
+        GameAudioManager.ApplyFadingLogRolloff(clownVoiceAudioSource, 2f, 30f); // fades to silence at max
         clownVoiceAudioSource.dopplerLevel = 0f;
         clownVoiceAudioSource.volume = Mathf.Clamp01(clownVoiceVolume);
         GameAudioManager.RouteSfxSource(clownVoiceAudioSource);
@@ -1403,35 +1402,36 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             }
         }
 
-        if (bestSeen == null)
+        // Always run the registry pass, even when the overlap already saw someone. On the host the overlap only
+        // finds the host's own player (a joined client's copy has its CharacterController off and its proxy on
+        // Ignore Raycast), so skipping this whenever it found anyone made him pick the host over a nearer client.
+        // The < bestSeenScore comparisons below keep whoever is genuinely nearest.
+        IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
+        for (int i = 0; i < players.Count; i++)
         {
-            IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
-            for (int i = 0; i < players.Count; i++)
+            PlayerHealth candidate = players[i];
+            if (candidate == null || candidate.IsDead || ShouldIgnorePlayer(candidate))
+                continue;
+
+            float distance = Vector3.Distance(transform.position, candidate.transform.position);
+            if (distance > Mathf.Max(detectionRadius, hearingRadius))
+                continue;
+
+            bool seen = distance <= detectionRadius
+                && IsWithinDetectionCone(candidate.transform.position)
+                && (!requireDetectionLineOfSight || HasDetectionLineOfSight(candidate));
+            if (seen && distance < bestSeenScore)
             {
-                PlayerHealth candidate = players[i];
-                if (candidate == null || candidate.IsDead || ShouldIgnorePlayer(candidate))
-                    continue;
+                bestSeenScore = distance;
+                bestSeen = candidate;
+            }
 
-                float distance = Vector3.Distance(transform.position, candidate.transform.position);
-                if (distance > Mathf.Max(detectionRadius, hearingRadius))
-                    continue;
-
-                bool seen = distance <= detectionRadius
-                    && IsWithinDetectionCone(candidate.transform.position)
-                    && (!requireDetectionLineOfSight || HasDetectionLineOfSight(candidate));
-                if (seen && distance < bestSeenScore)
-                {
-                    bestSeenScore = distance;
-                    bestSeen = candidate;
-                }
-
-                bool heardSprint = distance <= hearingRadius && IsPlayerAudiblySprinting(candidate);
-                if (heardSprint && distance < bestSoundScore)
-                {
-                    bestSoundScore = distance;
-                    bestSoundPoint = candidate.transform.position;
-                    hasSoundPoint = true;
-                }
+            bool heardSprint = distance <= hearingRadius && IsPlayerAudiblySprinting(candidate);
+            if (heardSprint && distance < bestSoundScore)
+            {
+                bestSoundScore = distance;
+                bestSoundPoint = candidate.transform.position;
+                hasSoundPoint = true;
             }
         }
 
@@ -1921,7 +1921,15 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             return;
 
         // Getting hit always gets his attention (even from behind, even mid-patrol) — but never yanks him
-        // out of a committed swing; Attacking runs its own state machine to completion.
+        // out of a committed swing; Attacking runs its own state machine to completion. Mid-swing the new target
+        // waits for EndSwing: the wind-up faces _target (and the head look and ClownDynamicScale follow it), so
+        // re-targeting here spun him onto the attacker while the hammer still landed on the original victim.
+        if (_state == ClownState.Attacking)
+        {
+            _pendingAttacker = attackerHealth;
+            return;
+        }
+
         AssignTarget(attackerHealth);
         if (_state == ClownState.Idle || _state == ClownState.Patrol || _state == ClownState.Investigating)
             EnterChase();
@@ -2059,6 +2067,7 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         _state = ClownState.Attacking;
         _hammerHitDone = false;
         _attackStartedTime = Time.time;
+        _pendingAttacker = null;
         _attackTargetMonkey = null;
         _attackTargetHealth = _targetHealth;
         _attackTargetRagdoll = _targetHealth != null ? _targetHealth.GetComponent<PlayerRagdollController>() : null;
@@ -2127,6 +2136,7 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         _state = ClownState.Attacking;
         _hammerHitDone = false;
         _attackStartedTime = Time.time;
+        _pendingAttacker = null;
         _attackTargetMonkey = monkey;
         _attackTargetHealth = null;
         _attackTargetRagdoll = null;
@@ -2537,6 +2547,12 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (_lureMonkey != null && _lureMonkey.IsKnockedOver)
             _lureMonkey = null;
 
+        // Whoever hit him mid-swing gets his attention now that the swing is over (see OnDamageTaken).
+        PlayerHealth pendingAttacker = _pendingAttacker;
+        _pendingAttacker = null;
+        if (pendingAttacker != null && !pendingAttacker.IsDead && !ShouldIgnorePlayer(pendingAttacker))
+            AssignTarget(pendingAttacker);
+
         // Keep chasing the same live target; only drop it if it died / became unreachable so we don't loiter
         // on a stale target (the normal chase flow re-acquires or falls back to patrol next frame).
         if (_targetHealth == null || _targetHealth.IsDead || ShouldIgnorePlayer(_targetHealth))
@@ -2552,10 +2568,29 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             _networkClownAvatar.ServerMarkAttackAnimationEnded();
     }
 
+    /// <summary>
+    /// Longest an investigation walk-in may take before he searches where he stands. Generous on purpose: he walks
+    /// at patrol speed to points up to ~33 m away (an outrun target's last-known position), and a maze route there
+    /// can honestly take 20+ s. The partial-path test in UpdateInvestigating is the real fix; this only backstops it.
+    /// </summary>
+    const float InvestigationApproachTimeoutSeconds = 30f;
+
+    /// <summary>
+    /// Re-path interval toward an investigation point that has not moved (a moved point re-paths at once). The chase
+    /// rate (destinationRefreshInterval, 0.1 s) re-requested the same unreachable point so often that the multi-frame
+    /// partial-path search was nearly always still pending, and the dead-end test in UpdateInvestigating only got a
+    /// frame to run by luck — he stood at a keyed door for seconds before giving up. The agent re-paths on its own
+    /// if its path is invalidated.
+    /// </summary>
+    const float InvestigationRepathSeconds = 1f;
+
+    float _investigationApproachGiveUpTime;
+
     void SetInvestigationPoint(Vector3 worldPoint)
     {
         _investigationPoint = worldPoint;
         _hasInvestigationPoint = true;
+        _investigationApproachGiveUpTime = Time.time + InvestigationApproachTimeoutSeconds;
         _isLingerAtInvestigationPoint = false;
         _investigationLingerEndTime = 0f;
         _hasInvestigationSearchDestination = false;
@@ -2572,7 +2607,13 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
     /// <summary>Slightly longer than the decoy pulse interval, so a live decoy holds continuously.</summary>
     const float LureHoldSeconds = 2.5f;
 
+    /// <summary>How long a monkey keeps him against a second clapping monkey (see LureToPosition).</summary>
+    const float LureCommitSeconds = 12f;
+
     float _lureHoldUntil;
+    float _lureCommitUntil;
+    // The current lure claim came from a decoy grenade (no monkey behind it).
+    bool _lureIsDecoy;
 
     /// <summary>
     /// True while a lure (decoy grenade or monkey clap) has a live claim on his attention. Ordinary
@@ -2608,6 +2649,34 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
     {
         if (_state == ClownState.Chase || _state == ClownState.Attacking)
             return;
+
+        // Two lures calling at once used to drag him back and forth on every clap. While one has a live claim he
+        // stays with it. A live decoy outranks any monkey, and a clap must not top up the decoy's claim either, or
+        // a clapping monkey would keep that claim alive forever. A second monkey only tops up the claim until the
+        // committed one has had LureCommitSeconds, so an unreachable monkey can't keep him for good. A decoy may
+        // always take over from a monkey.
+        bool fromDecoy = monkey == null;
+        bool claimed = _state == ClownState.Investigating && IsLureHoldingAttention;
+        if (claimed && !fromDecoy)
+        {
+            if (_lureIsDecoy)
+                return;
+
+            if (monkey != _lureMonkey
+                && _lureMonkey != null
+                && !_lureMonkey.IsKnockedOver
+                && Time.time < _lureCommitUntil)
+            {
+                _lureHoldUntil = Time.time + LureHoldSeconds;
+                return;
+            }
+        }
+
+        // A fresh claim or a change of source starts a new commitment; the committed source's own calls don't
+        // extend it.
+        if (!claimed || fromDecoy != _lureIsDecoy || monkey != _lureMonkey)
+            _lureCommitUntil = Time.time + LureCommitSeconds;
+        _lureIsDecoy = fromDecoy;
 
         // Track the monkey behind this lure so the Clown can club it over once it arrives (ShouldSmashMonkey).
         _lureMonkey = monkey;
@@ -2718,14 +2787,26 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         {
             navMeshAgent.SetDestination(targetPoint);
             _lastPathDestination = targetPoint;
-            _nextDestinationRefreshTime = Time.time + Mathf.Max(0.05f, destinationRefreshInterval);
+            _nextDestinationRefreshTime = Time.time + Mathf.Max(destinationRefreshInterval, InvestigationRepathSeconds);
         }
 
         Vector3 flatSelf = transform.position;
         flatSelf.y = 0f;
         Vector3 flatDest = targetPoint;
         flatDest.y = 0f;
-        if (Vector3.Distance(flatSelf, flatDest) <= investigationArrivalDistance)
+        // A point on a NavMesh island (the StartGate room, the exit cab — keyed and cab leaves bake as walls) is
+        // never reached: the agent stops at the end of its partial path, outside the arrival radius, and with no
+        // speed left the prop-stuck watchdog never fires either, so he used to stand there until the next noise.
+        // The end of a partial path counts as arriving (the same test UpdateChase falls back on), and an approach
+        // that still hasn't arrived after InvestigationApproachTimeoutSeconds searches where it is. Never judged on
+        // the frame a path was just requested, whose desiredVelocity can still describe the previous path.
+        bool pathDeadEnd = !shouldRefreshDestination
+            && !navMeshAgent.pathPending
+            && navMeshAgent.pathStatus != NavMeshPathStatus.PathComplete
+            && navMeshAgent.desiredVelocity.sqrMagnitude < 0.04f;
+        if (Vector3.Distance(flatSelf, flatDest) <= investigationArrivalDistance
+            || pathDeadEnd
+            || Time.time >= _investigationApproachGiveUpTime)
         {
             _isLingerAtInvestigationPoint = true;
             _investigationLingerEndTime = Time.time + Mathf.Max(0f, investigationLingerSeconds);

@@ -329,7 +329,7 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
             _nextSenseTime = Time.time + Mathf.Max(0f, sensingInterval);
             RefreshTarget();
         }
-        if (IsPlayerCarriedByJailor(_targetHealth))
+        if (IsOffLimits(_targetHealth))
         {
             ClearTarget();
             EnterIdle();
@@ -706,6 +706,8 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
             return false;
         if (_targetHealth == null || _targetHealth.IsDead || _target == null)
             return false;
+        if (IsPlayerDown(_targetHealth))
+            return false;
 
         Vector3 toTarget = _target.position - transform.position;
         toTarget.y = 0f;
@@ -773,7 +775,7 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
         if (attackerHealth == null && attacker != null)
             attackerHealth = attacker.GetComponentInParent<PlayerHealth>();
 
-        if (attackerHealth == null || attackerHealth.IsDead || IsPlayerCarriedByJailor(attackerHealth))
+        if (attackerHealth == null || attackerHealth.IsDead || IsOffLimits(attackerHealth))
             return;
 
         _targetHealth = attackerHealth;
@@ -910,9 +912,9 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
         voiceAudioSource.loop = false;
         voiceAudioSource.clip = null;
         voiceAudioSource.spatialBlend = voiceSpatialBlend;
-        voiceAudioSource.minDistance = voice3DMinDistance;
-        voiceAudioSource.maxDistance = voice3DMaxDistance;
-        voiceAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
+        // The logarithmic law faded to silence at voice3DMaxDistance (see GameAudioManager.FadingLogRolloff). Unity's
+        // own Logarithmic never reaches silence, so a groan carried faintly across the whole level.
+        GameAudioManager.ApplyFadingLogRolloff(voiceAudioSource, voice3DMinDistance, voice3DMaxDistance);
         voiceAudioSource.dopplerLevel = 0f;
         GameAudioManager.RouteSfxSource(voiceAudioSource);
     }
@@ -982,7 +984,7 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
                 continue;
 
             PlayerHealth candidate = hit.GetComponentInParent<PlayerHealth>();
-            if (candidate == null || candidate.IsDead || IsPlayerCarriedByJailor(candidate))
+            if (candidate == null || candidate.IsDead || IsOffLimits(candidate))
                 continue;
 
             if (!IsWithinDetectionCone(candidate.transform.position))
@@ -999,39 +1001,38 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
             closestDistance = distance;
         }
 
-        if (closestTarget == null)
+        // Always runs, not only when the overlap above came up empty: on the server a joined client has no collider
+        // that overlap can see (CharacterController off, blocking proxy on Ignore Raycast), so it only ever finds the
+        // host, and a closer client standing beside them would never be considered.
+        IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
+        for (int i = 0; i < players.Count; i++)
         {
-            IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
-            for (int i = 0; i < players.Count; i++)
-            {
-                PlayerHealth candidate = players[i];
-                if (candidate == null || candidate.IsDead || IsPlayerCarriedByJailor(candidate))
-                    continue;
+            PlayerHealth candidate = players[i];
+            if (candidate == null || candidate.IsDead || IsOffLimits(candidate))
+                continue;
 
-                float distance = Vector3.Distance(transform.position, candidate.transform.position);
-                if (distance > EffectiveDetectionRadius || distance >= closestDistance)
-                    continue;
+            float distance = Vector3.Distance(transform.position, candidate.transform.position);
+            if (distance > EffectiveDetectionRadius || distance >= closestDistance)
+                continue;
 
-                if (!IsWithinDetectionCone(candidate.transform.position))
-                    continue;
+            if (!IsWithinDetectionCone(candidate.transform.position))
+                continue;
 
-                if (!HasDetectionLineOfSight(candidate))
-                    continue;
+            if (!HasDetectionLineOfSight(candidate))
+                continue;
 
-                closestTarget = candidate;
-                closestDistance = distance;
-            }
+            closestTarget = candidate;
+            closestDistance = distance;
         }
 
         // Heard-sprint acquisition: no vision cone / line-of-sight gate — a sprinting player is heard from any
         // direction and around corners. Only the audible-sprint flag triggers it, so walking stays silent.
         if (closestTarget == null && hearingRadius > 0f)
         {
-            IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
             for (int i = 0; i < players.Count; i++)
             {
                 PlayerHealth candidate = players[i];
-                if (candidate == null || candidate.IsDead || IsPlayerCarriedByJailor(candidate))
+                if (candidate == null || candidate.IsDead || IsOffLimits(candidate))
                     continue;
                 if (!IsPlayerAudiblySprinting(candidate))
                     continue;
@@ -1072,6 +1073,40 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
 
         NetworkPlayerAvatar avatar = playerHealth.GetComponent<NetworkPlayerAvatar>();
         return avatar != null && avatar.IsCarriedByJailor;
+    }
+
+    /// <summary>
+    /// True while the Jailor has this player locked in his cell. The Jailor, Clown and Mutant already leave a
+    /// sealed prisoner alone (<c>ClownAI.ShouldIgnorePlayer</c>); the cell door is an open lattice that sight and
+    /// a swipe both pass through, and the prisoner can neither run nor fight back.
+    /// </summary>
+    static bool IsPlayerSealedInJail(PlayerHealth playerHealth)
+    {
+        if (playerHealth == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = playerHealth.GetComponent<NetworkPlayerAvatar>();
+        return avatar != null && avatar.IsSealedInJailCell;
+    }
+
+    /// <summary>Carried by the Jailor or sealed in his cell: never acquired, never retaliated on, never hit.</summary>
+    static bool IsOffLimits(PlayerHealth playerHealth)
+    {
+        return IsPlayerCarriedByJailor(playerHealth) || IsPlayerSealedInJail(playerHealth);
+    }
+
+    /// <summary>
+    /// Down (a trap knockdown), held, or still getting up: the same test as <c>JailorAI.IsPlayerDowned</c> and
+    /// <c>SecurityGuardAI.IsPlayerRagdolled</c>. A ragdolled player's root stays where they went down, so reach and
+    /// sight checks pass on an empty spot metres from the body. The target is kept; it just isn't attacked.
+    /// </summary>
+    static bool IsPlayerDown(PlayerHealth playerHealth)
+    {
+        if (playerHealth == null)
+            return false;
+
+        PlayerRagdollController ragdoll = playerHealth.GetComponent<PlayerRagdollController>();
+        return ragdoll != null && (ragdoll.IsRagdolled || ragdoll.IsHeld || ragdoll.IsGettingUp);
     }
 
     bool HasDetectionLineOfSight(PlayerHealth targetHealth)
@@ -1163,7 +1198,8 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
         float attackStartDistance = attackRadius + Mathf.Max(0f, attackStartDistancePadding);
         if (distanceToTarget <= attackStartDistance)
         {
-            if (Time.time >= _nextAttackTime && _attackRoutine == null)
+            // A downed target is kept, not attacked: it looms until they are back on their feet (see IsPlayerDown).
+            if (Time.time >= _nextAttackTime && _attackRoutine == null && !IsPlayerDown(_targetHealth))
                 _attackRoutine = StartCoroutine(AttackRoutine());
 
             FaceTarget();
@@ -1493,6 +1529,10 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
     {
         if (targetHealth == null || targetHealth.IsDead)
             return false;
+        if (IsOffLimits(targetHealth))
+            return false; // grabbed or sealed in mid-swing: the swipe whiffs rather than hitting a defenceless prisoner
+        if (IsPlayerDown(targetHealth))
+            return false; // knocked down mid-swing: their root is where they fell, not where the body lies
 
         Vector3 toTarget = targetHealth.transform.position - transform.position;
         Vector3 horizontalToTarget = toTarget;

@@ -3229,6 +3229,11 @@ MonoBehaviour:
   doorOpenPromptMessage: Press E to open
   teleportOrbPromptMessage: Hold E to teleport
   skeletonRpsPromptMessage: Press E to challenge the skeleton
+  elevatorCallPromptMessage: Press E to call the elevator
+  elevatorUnlockPromptMessage: Press E to unlock the elevator
+  elevatorLockedPromptMessage: Locked
+  elevatorBossLockedPromptMessage: Locked - it's still alive
+  elevatorCloseDoorsPromptMessage: Press E to close the doors
   interactMask:
     serializedVersion: 2
     m_Bits: 0
@@ -3589,6 +3594,7 @@ MonoBehaviour:
   - hand
   flashlightAimPivot: {fileID: 0}
   remoteFlashlightProxyLocalPosition: {x: 0, y: 0, z: 0.08}
+  remoteLookPitchSmoothSharpness: 30
 --- !u!114 &640123456789012346
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3731,7 +3737,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   voiceAnchor: {fileID: 3623829882816591901}
   minHearingDistance: 1.2
-  maxHearingDistance: 22
+  maxHearingDistance: 30
   inputActions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   playerMapName: Player
   pushToTalkActionName: PushToTalk

@@ -109,6 +109,12 @@ public partial class PlayerController
     /// </summary>
     public float ActiveMeleeCooldownForServer => ActiveMeleeCooldown;
 
+    /// <summary>
+    /// The same gate dates each swing from its start, which it takes as the hit's arrival minus this delay — the
+    /// client starts its own cooldown when the swing starts, not when the hit lands.
+    /// </summary>
+    public float ActiveMeleeHitDelayForServer => ActiveMeleeHitDelay;
+
     /// <summary>Swing whoosh — the sword clip when one is assigned, otherwise the shared melee swoosh.</summary>
     AudioClip ActiveMeleeSwooshClip => IsSwordSelected && swordSwooshClip != null ? swordSwooshClip : meleeSwooshClip;
 

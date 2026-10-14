@@ -9,6 +9,9 @@ using UnityEngine.UI;
 /// and a left button rail; anything with more to say (settings, the lobby) takes over as a
 /// centered dedicated screen with the rail hidden and a BACK button to return.
 /// Joining someone else's game is invite-only — there is no id to type in anywhere.
+///
+/// Each screen is a <see cref="UiNavScope"/> while it shows. A pad lands on PLAY OFFLINE, the first setting, or
+/// READY UP; B / Esc goes back from settings, and in the lobby asks to leave (the lobby has no BACK on purpose).
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class MainMenuController : MonoBehaviour
@@ -29,11 +32,8 @@ public sealed class MainMenuController : MonoBehaviour
     const float LobbyColumnWidth = 402f;
     const float LobbyColumnInset = 76f;
 
-    /// <summary>Square hit area of a crew row's microphone toggle.</summary>
-    const float CrewMicSize = 26f;
-
-    /// <summary>Crew row for another player: name line over the voice slider.</summary>
-    const float CrewRowHeight = 68f;
+    /// <summary>Crew row for another player: name line over the voice slider (<see cref="MenuCrewVoiceRow"/>).</summary>
+    const float CrewRowHeight = MenuCrewVoiceRow.RowHeight;
     /// <summary>Your own crew row is a single name line — you cannot mute or re-mix yourself.</summary>
     const float CrewSelfRowHeight = 30f;
 
@@ -64,6 +64,10 @@ public sealed class MainMenuController : MonoBehaviour
     MenuScreenFader _rootFader;
     MenuScreenFader _settingsFader;
     MenuScreenFader _lobbyFader;
+    UiNavScope _rootNavScope;
+    UiNavScope _settingsNavScope;
+    UiNavScope _lobbyNavScope;
+    Button _playOfflineButton;
     MenuScreen _current = MenuScreen.Root;
     LobbyCharacterPreview _characterPreview;
 
@@ -105,10 +109,6 @@ public sealed class MainMenuController : MonoBehaviour
     {
         public Image ReadyChip;
         public TextMeshProUGUI Name;
-        public Slider Volume;
-        public TextMeshProUGUI VolumeValue;
-        public Button MicButton;
-        public Image MicIcon;
     }
 
     readonly List<ulong> _crewRowIds = new();
@@ -148,12 +148,16 @@ public sealed class MainMenuController : MonoBehaviour
         if (_session != null)
         {
             _session.LobbyStateChanged += OnLobbyStateChanged;
+            _session.SessionFailed += OnSessionFailed;
         }
 
         bool inLobby = HasLobbySession;
         _lobbyAutoShown = inLobby;
         ShowScreen(inLobby ? MenuScreen.Lobby : MenuScreen.Root, true);
         RefreshLobby();
+
+        // A drop that happened in game was held for this menu (the return load built it fresh).
+        OnSessionFailed();
     }
 
     void OnDestroy()
@@ -161,7 +165,19 @@ public sealed class MainMenuController : MonoBehaviour
         if (_session != null)
         {
             _session.LobbyStateChanged -= OnLobbyStateChanged;
+            _session.SessionFailed -= OnSessionFailed;
         }
+
+        UiEventSystem.Close(_rootNavScope);
+        UiEventSystem.Close(_settingsNavScope);
+        UiEventSystem.Close(_lobbyNavScope);
+    }
+
+    /// <summary>A refused or failed join, or a drop from a joined session: why, as one data line.</summary>
+    void OnSessionFailed()
+    {
+        if (_session != null && _modal != null && _session.TryConsumeSessionFailure(out string title, out string body))
+            _modal.Open(title, body, "OK", false, null);
     }
 
     // ================================================================ build
@@ -180,6 +196,11 @@ public sealed class MainMenuController : MonoBehaviour
 
         _friendsPanel = MenuFriendsPanel.Create(root, _session);
         _modal = MenuModal.Create(root);
+
+        _rootNavScope = new UiNavScope(_rootFader.transform, () => _playOfflineButton);
+        _settingsNavScope = new UiNavScope(_settingsFader.transform, null, () => ShowScreen(MenuScreen.Root));
+        // READY UP, not a survivor plate: your own plate is not clickable, and ready is the one thing everyone does.
+        _lobbyNavScope = new UiNavScope(_lobbyFader.transform, () => _readyButton, ConfirmLeaveLobby);
     }
 
     /// <summary>
@@ -250,7 +271,7 @@ public sealed class MainMenuController : MonoBehaviour
         // signpost stack: each plank keeps its own measured width instead of stretching to the rail
         layout.childForceExpandWidth = false;
 
-        MenuWidgets.CreateNavButton(nav, "PLAY OFFLINE", OnPlayOfflineClicked, out _, true, true, NavHeight, NavFontSize);
+        _playOfflineButton = MenuWidgets.CreateNavButton(nav, "PLAY OFFLINE", OnPlayOfflineClicked, out _, true, true, NavHeight, NavFontSize);
         MenuWidgets.CreateNavButton(nav, "HOST GAME", OnHostGameClicked, out _, true, true, NavHeight, NavFontSize);
         MenuWidgets.CreateNavButton(nav, "SETTINGS", () => ShowScreen(MenuScreen.Settings), out _, true, true, NavHeight, NavFontSize);
 
@@ -538,108 +559,11 @@ public sealed class MainMenuController : MonoBehaviour
         nameRt.anchorMax = new Vector2(1f, 1f);
         nameRt.pivot = new Vector2(0.5f, 1f);
         nameRt.offsetMin = new Vector2(20f, -25f);
-        nameRt.offsetMax = new Vector2(isLocal ? 0f : -(CrewMicSize + 8f), 0f);
+        nameRt.offsetMax = new Vector2(isLocal ? 0f : -(MenuCrewVoiceRow.MicSize + 8f), 0f);
 
-        var row = new CrewRow { ReadyChip = chip, Name = name };
-        if (isLocal)
-        {
-            _crewRows[clientId] = row;
-            return;
-        }
-
-        TextMeshProUGUI caption = MenuWidgets.CreateText(root, "VoiceCaption", "VOICE", 10.5f,
-            MenuTheme.WithAlpha(MenuTheme.Faint, 0.9f), MenuWidgets.FontKind.Display,
-            TextAlignmentOptions.MidlineLeft, 3f);
-        RectTransform captionRt = caption.rectTransform;
-        captionRt.anchorMin = new Vector2(0f, 0f);
-        captionRt.anchorMax = new Vector2(0f, 0f);
-        captionRt.pivot = new Vector2(0f, 0f);
-        captionRt.anchoredPosition = new Vector2(20f, 6f);
-        captionRt.sizeDelta = new Vector2(46f, 24f);
-
-        Slider volume = MenuWidgets.CreateSlider(root);
-        var volumeRt = (RectTransform)volume.transform;
-        volumeRt.anchorMin = new Vector2(0f, 0f);
-        volumeRt.anchorMax = new Vector2(1f, 0f);
-        volumeRt.pivot = new Vector2(0.5f, 0f);
-        volumeRt.offsetMin = new Vector2(70f, 7f);
-        volumeRt.offsetMax = new Vector2(-56f, 29f);
-        volume.SetValueWithoutNotify(VoicePlayerMixSettings.GetVolume(clientId));
-
-        TextMeshProUGUI volumeValue = MenuWidgets.CreateText(root, "VolumeValue", string.Empty, 12.5f,
-            MenuTheme.Mist, MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineRight, 1f);
-        RectTransform volumeValueRt = volumeValue.rectTransform;
-        volumeValueRt.anchorMin = new Vector2(1f, 0f);
-        volumeValueRt.anchorMax = new Vector2(1f, 0f);
-        volumeValueRt.pivot = new Vector2(1f, 0f);
-        volumeValueRt.anchoredPosition = new Vector2(0f, 6f);
-        volumeValueRt.sizeDelta = new Vector2(50f, 24f);
-        volumeValue.text = Mathf.RoundToInt(volume.value * 100f) + "%";
-
-        volume.onValueChanged.AddListener(v =>
-        {
-            VoicePlayerMixSettings.SetVolume(clientId, v);
-            volumeValue.text = Mathf.RoundToInt(v * 100f) + "%";
-        });
-
-        // Bare glyph, no plate: the icon itself is the control, and the struck-through variant
-        // carries the state (see MenuTheme.MicIcon).
-        Image mic = MenuWidgets.CreateImage(root, "Mic", MenuTheme.MicIcon(false), MenuTheme.Bone, true);
-        mic.preserveAspect = true;
-        RectTransform micRt = mic.rectTransform;
-        micRt.anchorMin = new Vector2(1f, 1f);
-        micRt.anchorMax = new Vector2(1f, 1f);
-        micRt.pivot = new Vector2(1f, 1f);
-        micRt.anchoredPosition = new Vector2(0f, -1f);
-        micRt.sizeDelta = new Vector2(CrewMicSize, CrewMicSize);
-
-        var micButton = mic.gameObject.AddComponent<Button>();
-        micButton.targetGraphic = mic;
-        micButton.transition = Selectable.Transition.ColorTint;
-        micButton.navigation = new Navigation { mode = Navigation.Mode.None };
-        micButton.onClick.AddListener(() =>
-        {
-            MenuUiAudio.PlayClick();
-            VoicePlayerMixSettings.ToggleMuted(clientId);
-            ApplyCrewMuteVisual(clientId);
-        });
-
-        row.Volume = volume;
-        row.VolumeValue = volumeValue;
-        row.MicButton = micButton;
-        row.MicIcon = mic;
-        _crewRows[clientId] = row;
-        ApplyCrewMuteVisual(clientId);
-    }
-
-    /// <summary>Pushes the stored mute state onto one row — rows are not rebuilt on a mute click.</summary>
-    void ApplyCrewMuteVisual(ulong clientId)
-    {
-        if (!_crewRows.TryGetValue(clientId, out CrewRow row))
-            return;
-
-        bool muted = VoicePlayerMixSettings.IsMuted(clientId);
-
-        if (row.MicIcon != null)
-            row.MicIcon.sprite = MenuTheme.MicIcon(muted);
-
-        // ColorTint overwrites the Image colour every state change, so the mute state has to live in
-        // the button's palette rather than on the Image itself.
-        if (row.MicButton != null)
-        {
-            ColorBlock colors = row.MicButton.colors;
-            colors.normalColor = muted ? MenuTheme.BloodBright : MenuTheme.WithAlpha(MenuTheme.Bone, 0.85f);
-            colors.highlightedColor = muted ? MenuTheme.Bone : MenuTheme.AmberBright;
-            colors.pressedColor = muted ? MenuTheme.Blood : MenuTheme.Amber;
-            colors.selectedColor = colors.normalColor;
-            colors.disabledColor = MenuTheme.Faint;
-            row.MicButton.colors = colors;
-        }
-
-        if (row.Volume != null)
-            row.Volume.interactable = !muted;
-        if (row.VolumeValue != null)
-            row.VolumeValue.color = muted ? MenuTheme.Faint : MenuTheme.Mist;
+        _crewRows[clientId] = new CrewRow { ReadyChip = chip, Name = name };
+        if (!isLocal)
+            new MenuCrewVoiceRow(root, clientId, 20f);
     }
 
     void BuildLobbySurvivorStrip(Transform screen)
@@ -709,17 +633,20 @@ public sealed class MainMenuController : MonoBehaviour
 
         // The only way out of the lobby: there is no BACK, so you cannot leave a live session
         // running behind the root menu.
-        Button leave = MenuWidgets.CreateGhostButton(layout, "LEAVE LOBBY", () =>
-        {
-            _modal.Open("LEAVE LOBBY", string.Empty, "LEAVE", true, () =>
-            {
-                if (_flow != null)
-                    _flow.ReturnToMainMenu();
-                else if (_session != null)
-                    _session.ShutdownSession();
-            });
-        }, true, 56f);
+        Button leave = MenuWidgets.CreateGhostButton(layout, "LEAVE LOBBY", ConfirmLeaveLobby, true, 56f);
         MenuWidgets.SetLayout(leave.transform, minWidth: 260f, preferredWidth: 260f, minHeight: 56f, preferredHeight: 56f);
+    }
+
+    /// <summary>LEAVE LOBBY, and the lobby's back press: always through the confirm, never straight out.</summary>
+    void ConfirmLeaveLobby()
+    {
+        _modal.Open("LEAVE LOBBY", string.Empty, "LEAVE", true, () =>
+        {
+            if (_flow != null)
+                _flow.ReturnToMainMenu();
+            else if (_session != null)
+                _session.ShutdownSession();
+        });
     }
 
     /// <summary>
@@ -810,10 +737,10 @@ public sealed class MainMenuController : MonoBehaviour
             colors.normalColor = Color.white;
             colors.highlightedColor = new Color(1.22f, 1.18f, 1.08f, 1f);
             colors.pressedColor = new Color(0.9f, 0.9f, 0.9f, 1f);
-            colors.selectedColor = Color.white;
+            colors.selectedColor = colors.highlightedColor;   // pad focus reads as hover
             colors.disabledColor = Color.white;
             button.colors = colors;
-            button.navigation = new Navigation { mode = Navigation.Mode.None };
+            button.navigation = new Navigation { mode = Navigation.Mode.Automatic };
             button.onClick.AddListener(() =>
             {
                 MenuUiAudio.PlayClick();
@@ -967,6 +894,18 @@ public sealed class MainMenuController : MonoBehaviour
         ToggleFader(_rootFader, screen == MenuScreen.Root, instant);
         ToggleFader(_settingsFader, screen == MenuScreen.Settings, instant);
         ToggleFader(_lobbyFader, screen == MenuScreen.Lobby, instant);
+
+        // Hidden screens let go of navigation before the shown one takes it, so returning to the rail lands on the
+        // plate that left it (SETTINGS, HOST GAME).
+        if (screen != MenuScreen.Root)
+            UiEventSystem.Close(_rootNavScope);
+        if (screen != MenuScreen.Settings)
+            UiEventSystem.Close(_settingsNavScope);
+        if (screen != MenuScreen.Lobby)
+            UiEventSystem.Close(_lobbyNavScope);
+        UiEventSystem.Open(screen == MenuScreen.Root ? _rootNavScope
+            : screen == MenuScreen.Settings ? _settingsNavScope
+            : _lobbyNavScope);
     }
 
     static void ToggleFader(MenuScreenFader fader, bool show, bool instant)

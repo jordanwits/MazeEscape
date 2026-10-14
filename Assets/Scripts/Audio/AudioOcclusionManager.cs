@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Unity.Netcode;
 using UnityEngine;
 
 /// <summary>
@@ -178,8 +179,10 @@ public sealed class AudioOcclusionManager : MonoBehaviour
             Vector3 toListener = listenerPos - source.transform.position;
             float dist = toListener.magnitude;
 
-            // Beyond audible range: inaudible anyway, so don't spend a raycast — just relax open.
-            if (dist > source.maxDistance * 1.05f)
+            // Beyond audible range: inaudible anyway, so don't spend a raycast — just relax open. Not for Unity's
+            // Logarithmic rolloff, which never reaches silence (it keeps falling only as 1/distance past maxDistance):
+            // relaxing those open made them faint but full-bright from anywhere in the level, so keep muffling them.
+            if (dist > source.maxDistance * 1.05f && source.rolloffMode != AudioRolloffMode.Logarithmic)
             {
                 item.Target = 0f;
                 item.Current = Mathf.Lerp(item.Current, 0f, smooth);
@@ -213,14 +216,10 @@ public sealed class AudioOcclusionManager : MonoBehaviour
         if (hits <= 0)
             return 0f;
 
-        // Discard hits on the source's own hierarchy: an enemy's capsule (or the client-side collision proxy)
-        // can sit on the Default layer right at its own voice source, which would otherwise read as a permanent
-        // self-occluder and muffle it in clear line of sight. Same defense the camera-collision code uses.
-        Transform sourceRoot = sourceTransform.root;
         int occluders = 0;
         for (int i = 0; i < hits; i++)
         {
-            if (_hitBuffer[i].transform.root != sourceRoot)
+            if (!IsSelfHit(_hitBuffer[i].collider, sourceTransform))
                 occluders++;
         }
 
@@ -231,6 +230,34 @@ public sealed class AudioOcclusionManager : MonoBehaviour
 
         float t = Mathf.Clamp01((occluders - 1f) / Mathf.Max(1, occludersForFull - 1));
         return Mathf.Lerp(singleOccluderStrength, 1f, t);
+    }
+
+    /// <summary>
+    /// The emitter's own body, which must not count as a wall: an enemy's capsule (or the client-side collision
+    /// proxy) sits on the Default layer right at its own voice source and would read as a permanent self-occluder,
+    /// muffling it in clear line of sight.
+    ///
+    /// Deliberately not a <c>transform.root</c> comparison (what this used to be): the whole procedural maze
+    /// shares one scene root, GeneratedMaze, and on the host so do the enemies spawned under it — so a root test
+    /// threw away every wall hit for doors, the radio, traps and (host-side) every enemy, and none of them ever
+    /// muffled.
+    /// </summary>
+    static bool IsSelfHit(Collider hit, Transform source)
+    {
+        // Geometry under the emitter itself, e.g. a door's leaves under the HingeInteractDoor that carries its source.
+        if (hit.transform.IsChildOf(source))
+            return true;
+
+        // The spawned network object the emitter rides on or inside: an enemy around its own voice, or the Jailor
+        // around a player he is carrying. Checked here rather than at Register: enemies register in Awake, before
+        // they are spawned. Unspawned NetworkObjects left inside maze pieces never match — except with no session
+        // at all (a level played straight from the editor), where nothing is ever spawned and an enemy's own
+        // Default-layer children (the Clown's hammer) would otherwise muffle its voice.
+        NetworkObject owner = hit.GetComponentInParent<NetworkObject>();
+        if (owner == null || !source.IsChildOf(owner.transform))
+            return false;
+        NetworkManager nm = NetworkManager.Singleton;
+        return owner.IsSpawned || nm == null || !nm.IsListening;
     }
 
     void ApplyCutoff(Occludable item)

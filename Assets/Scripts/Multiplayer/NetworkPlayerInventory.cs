@@ -345,6 +345,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (IsServer)
             ServerHandleDisconnectTeardownDrop();
 
+        _awaitingSlotClear.Clear();
         SceneManager.sceneLoaded -= HandleGameplaySceneLoadedForPresentationRefresh;
         _slot0ItemId.OnValueChanged -= OnSlot0Changed;
         _slot1ItemId.OnValueChanged -= OnSlot1Changed;
@@ -513,9 +514,42 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
     void RaiseChangedAndRefresh()
     {
+        PruneAwaitingSlotClear();
         OnInventoryChanged?.Invoke();
         playerController?.RefreshInventoryViewFromNetwork();
         ArmUnresolvedHeldItemRetry();
+    }
+
+    /// <summary>
+    /// Pure clients only: items the server has already put in the world (drop RPC handled) whose slot still names
+    /// them because the slot-clear delta has not landed yet. See <see cref="ApplyItemStateClientRpcWithType"/>.
+    /// </summary>
+    readonly HashSet<ulong> _awaitingSlotClear = new HashSet<ulong>();
+
+    /// <summary>
+    /// True while <paramref name="itemId"/> is in the world on this peer but its slot clear is still in flight, so an
+    /// inventory refresh must leave it where it is instead of re-holding it.
+    /// </summary>
+    public bool IsAwaitingSlotClear(ulong itemId) => itemId != 0UL && _awaitingSlotClear.Contains(itemId);
+
+    void PruneAwaitingSlotClear()
+    {
+        if (_awaitingSlotClear.Count == 0)
+            return;
+        _awaitingSlotClear.RemoveWhere(id => !AnySlotHoldsItem(id));
+    }
+
+    bool AnySlotHoldsItem(ulong itemId)
+    {
+        if (itemId == 0UL)
+            return false;
+        for (int i = 0; i < MaxSlotCount; i++)
+        {
+            if (GetSlotItemId(i) == itemId)
+                return true;
+        }
+
+        return false;
     }
 
     public bool CanPickup(GrabbableInventoryItem item)
@@ -771,9 +805,8 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
             ApplyItemStateWithTypeClientRpc(flashlight.ItemId, flashlight.ItemTypeId, false, 0UL, finalDropPosition, finalDropRotation, throwImpulse);
 
-            // The shared world-state RPC carries no beam state, and every peer just switched its own copy off
-            // when the slot emptied — so the lit/dark decision has to be replicated explicitly or observers
-            // always see a dark torch on the floor.
+            // The shared world-state RPC carries no beam state (its handler keeps whatever the peer's copy shows),
+            // so the lit/dark decision has to be replicated explicitly or observers see the wrong torch on the floor.
             ApplyDroppedFlashlightLightClientRpc(flashlight.ItemId, lightOn);
         }
         else
@@ -892,17 +925,21 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
     void SelectAfterDrop()
     {
+        int target = 0;
         for (int i = 0; i < SlotCapacity; i++)
         {
             if (GetSlotItemId(i) != 0UL)
             {
-                _selectedSlot.Value = (byte)i;
-                UpdateFlashlightSyncFromSelected();
-                return;
+                target = i;
+                break;
             }
         }
 
-        _selectedSlot.Value = 0;
+        // Publish the INCOMING slot's beam state before moving the selection, as pickup and cycling do: the
+        // selection write refreshes synchronously and would otherwise hand the stale beam state to whatever is now
+        // selected, so a dark spare flashlight switched itself on (and the per-frame sync then kept it on).
+        UpdateFlashlightSyncForSlot(target);
+        _selectedSlot.Value = (byte)target;
     }
 
     public void TryCycleSelection(int delta)
@@ -1025,16 +1062,22 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             return;
 
         Vector3 forward = transform.forward.sqrMagnitude > 0.0001f ? transform.forward : Vector3.forward;
-        // Teardown sweeps run to MaxSlotCount so nothing can strand in the bought slot.
-        for (int s = 0; s < MaxSlotCount; s++)
+        // Teardown sweeps run to MaxSlotCount so nothing can strand in the bought slot. Start with the slot in hand:
+        // selecting any other slot first stashes the held item, and stashing switches a flashlight off, so a torch
+        // the player died holding lit always landed dark.
+        int firstSlot = Mathf.Clamp(SelectedSlotIndex, 0, MaxSlotCount - 1);
+        for (int k = 0; k < MaxSlotCount; k++)
         {
+            int s = (firstSlot + k) % MaxSlotCount;
             int safety = 0;
             while (GetSlotItemId(s) != 0UL)
             {
                 if (++safety > 32)
                     break;
+                // Incoming slot's beam state before the selection write, as SelectAfterDrop does: the write refreshes
+                // synchronously and handed a dark spare the held torch's lit state, which the drop then captured.
+                UpdateFlashlightSyncForSlot(s);
                 _selectedSlot.Value = (byte)s;
-                UpdateFlashlightSyncFromSelected();
                 Transform holdPoint = null;
                 Transform follow = null;
                 if (playerController != null)
@@ -1425,6 +1468,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
         if (isHeld)
         {
+            _awaitingSlotClear.Remove(itemId);
             if (g is FlashlightItem f)
             {
                 _avatar?.NotifyFlashlightVisualAttach(f);
@@ -1437,6 +1481,14 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         }
         else
         {
+            // A pure client handles this BEFORE the slot-clear delta the server wrote just ahead of it: RPCs go out
+            // at once, NetworkVariable deltas on the next tick (only the host, whose OnValueChanged is synchronous,
+            // sees them in order). Until that delta lands the slot still names this item, so the refresh below put
+            // it back in the hand, and the clear then dropped it straight down from there — no drop point, no toss,
+            // and a flashlight dropped lit went dark. Keep it out of the refresh until its slot clears.
+            if (!IsServer && AnySlotHoldsItem(itemId))
+                _awaitingSlotClear.Add(itemId);
+
             if (g is FlashlightItem f2)
             {
                 f2.ApplyNetworkWorldState(worldPosition, worldRotation, f2.IsLightOn, worldDropImpulse);
@@ -1988,6 +2040,10 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             if (!slotSaysKey && !resolvedKey)
                 continue;
 
+            // A key counts from any slot, so the player is usually holding something else (often a lit flashlight)
+            // when it is spent. Only move the selection if the key itself was in hand; otherwise it stays put, as
+            // the flare reload's ammo draw leaves it.
+            bool consumedSelectedSlot = i == SelectedSlotIndex;
             SetSlotItemId(i, 0UL);
             SetSlotItemTypeId(i, GrabbableInventoryItem.TypeIdNone);
             SetSlotStackCount(i, 0);
@@ -1997,7 +2053,8 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                 ConsumeItemClientRpc(id);
                 Object.Destroy(g.gameObject);
             }
-            SelectAfterDrop();
+            if (consumedSelectedSlot)
+                SelectAfterDrop();
             RaiseChangedAndRefresh();
             return true;
         }

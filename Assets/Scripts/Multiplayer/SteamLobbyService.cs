@@ -25,6 +25,11 @@ public class SteamLobbyService : MonoBehaviour
     public event Action<ulong> LobbyJoinRequested;
     public event Action<ulong, ulong> LobbyReadyToJoin;
     public event Action<string> StatusChanged;
+    /// <summary>
+    /// Joining a friend's lobby failed before any connection to the host was attempted (dead invite, full lobby,
+    /// Steam not running). The argument is the terse reason line the menu shows.
+    /// </summary>
+    public event Action<string> LobbyJoinFailed;
 
     ulong _currentLobbyId;
     string _status = string.Empty;
@@ -75,12 +80,14 @@ public class SteamLobbyService : MonoBehaviour
         if (!SteamworksBootstrap.IsReady)
         {
             ReportUnavailable();
+            LobbyJoinFailed?.Invoke("ONLINE UNAVAILABLE");
             return false;
         }
 
         if (lobbyId == 0UL)
         {
             UpdateStatus(InviteExpiredStatus);
+            LobbyJoinFailed?.Invoke("INVITE EXPIRED");
             return false;
         }
 
@@ -251,10 +258,17 @@ public class SteamLobbyService : MonoBehaviour
             return;
 
         _waitingForClientLobbyJoin = false;
-        string hostIdText = SteamMatchmaking.GetLobbyData(new CSteamID(_currentLobbyId), HostSteamIdKey);
-        if (!ulong.TryParse(hostIdText, out ulong hostSteamId) || hostSteamId == 0UL)
+
+        // A refused entry (the host closed the lobby, it is full) still raises this callback; the lobby data is
+        // empty then, which used to read as an expired invite in the status line only — nothing on screen.
+        bool entered = result.m_EChatRoomEnterResponse == (uint)EChatRoomEnterResponse.k_EChatRoomEnterResponseSuccess;
+        string hostIdText = entered ? SteamMatchmaking.GetLobbyData(new CSteamID(_currentLobbyId), HostSteamIdKey) : null;
+        if (!entered || !ulong.TryParse(hostIdText, out ulong hostSteamId) || hostSteamId == 0UL)
         {
+            bool full = result.m_EChatRoomEnterResponse == (uint)EChatRoomEnterResponse.k_EChatRoomEnterResponseFull;
+            LeaveLobby(); // never really joined: don't keep reporting it as our lobby
             UpdateStatus(InviteExpiredStatus);
+            LobbyJoinFailed?.Invoke(full ? "LOBBY FULL" : "INVITE EXPIRED");
             return;
         }
 

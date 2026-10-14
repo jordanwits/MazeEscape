@@ -382,7 +382,14 @@ public class SwingingAxeTrap : NetworkBehaviour
                 if (col == null)
                     continue;
 
-                TryBladeHit(col.GetComponentInParent<PlayerHealth>(), pivot, center, bladeVel);
+                // A joined client knocked down moments ago is, on the server, a presentation-only launch sim that is
+                // not where their real body is (see NetworkPlayerRagdoll); those bones must not take blade hits.
+                PlayerHealth hitPlayer = col.GetComponentInParent<PlayerHealth>();
+                if (hitPlayer != null && hitPlayer.TryGetComponent(out PlayerRagdollController hitRagdoll)
+                    && hitRagdoll.IsObserverLocalSimActive)
+                    continue;
+
+                TryBladeHit(hitPlayer, pivot, center, bladeVel);
             }
 
             // Joined clients have no collider the overlap above can find on the server; test their stand-in capsule.

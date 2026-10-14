@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -44,6 +45,18 @@ public class HeldItemHandSocketFollow : MonoBehaviour
     Transform _ballSocket;      // centre of the sphere the hand drapes over, for the throwable ball
     GrabbableInventoryItem _heldItem;
     int _lastHoldChildCount = -1;
+    PlayerRagdollController _ragdoll;
+
+    // The held item's pose in its seat's space, captured on every animated frame. While the body is limp the item
+    // keeps exactly this grip, so it rides the ragdoll (or enemy-held) hand the way it was being held.
+    GrabbableInventoryItem _gripCapturedItem;
+    Transform _gripCapturedSeat;
+    Vector3 _gripLocalPosition;
+    Quaternion _gripLocalRotation = Quaternion.identity;
+
+    // Two-hand items (not seated on the hand socket) hidden while the body is limp, shown again at the get-up.
+    readonly List<GrabbableInventoryItem> _hiddenWhileLimp = new List<GrabbableInventoryItem>();
+    readonly List<Renderer> _rendererScratch = new List<Renderer>();
 
     void Awake()
     {
@@ -51,13 +64,39 @@ public class HeldItemHandSocketFollow : MonoBehaviour
             animator = GetComponent<Animator>();
         if (playerController == null)
             playerController = GetComponent<PlayerController>();
+        _ragdoll = GetComponent<PlayerRagdollController>();
+    }
+
+    void OnDisable()
+    {
+        RestoreItemsHiddenWhileLimp();
     }
 
     void LateUpdate()
     {
-        if (animator == null || !animator.isHuman || !animator.enabled)
+        if (animator == null || !animator.isHuman)
             return;
 
+        // Ragdolled, or pinned by a Mutant/RatBot grab: the animator is off and the hand is a physics bone (or the
+        // pose stream's puppet on another peer). Bailing out here used to leave the item to GrabbableInventoryItem,
+        // which parks it at HoldPoint on the root — and the root stays where the player was hit, so the item hung
+        // in mid-air there for the whole knockdown.
+        bool limp = !animator.enabled;
+        if (limp && !IsBodyLimp())
+        {
+            RestoreItemsHiddenWhileLimp();
+            return;
+        }
+
+        if (limp)
+        {
+            RefreshHeldItem();
+            HideTwoHandItemsWhileLimp();
+            SeatHeldItemInLimpHand();
+            return;
+        }
+
+        RestoreItemsHiddenWhileLimp();
         ResolveHandSocket();
         RefreshHeldItem();
 
@@ -133,8 +172,105 @@ public class HeldItemHandSocketFollow : MonoBehaviour
             _heldItem.ApplyHandSocketHeldPose(seat);
         }
 
+        CaptureGrip(seat);
+
         if (_heldItem is FlashlightItem flashlight)
             flashlight.AimHeldLightAlongPitch();
+    }
+
+    bool IsBodyLimp() => _ragdoll != null && (_ragdoll.IsRagdolled || _ragdoll.IsHeld);
+
+    void CaptureGrip(Transform seat)
+    {
+        Transform item = _heldItem.transform;
+        _gripCapturedItem = _heldItem;
+        _gripCapturedSeat = seat;
+        _gripLocalPosition = seat.InverseTransformPoint(item.position);
+        _gripLocalRotation = Quaternion.Inverse(seat.rotation) * item.rotation;
+    }
+
+    /// <summary>
+    /// Keeps a hand-socket item in the limp hand: the last animated grip, carried rigidly by the hand bone. No wrist
+    /// or arm writes here — those bones belong to the physics (or the pose stream) now. The flashlight beam still
+    /// follows the view.
+    /// </summary>
+    void SeatHeldItemInLimpHand()
+    {
+        if (_heldItem == null || handSocket == null)
+            return;
+
+        Transform seat = SeatFor(_heldItem);
+        if (_gripCapturedItem == _heldItem && _gripCapturedSeat == seat)
+        {
+            _heldItem.transform.SetPositionAndRotation(
+                seat.TransformPoint(_gripLocalPosition), seat.rotation * _gripLocalRotation);
+        }
+        else
+        {
+            // Never seen animated in this hand (e.g. spawned straight into a knockdown): the plain socket pose.
+            _heldItem.ApplyHandSocketHeldPose(seat);
+        }
+
+        if (_heldItem is FlashlightItem flashlight)
+            flashlight.AimHeldLightAlongPitch();
+    }
+
+    /// <summary>
+    /// A two-hand item (the StarBall) has no hand to ride, and left at HoldPoint it would float where the player
+    /// was hit, so it is hidden until the get-up. An item that leaves the hand meanwhile (dropped on death) is
+    /// shown again straight away.
+    /// </summary>
+    void HideTwoHandItemsWhileLimp()
+    {
+        for (int i = _hiddenWhileLimp.Count - 1; i >= 0; i--)
+        {
+            GrabbableInventoryItem hidden = _hiddenWhileLimp[i];
+            if (hidden != null && hidden.IsHeld && hidden.transform.parent == _holdPoint)
+                continue;
+
+            SetItemRenderersHidden(hidden, false);
+            _hiddenWhileLimp.RemoveAt(i);
+        }
+
+        if (_holdPoint == null)
+            return;
+
+        for (int i = 0; i < _holdPoint.childCount; i++)
+        {
+            var g = _holdPoint.GetChild(i).GetComponent<GrabbableInventoryItem>();
+            if (g == null || !g.IsHeld || g.IsStashed || g.HeldAttachToHandSocket || _hiddenWhileLimp.Contains(g))
+                continue;
+
+            SetItemRenderersHidden(g, true);
+            _hiddenWhileLimp.Add(g);
+        }
+    }
+
+    void RestoreItemsHiddenWhileLimp()
+    {
+        if (_hiddenWhileLimp.Count == 0)
+            return;
+
+        for (int i = 0; i < _hiddenWhileLimp.Count; i++)
+            SetItemRenderersHidden(_hiddenWhileLimp[i], false);
+        _hiddenWhileLimp.Clear();
+    }
+
+    void SetItemRenderersHidden(GrabbableInventoryItem item, bool hidden)
+    {
+        if (item == null)
+            return;
+
+        // Shown again by the item's own rule (GrabbableInventoryItem.RefreshInventoryVisibility): hidden only while
+        // it sits stashed in a hotbar slot.
+        bool hiddenByInventory = item.IsHeld && item.IsStashed;
+        item.GetComponentsInChildren(true, _rendererScratch);
+        for (int i = 0; i < _rendererScratch.Count; i++)
+        {
+            if (_rendererScratch[i] != null)
+                _rendererScratch[i].forceRenderingOff = hidden || hiddenByInventory;
+        }
+        _rendererScratch.Clear();
     }
 
     /// <summary>

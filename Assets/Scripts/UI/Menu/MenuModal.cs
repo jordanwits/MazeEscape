@@ -3,7 +3,11 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-/// <summary>Centered confirm dialog over a click-blocking scrim. Built once per canvas, reused.</summary>
+/// <summary>
+/// Centered confirm dialog over a click-blocking scrim. Built once per canvas, reused. While open it is the
+/// navigation scope on top (<see cref="UiNavScope"/>): a pad lands on CANCEL for a destructive confirm and on the
+/// confirm plate otherwise, B / Esc cancels, and closing hands the selection back to the plate that opened it.
+/// </summary>
 [DisallowMultipleComponent]
 public sealed class MenuModal : MonoBehaviour
 {
@@ -11,9 +15,15 @@ public sealed class MenuModal : MonoBehaviour
     TextMeshProUGUI _message;
     TextMeshProUGUI _confirmLabel;
     MenuButtonFx _confirmFx;
+    Button _cancelButton;
+    Button _confirmButton;
     Action _onConfirm;
     CanvasGroup _group;
+    UiNavScope _navScope;
     bool _shown;
+    bool _danger;
+
+    public bool IsOpen => _shown;
 
     public static MenuModal Create(Transform canvasRoot)
     {
@@ -61,6 +71,7 @@ public sealed class MenuModal : MonoBehaviour
         RectTransform row = MenuWidgets.CreateRow(content, "Buttons", 52f, 14f);
         Button cancel = MenuWidgets.CreateGhostButton(row, "CANCEL", Close);
         MenuWidgets.SetLayout(cancel.transform, flexibleWidth: 1f, minHeight: 52f, preferredHeight: 52f);
+        _cancelButton = cancel;
 
         Button confirm = MenuWidgets.CreatePrimaryButton(row, "CONFIRM", () =>
         {
@@ -69,13 +80,22 @@ public sealed class MenuModal : MonoBehaviour
             action?.Invoke();
         }, 52f);
         MenuWidgets.SetLayout(confirm.transform, flexibleWidth: 1f, minHeight: 52f, preferredHeight: 52f);
+        _confirmButton = confirm;
         _confirmFx = confirm.GetComponent<MenuButtonFx>();
         _confirmLabel = confirm.GetComponentInChildren<TextMeshProUGUI>();
+
+        // A stray A on a destructive confirm (leave, quit) must not take it: those land on CANCEL.
+        _navScope = new UiNavScope(root, () => _danger ? _cancelButton : _confirmButton, Close);
 
         _group.alpha = 0f;
         _group.blocksRaycasts = false;
         _group.interactable = false;
         gameObject.SetActive(false);
+    }
+
+    void OnDestroy()
+    {
+        UiEventSystem.Close(_navScope);
     }
 
     public void Open(string title, string message, string confirmText, bool danger, Action onConfirm)
@@ -88,6 +108,7 @@ public sealed class MenuModal : MonoBehaviour
         if (_confirmLabel != null)
             _confirmLabel.text = confirmText;
         _onConfirm = onConfirm;
+        _danger = danger;
 
         if (_confirmFx != null)
         {
@@ -112,6 +133,7 @@ public sealed class MenuModal : MonoBehaviour
         _shown = true;
         _group.blocksRaycasts = true;
         _group.interactable = true;
+        UiEventSystem.Open(_navScope);
     }
 
     public void Close()
@@ -119,6 +141,7 @@ public sealed class MenuModal : MonoBehaviour
         _shown = false;
         _group.blocksRaycasts = false;
         _group.interactable = false;
+        UiEventSystem.Close(_navScope);
     }
 
     void Update()

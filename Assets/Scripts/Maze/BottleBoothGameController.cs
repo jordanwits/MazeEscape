@@ -83,7 +83,15 @@ public sealed class BottleBoothGameController : NetworkBehaviour, ICarnivalGameS
         public Transform spawnAnchor;
         public bool wasHeld;
         public bool thrown;
+        public float driftRestSeconds; // how long it has sat still away from its anchor without ever being held
     }
+
+    /// <summary>A never-held ball resting farther than this from its anchor is put back (metres).</summary>
+    const float UnheldDriftResetDistance = 0.5f;
+    /// <summary>How long a drifted, never-held ball must sit still before it is put back.</summary>
+    const float UnheldDriftResetSettleSeconds = 1f;
+    /// <summary>Below this speed a drifted ball counts as sitting still.</summary>
+    const float UnheldDriftRestSpeed = 0.05f;
 
     readonly List<TrackedBall> _balls = new List<TrackedBall>();
     readonly List<NetworkObject> _bottles = new List<NetworkObject>();
@@ -373,7 +381,7 @@ public sealed class BottleBoothGameController : NetworkBehaviour, ICarnivalGameS
                 continue;
 
             Transform t = b.net.transform;
-            if (t.position.y > ballOutOfBoundsYThreshold)
+            if (t.position.y > ballOutOfBoundsYThreshold && !ServerTickUnheldDrift(b, t))
                 continue;
 
             t.position = b.spawnAnchor.position;
@@ -385,6 +393,43 @@ public sealed class BottleBoothGameController : NetworkBehaviour, ICarnivalGameS
                 rb.angularVelocity = Vector3.zero;
             }
         }
+    }
+
+    /// <summary>
+    /// True once a ball nobody has picked up yet has sat still for <see cref="UnheldDriftResetSettleSeconds"/> more
+    /// than <see cref="UnheldDriftResetDistance"/> from its anchor. A throw or a body bump can knock a waiting ball
+    /// behind the booth, out of reach; it then never counted as thrown, so the round never resolved and the booth
+    /// read "in progress" for the rest of the section.
+    /// </summary>
+    bool ServerTickUnheldDrift(TrackedBall b, Transform t)
+    {
+        if (b.wasHeld)
+            return false;
+
+        // Horizontal only: a prop that merely dropped from its anchor onto the surface below it has not drifted.
+        Vector3 drift = t.position - b.spawnAnchor.position;
+        drift.y = 0f;
+        if (drift.sqrMagnitude <= UnheldDriftResetDistance * UnheldDriftResetDistance)
+        {
+            b.driftRestSeconds = 0f;
+            return false;
+        }
+
+        Rigidbody rb = b.net.GetComponent<Rigidbody>();
+        bool still = rb == null || rb.isKinematic || rb.IsSleeping()
+            || rb.linearVelocity.sqrMagnitude <= UnheldDriftRestSpeed * UnheldDriftRestSpeed;
+        if (!still)
+        {
+            b.driftRestSeconds = 0f;
+            return false;
+        }
+
+        b.driftRestSeconds += Time.fixedDeltaTime;
+        if (b.driftRestSeconds < UnheldDriftResetSettleSeconds)
+            return false;
+
+        b.driftRestSeconds = 0f;
+        return true;
     }
 
     int ServerComputeScore()

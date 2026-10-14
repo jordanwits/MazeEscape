@@ -11,6 +11,10 @@ using UnityEngine.UI;
 /// plate language that routes to the table's <see cref="BlackjackGameController"/> ServerRpcs. Hand totals are
 /// deliberately NOT shown — the player reads the cards on the felt and does their own math. A single instance is
 /// created on demand and persists (DontDestroyOnLoad) so its canvas/camera can't be torn down by scene churn.
+///
+/// On a pad the panel is a navigation scope (<see cref="UiNavScope"/>): focus lands on HIT on your turn and DEAL
+/// while betting, and B / Esc leaves the table like the LEAVE plate. Between turns nothing is focused, so a stray A
+/// can't land on LEAVE; Start opens the pause menu over the table, as it always did.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class BlackjackOverlayController : MonoBehaviour
@@ -35,6 +39,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
     MenuButtonFx _dealFx;
     TMP_Text _dealLabel;
     bool _dealStyledAsCancel;
+    UiNavScope _navScope;
 
     Camera _bjCamera;
     Camera _fpCamera;
@@ -103,6 +108,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
             _instance = null;
         if (_shown)
             IsInteractive = false;
+        UiEventSystem.Close(_navScope);
     }
 
     void Update()
@@ -174,6 +180,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
             MenuTheme.ApplyCursor();
+            UiEventSystem.Open(_navScope);
         }
         else
         {
@@ -185,7 +192,21 @@ public sealed class BlackjackOverlayController : MonoBehaviour
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
             }
+            UiEventSystem.Close(_navScope);
         }
+    }
+
+    /// <summary>
+    /// Pad focus for the panel: the move that matters this phase. When none is on offer (dealing, someone else's
+    /// turn) nothing is focused — LEAVE as the fallback would catch the A pressed a moment ago on STAND.
+    /// </summary>
+    Selectable DefaultNavSelection()
+    {
+        if (_hitBtn != null && _hitBtn.gameObject.activeSelf)
+            return _hitBtn;
+        if (_dealBtn != null && _dealBtn.gameObject.activeSelf)
+            return _dealBtn.interactable ? _dealBtn : _leaveBtn;   // NO TICKETS: leaving is the only move left
+        return null;
     }
 
     /// <summary>
@@ -294,7 +315,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         _balanceValue.text = balance.ToString();
         _betValue.text = s.Bet.ToString();
 
-        _message.text = BuildMessage(phase, s, seatIndex, myTurn);
+        _message.text = BuildMessage(phase, s, seatIndex, myTurn, balance);
 
         // Result banner (only when a resolved round is showing and we were dealt in).
         bool showBanner = (phase == BlackjackPhase.Resolve || phase == BlackjackPhase.Payout) && inRound
@@ -329,7 +350,7 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         _leaveBtn.gameObject.SetActive(true);
     }
 
-    string BuildMessage(BlackjackPhase phase, SeatState s, int seatIndex, bool myTurn)
+    string BuildMessage(BlackjackPhase phase, SeatState s, int seatIndex, bool myTurn, int balance)
     {
         switch (phase)
         {
@@ -337,6 +358,8 @@ public sealed class BlackjackOverlayController : MonoBehaviour
             case BlackjackPhase.Betting:
                 if (s.IsReady == 1)
                     return $"DEALING IN {Mathf.CeilToInt(_table.PhaseTimer)}";
+                if (balance < BlackjackConfig.MinBet)
+                    return "NO TICKETS"; // DEAL is disabled below the table minimum
                 return "PLACE YOUR BET";
             case BlackjackPhase.Dealing:
                 return "DEALING";
@@ -487,6 +510,8 @@ public sealed class BlackjackOverlayController : MonoBehaviour
         _dealStyledAsCancel = false;
         _leaveBtn = MakePlate("LEAVE", MenuWidgets.PlateStyle.Danger, OnLeave, out _,
             new Vector2(1f, 0f), new Vector2(-40f, 24f), new Vector2(300f, 62f), 24f);
+
+        _navScope = new UiNavScope(_root.transform, DefaultNavSelection, OnLeave);
 
         _root.SetActive(false);
     }

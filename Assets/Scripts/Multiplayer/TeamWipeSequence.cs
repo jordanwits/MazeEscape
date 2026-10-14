@@ -22,6 +22,9 @@ using UnityEngine.UI;
 /// maze, so nothing about the card is networked.
 ///
 /// Lives in the gameplay scene, so <see cref="IsRunning"/> clears by itself when the menu load tears it down.
+///
+/// On a pad the card is a navigation scope with LEAVE as its only stop (<see cref="UiNavScope"/>), so A presses it.
+/// It has no back: B / Esc do nothing here.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class TeamWipeSequence : MonoBehaviour
@@ -46,6 +49,7 @@ public sealed class TeamWipeSequence : MonoBehaviour
     CanvasGroup _cardGroup;
     RunTrailMap _map;
     Button _leaveButton;
+    UiNavScope _navScope;
     Camera _fallbackCamera;
     bool _everyoneDead = true;
 
@@ -74,6 +78,7 @@ public sealed class TeamWipeSequence : MonoBehaviour
     {
         if (s_instance == this)
             s_instance = null;
+        UiEventSystem.Close(_navScope);
     }
 
     IEnumerator Run()
@@ -89,9 +94,12 @@ public sealed class TeamWipeSequence : MonoBehaviour
         _cardGroup.alpha = 1f;
 
         // Clickable only once fully shown, so a click already in flight when the last player went down (a punch,
-        // a spectator switch) can't land on LEAVE before the card has even been seen.
+        // a spectator switch) can't land on LEAVE before the card has even been seen. The same goes for a pad:
+        // LEAVE takes focus only now.
         _cardGroup.blocksRaycasts = true;
         _cardGroup.interactable = true;
+        _navScope = new UiNavScope(_cardGroup.transform, () => _leaveButton);
+        UiEventSystem.Open(_navScope);
 
         if (_map != null && _map.HasTrails)
             _map.Play(TraceSeconds);

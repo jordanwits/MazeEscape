@@ -476,7 +476,9 @@ public static class MenuWidgets
         var button = go.AddComponent<Button>();
         button.targetGraphic = target;
         button.transition = Selectable.Transition.None;
-        button.navigation = new Navigation { mode = Navigation.Mode.None };
+        // Navigable for pads and the keyboard; UiEventSystem narrows it to the screen on top and drops any
+        // selection a mouse click makes, so clicks still never leave a plate selected.
+        button.navigation = new Navigation { mode = Navigation.Mode.Automatic };
         button.onClick.AddListener(() =>
         {
             MenuUiAudio.PlayClick();
@@ -560,13 +562,14 @@ public static class MenuWidgets
         slider.direction = Slider.Direction.LeftToRight;
         slider.minValue = 0f;
         slider.maxValue = 1f;
-        slider.navigation = new Navigation { mode = Navigation.Mode.None };
+        // Left/right on a selected slider step its value (UiEventSystem gives it no sideways neighbours).
+        slider.navigation = new Navigation { mode = Navigation.Mode.Automatic };
         slider.transition = Selectable.Transition.ColorTint;
         var colors = slider.colors;
         colors.normalColor = MenuTheme.Bone;
         colors.highlightedColor = MenuTheme.AmberBright;
         colors.pressedColor = MenuTheme.Amber;
-        colors.selectedColor = MenuTheme.Bone;
+        colors.selectedColor = colors.highlightedColor;   // pad focus reads as hover
         colors.disabledColor = MenuTheme.Faint;
         slider.colors = colors;
         return slider;
@@ -609,7 +612,7 @@ public static class MenuWidgets
         input.caretColor = MenuTheme.AmberBright;
         input.caretWidth = 2;
         input.selectionColor = MenuTheme.WithAlpha(MenuTheme.Amber, 0.35f);
-        input.navigation = new Navigation { mode = Navigation.Mode.None };
+        input.navigation = new Navigation { mode = Navigation.Mode.Automatic };
         input.transition = Selectable.Transition.None;
         return input;
     }
@@ -678,6 +681,7 @@ public static class MenuWidgets
         var scrollbar = barRt.gameObject.AddComponent<Scrollbar>();
         scrollbar.direction = Scrollbar.Direction.BottomToTop;
         scrollbar.transition = Selectable.Transition.None;
+        // Not a pad stop: a pad scrolls the list by moving through it (UiScrollFollowSelection).
         scrollbar.navigation = new Navigation { mode = Navigation.Mode.None };
 
         RectTransform slideArea = CreateStretched("Sliding Area", barRt);
@@ -695,6 +699,11 @@ public static class MenuWidgets
         clamp.content = content;
         clamp.target = rootLayout;
         clamp.maxHeight = maxHeight;
+
+        var follow = root.gameObject.AddComponent<UiScrollFollowSelection>();
+        follow.scrollRect = scroll;
+        follow.viewport = viewport;
+        follow.content = content;
 
         return content;
     }
@@ -746,7 +755,12 @@ public sealed class CardHeightMirror : MonoBehaviour
     }
 }
 
-/// <summary>Two-or-more option selector (e.g. OPEN MIC / PUSH TO TALK) in the plate language.</summary>
+/// <summary>
+/// Two-or-more option selector (e.g. OPEN MIC / PUSH TO TALK) in the plate language. On a pad each option is its own
+/// stop: left/right moves between options, A picks one, and stepping in from another row lands on the active option
+/// (<see cref="ActiveOption"/>, read by <see cref="UiEventSystem"/>). The option under pad focus takes the plates'
+/// hover look; the mouse never leaves a selection, so it never shows for pointer play.
+/// </summary>
 [DisallowMultipleComponent]
 public sealed class MenuSegmented : MonoBehaviour
 {
@@ -755,15 +769,22 @@ public sealed class MenuSegmented : MonoBehaviour
     Image[] _fills;
     Image[] _outlines;
     TMPro.TextMeshProUGUI[] _labels;
+    Button[] _buttons;
     int _selected = -1;
+    int _focused = -1;
 
     public int Selected => _selected;
+
+    /// <summary>The button of the option currently picked, if any.</summary>
+    public Selectable ActiveOption =>
+        _buttons != null && _selected >= 0 && _selected < _buttons.Length ? _buttons[_selected] : null;
 
     public void Build(string[] options, float height)
     {
         _fills = new Image[options.Length];
         _outlines = new Image[options.Length];
         _labels = new TMPro.TextMeshProUGUI[options.Length];
+        _buttons = new Button[options.Length];
 
         for (int i = 0; i < options.Length; i++)
         {
@@ -789,7 +810,7 @@ public sealed class MenuSegmented : MonoBehaviour
             var button = opt.gameObject.AddComponent<Button>();
             button.targetGraphic = fill;
             button.transition = Selectable.Transition.None;
-            button.navigation = new Navigation { mode = Navigation.Mode.None };
+            button.navigation = new Navigation { mode = Navigation.Mode.Automatic };
             button.onClick.AddListener(() =>
             {
                 MenuUiAudio.PlayClick();
@@ -799,9 +820,36 @@ public sealed class MenuSegmented : MonoBehaviour
             _fills[i] = fill;
             _outlines[i] = outline;
             _labels[i] = label;
+            _buttons[i] = button;
         }
 
         Refresh();
+    }
+
+    void LateUpdate()
+    {
+        // Polled rather than event-driven: the options are bare Buttons, and UiEventSystem has settled the
+        // selection by now (it runs earlier in LateUpdate).
+        UnityEngine.EventSystems.EventSystem eventSystem = UnityEngine.EventSystems.EventSystem.current;
+        GameObject selected = eventSystem != null ? eventSystem.currentSelectedGameObject : null;
+        int focused = -1;
+        if (selected != null && _buttons != null)
+        {
+            for (int i = 0; i < _buttons.Length; i++)
+            {
+                if (_buttons[i] != null && _buttons[i].gameObject == selected)
+                {
+                    focused = i;
+                    break;
+                }
+            }
+        }
+
+        if (focused != _focused)
+        {
+            _focused = focused;
+            Refresh();
+        }
     }
 
     public void Set(int index, bool notify)
@@ -826,11 +874,21 @@ public sealed class MenuSegmented : MonoBehaviour
         for (int i = 0; i < _fills.Length; i++)
         {
             bool on = i == _selected;
-            _fills[i].color = on ? MenuTheme.Amber : MenuTheme.WithAlpha(MenuTheme.Tile, 0.85f);
-            _outlines[i].color = on
-                ? MenuTheme.WithAlpha(MenuTheme.AmberDeep, 0.9f)
-                : MenuTheme.WithAlpha(MenuTheme.Bone, 0.22f);
-            _labels[i].color = on ? MenuTheme.InkOnAccent : MenuTheme.Mist;
+            // Pad focus borrows the plate hover palette: bone flip with ink type, or the brighter mustard of a
+            // hovered primary plate on the picked option.
+            bool focused = i == _focused;
+            if (on)
+            {
+                _fills[i].color = focused ? MenuTheme.AmberBright : MenuTheme.Amber;
+                _outlines[i].color = MenuTheme.WithAlpha(MenuTheme.AmberDeep, 0.9f);
+                _labels[i].color = MenuTheme.InkOnAccent;
+            }
+            else
+            {
+                _fills[i].color = focused ? MenuTheme.WithAlpha(MenuTheme.Bone, 0.94f) : MenuTheme.WithAlpha(MenuTheme.Tile, 0.85f);
+                _outlines[i].color = focused ? MenuTheme.WithAlpha(MenuTheme.Ink, 0.45f) : MenuTheme.WithAlpha(MenuTheme.Bone, 0.22f);
+                _labels[i].color = focused ? MenuTheme.Ink : MenuTheme.Mist;
+            }
         }
     }
 }

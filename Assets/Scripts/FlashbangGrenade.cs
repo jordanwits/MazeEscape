@@ -47,7 +47,6 @@ public class FlashbangGrenade : NetworkBehaviour
     [SerializeField, Range(0f, 1f)] float bangVolume = 1f;
 
     static readonly RaycastHit[] s_castHits = new RaycastHit[16];
-    static readonly Collider[] s_blastOverlap = new Collider[192];
     static readonly List<IBlindableEnemy> s_blastEnemies = new List<IBlindableEnemy>(16);
 
     Vector3 _velocity;
@@ -255,15 +254,17 @@ public class FlashbangGrenade : NetworkBehaviour
     {
         // Enemy prefabs do not share a single layer (the Jailor sits on Default, the Zombie and the guards on
         // Enemy), so the blast sweeps every layer once and filters by component. It runs exactly once per
-        // grenade, so the wide query costs nothing meaningful.
-        int count = Physics.OverlapSphereNonAlloc(
-            point, blindRadius, s_blastOverlap, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
-        count = Mathf.Min(count, s_blastOverlap.Length);
+        // grenade, so the wide query costs nothing meaningful. It has to be the allocating overlap: a dense room
+        // holds more than a fixed buffer's worth of static colliders inside the radius (the breakroom vending
+        // machine alone has 169 box colliders), PhysX reports statics before the dynamic actors an enemy's
+        // CharacterController lives in, and a truncated result silently left every enemy in the room unblinded.
+        Collider[] hits = Physics.OverlapSphere(
+            point, blindRadius, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
 
         s_blastEnemies.Clear();
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < hits.Length; i++)
         {
-            Collider collider = s_blastOverlap[i];
+            Collider collider = hits[i];
             if (collider == null)
                 continue;
 

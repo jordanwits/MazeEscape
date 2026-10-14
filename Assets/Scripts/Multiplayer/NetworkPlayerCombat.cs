@@ -12,7 +12,13 @@ public class NetworkPlayerCombat : NetworkBehaviour
     [SerializeField] PlayerController playerController;
     [SerializeField] PlayerHealth playerHealth;
 
-    float _serverNextMeleeTime;
+    /// <summary>
+    /// Share of the cooldown the server enforces between swings: the same slack the flare gun and grenades get, so
+    /// frame overshoot or a late RPC never drops a swing the client legitimately allowed.
+    /// </summary>
+    const float ServerMeleeCooldownSlack = 0.9f;
+
+    float _serverNextSwingStartTime = float.NegativeInfinity;
 
     void Awake()
     {
@@ -52,14 +58,18 @@ public class NetworkPlayerCombat : NetworkBehaviour
         if (playerHealth != null && playerHealth.IsDead)
             return;
 
-        float now = Time.time;
-        if (now < _serverNextMeleeTime)
+        // Date the swing from when it STARTED, as the client's own cooldown does. Its hit only reaches us a hit
+        // delay later (0.25 s punch, 0.375 s sword), so timing from arrival rejected a punch thrown the moment a
+        // sword's cooldown ran out every time, and dropped same-weapon swings at full rate whenever the RPC jittered.
+        float hitDelay = playerController != null ? playerController.ActiveMeleeHitDelayForServer : 0.25f;
+        float swingStart = Time.time - hitDelay;
+        if (swingStart < _serverNextSwingStartTime)
             return;
 
         // Whichever weapon the attacker has selected — the sword's cooldown is longer than the punch's, and
         // gating a sword swing on the punch value would let it be spammed.
         float cooldown = playerController != null ? playerController.ActiveMeleeCooldownForServer : 0.8f;
-        _serverNextMeleeTime = now + cooldown;
+        _serverNextSwingStartTime = swingStart + cooldown * ServerMeleeCooldownSlack;
 
         ServerApplyMeleeWithObserverSwoosh();
     }
@@ -72,7 +82,7 @@ public class NetworkPlayerCombat : NetworkBehaviour
 
         // Server-side cooldown + alive gate. The client's TryMelee already gates these for fairness, but
         // those checks are bypassable; without enforcing them here, a client could spam melee or attack
-        // while dead. Cooldown uses the same value the client uses so legitimate attacks always pass.
+        // while dead. The gate dates swings from their start with a little slack, so legitimate attacks pass.
         ServerTryApplyMelee();
     }
 

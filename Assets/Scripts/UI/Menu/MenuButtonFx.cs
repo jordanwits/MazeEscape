@@ -7,10 +7,15 @@ using UnityEngine.UI;
 /// Plate-button presentation: dark plate at rest, flips light with dark type on hover,
 /// mustard with an under-ledge when selected. Handles press dip, disabled dimming and
 /// hover audio. All motion uses unscaled time.
+///
+/// "Hover" is the pointer over the plate OR the pad/keyboard selection on it — the same look either way. The
+/// mouse never leaves a selection behind (<see cref="UiEventSystem"/> drops it), so mouse play is unchanged.
+/// The selection's hover tick is played by <see cref="UiEventSystem"/>, which knows a move from a click.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class MenuButtonFx : MonoBehaviour,
-    IPointerEnterHandler, IPointerExitHandler, IPointerDownHandler, IPointerUpHandler
+    IPointerEnterHandler, IPointerExitHandler, IPointerDownHandler, IPointerUpHandler,
+    ISelectHandler, IDeselectHandler
 {
     public Button button;
     public TMP_Text label;
@@ -50,6 +55,8 @@ public sealed class MenuButtonFx : MonoBehaviour,
     float _select;
     bool _pointerInside;
     bool _pointerDown;
+    /// <summary>The EventSystem's selection is on this plate (pad / keyboard focus) — not the mustard <see cref="Selected"/> state.</summary>
+    bool _focused;
     bool _selected;
 
     public bool Selected => _selected;
@@ -73,6 +80,9 @@ public sealed class MenuButtonFx : MonoBehaviour,
     {
         _pointerInside = false;
         _pointerDown = false;
+        // Disabling skips OnDeselect, and the EventSystem may still hold this plate, so re-derive like Selectable does.
+        EventSystem eventSystem = EventSystem.current;
+        _focused = eventSystem != null && eventSystem.currentSelectedGameObject == gameObject;
         _hover = 0f;
         _press = 0f;
         _select = _selected ? 1f : 0f;
@@ -105,10 +115,22 @@ public sealed class MenuButtonFx : MonoBehaviour,
         _pointerDown = false;
     }
 
+    public void OnSelect(BaseEventData eventData)
+    {
+        _focused = true;
+    }
+
+    public void OnDeselect(BaseEventData eventData)
+    {
+        _focused = false;
+    }
+
+    bool Hovered => (_pointerInside || _focused) && Interactable;
+
     void Update()
     {
         float k = 1f - Mathf.Exp(-14f * Time.unscaledDeltaTime);
-        bool hovered = _pointerInside && Interactable;
+        bool hovered = Hovered;
         _hover = Mathf.Lerp(_hover, hovered ? 1f : 0f, k);
         _press = Mathf.Lerp(_press, _pointerDown && Interactable ? 1f : 0f, k);
         _select = Mathf.Lerp(_select, _selected ? 1f : 0f, k);
@@ -120,7 +142,7 @@ public sealed class MenuButtonFx : MonoBehaviour,
     {
         if (instant)
         {
-            _hover = _pointerInside && Interactable ? 1f : 0f;
+            _hover = Hovered ? 1f : 0f;
             _select = _selected ? 1f : 0f;
         }
 

@@ -283,6 +283,18 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
 
         s_TrapRagdollNextAllowedTime[id] = now + TrapRagdollServerCooldownSeconds;
 
+        // Already down, held by an enemy, or getting up: the hit still hurts but starts no new ragdoll. A second
+        // episode on a body that is still in the first one raced the owner's "back up" notify, which carries no
+        // episode identity: a get-up crossing a fresh hit on the wire ended the NEW episode on the server, so every
+        // observer stood the player up while the owner was tumbling. The server's copy stays down until its Stop
+        // lands and then plays the get-up, so this covers that whole window. A lethal hit still goes down through
+        // the death path, which a stale notify can no longer undo.
+        if (ragdoll.IsRagdolled || ragdoll.IsHeld || ragdoll.IsGettingUp)
+        {
+            playerHealth.TakeDamage(damageAmount);
+            return;
+        }
+
         // Ragdoll FIRST, damage second. TakeDamage raises Died synchronously, and the death path immediately
         // starts its own ZERO-force ragdoll; whichever ActivateRagdoll arrives first wins, because the second is
         // dropped by the already-ragdolled guard. Damaging first therefore threw the trap's knockback away on
@@ -835,6 +847,12 @@ public class NetworkPlayerRagdoll : NetworkBehaviour
         // teleport observer copies of the player.
         if (!_serverRagdollActive && _heldByEnemy.Value.Held == 0)
             return;
+
+        // A joined client's free ragdoll meets the pits here, on the pose its owner actually simulates. The server's
+        // own copy of that body can't stand in for it (see PitKillZone.ServerTryKillStreamedRagdoll). The host's own
+        // body is judged by its real bone colliders, and a held body is pinned to the enemy's hand, not falling.
+        if (!IsOwner && _heldByEnemy.Value.Held == 0)
+            PitKillZone.ServerTryKillStreamedRagdoll(playerHealth, bonePositions);
 
         ApplyRagdollPoseClientRpc(bonePositions, boneRotations);
     }

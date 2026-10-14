@@ -670,9 +670,8 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         jailorLaughAudioSource.playOnAwake = false;
         jailorLaughAudioSource.loop = false;
         jailorLaughAudioSource.spatialBlend = 1f;
-        jailorLaughAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
-        jailorLaughAudioSource.minDistance = 2f;
-        jailorLaughAudioSource.maxDistance = 24f;
+        // Unity's Logarithmic law never reaches silence, so he was faintly audible (unmuffled) level-wide.
+        GameAudioManager.ApplyFadingLogRolloff(jailorLaughAudioSource, 2f, 24f);
         jailorLaughAudioSource.dopplerLevel = 0f;
         GameAudioManager.RouteSfxSource(jailorLaughAudioSource);
     }
@@ -685,9 +684,7 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         jailorFootstepAudioSource.playOnAwake = false;
         jailorFootstepAudioSource.loop = false;
         jailorFootstepAudioSource.spatialBlend = 1f;
-        jailorFootstepAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
-        jailorFootstepAudioSource.minDistance = 1.5f;
-        jailorFootstepAudioSource.maxDistance = 25f;
+        GameAudioManager.ApplyFadingLogRolloff(jailorFootstepAudioSource, 1.5f, 25f); // fades to silence at max
         jailorFootstepAudioSource.dopplerLevel = 0f;
         GameAudioManager.RouteSfxSource(jailorFootstepAudioSource);
     }
@@ -2907,35 +2904,36 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             }
         }
 
-        if (bestSeen == null)
+        // Always run the registry pass, even when the overlap already saw someone. On the host the overlap only
+        // finds the host's own player (a joined client's copy has its CharacterController off and its proxy on
+        // Ignore Raycast), so skipping this whenever it found anyone made him pick the host over a nearer client.
+        // The < bestSeenScore comparisons below keep whoever is genuinely nearest.
+        IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
+        for (int i = 0; i < players.Count; i++)
         {
-            IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
-            for (int i = 0; i < players.Count; i++)
+            PlayerHealth candidate = players[i];
+            if (candidate == null || candidate.IsDead || ShouldJailorIgnorePlayer(candidate))
+                continue;
+
+            float distance = Vector3.Distance(transform.position, candidate.transform.position);
+            if (distance > Mathf.Max(detectionRadius, hearingRadius))
+                continue;
+
+            bool seen = distance <= detectionRadius
+                && IsWithinDetectionCone(candidate.transform.position)
+                && (!requireDetectionLineOfSight || HasDetectionLineOfSight(candidate));
+            if (seen && distance < bestSeenScore)
             {
-                PlayerHealth candidate = players[i];
-                if (candidate == null || candidate.IsDead || ShouldJailorIgnorePlayer(candidate))
-                    continue;
+                bestSeenScore = distance;
+                bestSeen = candidate;
+            }
 
-                float distance = Vector3.Distance(transform.position, candidate.transform.position);
-                if (distance > Mathf.Max(detectionRadius, hearingRadius))
-                    continue;
-
-                bool seen = distance <= detectionRadius
-                    && IsWithinDetectionCone(candidate.transform.position)
-                    && (!requireDetectionLineOfSight || HasDetectionLineOfSight(candidate));
-                if (seen && distance < bestSeenScore)
-                {
-                    bestSeenScore = distance;
-                    bestSeen = candidate;
-                }
-
-                bool heardSprint = distance <= hearingRadius && IsPlayerAudiblySprinting(candidate);
-                if (heardSprint && distance < bestSoundScore)
-                {
-                    bestSoundScore = distance;
-                    bestSoundPoint = candidate.transform.position;
-                    hasSoundPoint = true;
-                }
+            bool heardSprint = distance <= hearingRadius && IsPlayerAudiblySprinting(candidate);
+            if (heardSprint && distance < bestSoundScore)
+            {
+                bestSoundScore = distance;
+                bestSoundPoint = candidate.transform.position;
+                hasSoundPoint = true;
             }
         }
 
@@ -3249,10 +3247,29 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         _state = JailorState.Chase;
     }
 
+    /// <summary>
+    /// Longest an investigation walk-in may take before he searches where he stands. Generous on purpose: he walks
+    /// at patrol speed to points up to ~33 m away (an outrun target's last-known position), and a maze route there
+    /// can honestly take 20+ s. The partial-path test in UpdateInvestigating is the real fix; this only backstops it.
+    /// </summary>
+    const float InvestigationApproachTimeoutSeconds = 30f;
+
+    /// <summary>
+    /// Re-path interval toward an investigation point that has not moved (a moved point re-paths at once). The chase
+    /// rate (destinationRefreshInterval, 0.1 s) re-requested the same unreachable point so often that the multi-frame
+    /// partial-path search was nearly always still pending, and the dead-end test in UpdateInvestigating only got a
+    /// frame to run by luck — he stood at a keyed door for seconds before giving up. The agent re-paths on its own
+    /// if its path is invalidated.
+    /// </summary>
+    const float InvestigationRepathSeconds = 1f;
+
+    float _investigationApproachGiveUpTime;
+
     void SetInvestigationPoint(Vector3 worldPoint)
     {
         _investigationPoint = worldPoint;
         _hasInvestigationPoint = true;
+        _investigationApproachGiveUpTime = Time.time + InvestigationApproachTimeoutSeconds;
         _isLingerAtInvestigationPoint = false;
         _investigationLingerEndTime = 0f;
         _hasInvestigationSearchDestination = false;
@@ -3423,14 +3440,26 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         {
             navMeshAgent.SetDestination(targetPoint);
             _lastPathDestination = targetPoint;
-            _nextDestinationRefreshTime = Time.time + Mathf.Max(0.05f, destinationRefreshInterval);
+            _nextDestinationRefreshTime = Time.time + Mathf.Max(destinationRefreshInterval, InvestigationRepathSeconds);
         }
 
         Vector3 flatSelf = transform.position;
         flatSelf.y = 0f;
         Vector3 flatDest = targetPoint;
         flatDest.y = 0f;
-        if (Vector3.Distance(flatSelf, flatDest) <= investigationArrivalDistance)
+        // A point on a NavMesh island (the MG_Start room behind its keyed door, the exit cab — keyed and cab leaves
+        // bake as walls) is never reached: the agent stops at the end of its partial path, outside the arrival
+        // radius, and with no speed left the prop-stuck watchdog never fires either, so he used to stand there until
+        // the next noise. The end of a partial path counts as arriving, and an approach that still hasn't arrived
+        // after InvestigationApproachTimeoutSeconds searches where it is. Never judged on the frame a path was just
+        // requested, whose desiredVelocity can still describe the previous path.
+        bool pathDeadEnd = !shouldRefreshDestination
+            && !navMeshAgent.pathPending
+            && navMeshAgent.pathStatus != NavMeshPathStatus.PathComplete
+            && navMeshAgent.desiredVelocity.sqrMagnitude < 0.04f;
+        if (Vector3.Distance(flatSelf, flatDest) <= investigationArrivalDistance
+            || pathDeadEnd
+            || Time.time >= _investigationApproachGiveUpTime)
         {
             _isLingerAtInvestigationPoint = true;
             _investigationLingerEndTime = Time.time + Mathf.Max(0f, investigationLingerSeconds);

@@ -336,6 +336,12 @@ public class SecurityGuardAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
     int _consecutiveWhiffs;
     bool _engagedWalk;
 
+    // The target's ground velocity, estimated from its position (see SampleTargetVelocity).
+    Vector3 _targetVelocityEstimate;
+    Vector3 _targetVelocityLastPosition;
+    float _targetVelocityLastSampleTime;
+    bool _hasTargetVelocitySample;
+
     // Poise / stagger
     float _poise;
     float _poiseRegenBlockedUntil;
@@ -460,6 +466,8 @@ public class SecurityGuardAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             _nextSenseTime = Time.time + Mathf.Max(0f, sensingInterval);
             TryAcquireTarget();
         }
+
+        SampleTargetVelocity();
 
         Vector3 desiredHorizontalVelocity = Vector3.zero;
         switch (_state)
@@ -646,7 +654,10 @@ public class SecurityGuardAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         // target would be met with a hurricane lunge earned entirely by someone else. Guarded on an actual
         // change because OnDamageTaken re-targets on every single hit.
         if (targetHealth != _targetHealth)
+        {
             _consecutiveWhiffs = 0;
+            _hasTargetVelocitySample = false; // a new body; the old one's motion means nothing
+        }
 
         _targetHealth = targetHealth;
         _target = targetHealth != null ? targetHealth.transform : null;
@@ -662,6 +673,7 @@ public class SecurityGuardAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         _target = null;
         _targetHealth = null;
         _consecutiveWhiffs = 0; // fight over — see SetTarget
+        _hasTargetVelocitySample = false;
     }
 
     /// <summary>Can he still see (or hear) the current target right now? Refreshes last-known data when true.</summary>
@@ -1116,11 +1128,7 @@ public class SecurityGuardAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
     bool IsTargetMovingAway(float minimumSpeed = 1.5f)
     {
-        if (_target == null)
-            return false;
-
-        CharacterController targetCc = _target.GetComponent<CharacterController>();
-        if (targetCc == null || !targetCc.enabled)
+        if (_target == null || !_hasTargetVelocitySample)
             return false;
 
         Vector3 away = _target.position - transform.position;
@@ -1128,9 +1136,56 @@ public class SecurityGuardAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (away.sqrMagnitude < 1e-4f)
             return false;
 
-        Vector3 targetVelocity = targetCc.velocity;
-        targetVelocity.y = 0f;
+        Vector3 targetVelocity = _targetVelocityEstimate;
         return targetVelocity.magnitude > minimumSpeed && Vector3.Dot(targetVelocity.normalized, away.normalized) > 0.35f;
+    }
+
+    /// <summary>Faster than any player runs: a jump this big between samples is a teleport, not a getaway.</summary>
+    const float TargetVelocityMaxPlausibleSpeed = 15f;
+
+    /// <summary>Smoothing time constant for <see cref="_targetVelocityEstimate"/> (irons out network-tick jitter).</summary>
+    const float TargetVelocitySmoothingSeconds = 0.15f;
+
+    /// <summary>
+    /// Server: tracks the target's ground velocity from its position. The flee tests used to read
+    /// CharacterController.velocity, which only ever worked for the host's own player: a joined client's copy on the
+    /// host has its controller switched off (NetworkPlayerAvatar) and is moved by its network transform, never by
+    /// Move(), so every client read as standing still — no hurricane on a fleeing client and a stalk-walk that never
+    /// broke on their sprint. Divides by the real time since the last sample, so a gap (an attack, a flashbang)
+    /// averages over the gap instead of spiking.
+    /// </summary>
+    void SampleTargetVelocity()
+    {
+        if (_target == null)
+        {
+            _hasTargetVelocitySample = false;
+            return;
+        }
+
+        Vector3 position = _target.position;
+        float now = Time.time;
+        if (!_hasTargetVelocitySample)
+        {
+            _targetVelocityEstimate = Vector3.zero;
+        }
+        else
+        {
+            float elapsed = now - _targetVelocityLastSampleTime;
+            if (elapsed <= 1e-4f)
+                return;
+
+            Vector3 velocity = (position - _targetVelocityLastPosition) / elapsed;
+            velocity.y = 0f;
+            if (velocity.sqrMagnitude <= TargetVelocityMaxPlausibleSpeed * TargetVelocityMaxPlausibleSpeed)
+            {
+                float blend = 1f - Mathf.Exp(-elapsed / TargetVelocitySmoothingSeconds);
+                _targetVelocityEstimate = Vector3.Lerp(_targetVelocityEstimate, velocity, blend);
+            }
+        }
+
+        _targetVelocityLastPosition = position;
+        _targetVelocityLastSampleTime = now;
+        _hasTargetVelocitySample = true;
     }
 
     // ------------------------------------------------------------------
@@ -2531,9 +2586,8 @@ public class SecurityGuardAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         fxAudioSource.playOnAwake = false;
         fxAudioSource.loop = false;
         fxAudioSource.spatialBlend = 1f;
-        fxAudioSource.minDistance = 2f;
-        fxAudioSource.maxDistance = 32f;
-        fxAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
+        // Unity's Logarithmic law never reaches silence, so he was faintly audible (unmuffled) level-wide.
+        GameAudioManager.ApplyFadingLogRolloff(fxAudioSource, 2f, 32f);
         fxAudioSource.dopplerLevel = 0f;
         GameAudioManager.RouteSfxSource(fxAudioSource);
     }

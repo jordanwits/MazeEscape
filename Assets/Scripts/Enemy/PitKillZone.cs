@@ -154,13 +154,13 @@ public class PitKillZone : MonoBehaviour
         PlayerHealth playerHealth = other.GetComponentInParent<PlayerHealth>();
         if (playerHealth != null)
         {
-            if (playerHealth.IsDead)
-                return;
-            if (IsCarriedByJailor(playerHealth))
+            if (!CanPitKillPlayer(playerHealth))
                 return;
 
-            NetworkPlayerRespawn playerRespawn = playerHealth.GetComponent<NetworkPlayerRespawn>();
-            if (playerRespawn != null && playerRespawn.ShouldIgnorePitKill())
+            // Another peer's copy of a player knocked down moments ago runs a presentation-only launch sim (see
+            // NetworkPlayerRagdoll) that is not where the owner's body really is. On the server that body is judged
+            // from its streamed pose instead (ServerTryKillStreamedRagdoll), so these bones must not kill.
+            if (playerHealth.TryGetComponent(out PlayerRagdollController ragdoll) && ragdoll.IsObserverLocalSimActive)
                 return;
 
             // Offline there is no Rpc to carry the stab, so local detection sounds it. In a session it rides
@@ -172,15 +172,7 @@ public class PitKillZone : MonoBehaviour
             if (!applyKills)
                 return;
 
-            if (networked)
-            {
-                // Relayed ahead of the kill so the stab is not queued behind the death/ragdoll Rpcs.
-                NetworkPlayerRagdoll netRagdoll = playerHealth.GetComponent<NetworkPlayerRagdoll>();
-                if (netRagdoll != null)
-                    netRagdoll.BroadcastPitStabSfxFromServer(other.bounds.center);
-            }
-
-            playerHealth.TakeDamage(playerHealth.MaxHealth);
+            KillPlayer(playerHealth, other.bounds.center, networked);
             return;
         }
 
@@ -199,6 +191,69 @@ public class PitKillZone : MonoBehaviour
 
         if (applyKills && destroyIfNoZombieHealth)
             Destroy(other.transform.root.gameObject);
+    }
+
+    static bool CanPitKillPlayer(PlayerHealth playerHealth)
+    {
+        if (playerHealth.IsDead || IsCarriedByJailor(playerHealth))
+            return false;
+
+        NetworkPlayerRespawn playerRespawn = playerHealth.GetComponent<NetworkPlayerRespawn>();
+        return playerRespawn == null || !playerRespawn.ShouldIgnorePitKill();
+    }
+
+    static void KillPlayer(PlayerHealth playerHealth, Vector3 stabPoint, bool networked)
+    {
+        if (networked)
+        {
+            // Relayed ahead of the kill so the stab is not queued behind the death/ragdoll Rpcs.
+            NetworkPlayerRagdoll netRagdoll = playerHealth.GetComponent<NetworkPlayerRagdoll>();
+            if (netRagdoll != null)
+                netRagdoll.BroadcastPitStabSfxFromServer(stabPoint);
+        }
+
+        playerHealth.TakeDamage(playerHealth.MaxHealth);
+    }
+
+    /// <summary>
+    /// Server: pit kills for a joined client's free ragdoll, judged on the pose its owner streams. The server's own
+    /// copy of that body can't be used: its short local launch sim diverges from the owner's (and is ignored in
+    /// <see cref="TryKill"/>), and after the hand-over its bones are a puppet with no colliders, so a body that
+    /// tumbled into a pit lay on the spikes alive until the get-up snapped the root and its proxy capsule in. Any
+    /// streamed bone inside a live pit kills, as any bone collider of the host's own body does.
+    /// </summary>
+    public static void ServerTryKillStreamedRagdoll(PlayerHealth playerHealth, Vector3[] bonePositions)
+    {
+        if (playerHealth == null || bonePositions == null || !ShouldApplyPitKills() || !CanPitKillPlayer(playerHealth))
+            return;
+
+        for (int z = s_ActiveZones.Count - 1; z >= 0; z--)
+        {
+            PitKillZone zone = s_ActiveZones[z];
+            if (zone == null)
+            {
+                s_ActiveZones.RemoveAt(z); // level unload destroyed it without OnDisable running
+                continue;
+            }
+
+            for (int b = 0; b < bonePositions.Length; b++)
+            {
+                if (!zone.ContainsPoint(bonePositions[b]))
+                    continue;
+
+                KillPlayer(playerHealth, bonePositions[b], IsNetworkedSession());
+                return;
+            }
+        }
+    }
+
+    bool ContainsPoint(Vector3 worldPoint)
+    {
+        if (_zoneCollider == null || !_zoneCollider.enabled || !_zoneCollider.bounds.Contains(worldPoint))
+            return false;
+
+        // The kill zones are box triggers; ClosestPoint hands back the point itself when it lies inside.
+        return (_zoneCollider.ClosestPoint(worldPoint) - worldPoint).sqrMagnitude < 1e-6f;
     }
 
     static bool ShouldApplyPitKills()

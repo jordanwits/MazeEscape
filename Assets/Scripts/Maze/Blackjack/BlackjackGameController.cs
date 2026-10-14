@@ -373,8 +373,7 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
         if (seat < 0)
             return;
         SeatState s = GetSeat(seat);
-        int balance = ServerBalanceOf(playerNetObjId);
-        int maxBet = Mathf.Max(BlackjackConfig.MinBet, (balance / BlackjackConfig.BetStep) * BlackjackConfig.BetStep);
+        int maxBet = ServerMaxBetFor(ServerBalanceOf(playerNetObjId));
         int newBet = Mathf.Clamp(s.Bet + delta, BlackjackConfig.MinBet, maxBet);
         if (newBet == s.Bet)
             return;
@@ -393,8 +392,11 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
         if (ready)
         {
             int balance = ServerBalanceOf(playerNetObjId);
-            if (s.Bet < BlackjackConfig.MinBet || s.Bet > balance)
-                return; // can't afford the staked bet
+            if (balance < BlackjackConfig.MinBet)
+                return; // can't afford any bet (the overlay already disables DEAL and reads NO TICKETS)
+            // A bet kept from an earlier round can sit above what is left; stake what they can afford instead of
+            // silently dropping the request (the DEAL button gave no sign it had been refused).
+            s.Bet = Mathf.Clamp(s.Bet, BlackjackConfig.MinBet, ServerMaxBetFor(balance));
             s.IsReady = 1;
         }
         else
@@ -705,7 +707,10 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
             s.InRound = 0;
             s.IsReady = 0;
             s.Status = (byte)BlackjackHandStatus.Empty;
-            // Keep s.Bet; clamp later when they re-ready. Keep LastResult/LastPayout so the overlay can show it.
+            // Keep s.Bet, but never above what they can now afford: after a loss the kept bet could exceed the
+            // balance, and the panel offered a DEAL that could never stake it. Payouts are already credited here.
+            // Keep LastResult/LastPayout so the overlay can show it.
+            s.Bet = Mathf.Clamp(s.Bet, BlackjackConfig.MinBet, ServerMaxBetFor(ServerBalanceOf(s.OccupantNetObjId)));
             SetSeat(i, s);
         }
 
@@ -895,6 +900,10 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
         NetworkPlayerCarnivalTickets w = ServerWalletOf(playerNetObjId);
         return w != null ? w.TicketCount : 0;
     }
+
+    /// <summary>Largest bet a balance covers, in whole bet steps; never below the table minimum.</summary>
+    static int ServerMaxBetFor(int balance) =>
+        Mathf.Max(BlackjackConfig.MinBet, (balance / BlackjackConfig.BetStep) * BlackjackConfig.BetStep);
 
     bool ServerTrySpendBet(ulong playerNetObjId, int bet)
     {

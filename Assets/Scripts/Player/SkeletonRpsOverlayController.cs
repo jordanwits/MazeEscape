@@ -14,6 +14,9 @@ using UnityEngine.UI;
 /// Because it eats player input while up, the panel must always have a way out that does not depend on the
 /// authority answering or on the mouse reaching a plate: cancel (Esc, or Start / B on a pad) walks away, and
 /// two throws in a row that go nowhere close it.
+/// On a pad the throw plates are a navigation scope (<see cref="UiNavScope"/>): focus lands on the last throw
+/// (ROCK the first time) whenever the choices are up, and nothing is focused while they are hidden, so the A that
+/// threw can't fall onto WALK AWAY. The cancel above stays this panel's own — it alone also closes on Start.
 /// A single instance is created on demand and persists (DontDestroyOnLoad).
 /// </summary>
 [DisallowMultipleComponent]
@@ -23,14 +26,13 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
     public static bool IsInteractive { get; private set; }
 
     /// <summary>
-    /// True while the panel owns the cancel press: shown, or on the frame it consumed one to close itself.
-    /// Update order against <see cref="PauseMenuController"/> is undefined, so the closing frame has to keep
-    /// swallowing the press or the pause menu opens behind the dismissed panel.
+    /// True while the panel is shown, and while the press that closed any screen is still settling
+    /// (<see cref="UiEventSystem.HoldsGameplayInput"/>: that frame, then until the button is released), so the
+    /// pause menu doesn't open on the cancel press that just dismissed this panel.
     /// </summary>
-    public static bool ConsumesCancelInput => IsInteractive || Time.frameCount == _cancelConsumedFrame;
+    public static bool ConsumesCancelInput => IsInteractive || UiEventSystem.HoldsGameplayInput;
 
     static SkeletonRpsOverlayController _instance;
-    static int _cancelConsumedFrame = -1;
 
     const float MinSuspenseSeconds = 0.75f;
     const float WaitingTimeoutSeconds = 8f;
@@ -58,6 +60,9 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
     TMP_Text _bannerText, _revealText, _verdictText;
     Image[] _playerPips, _skeletonPips;
     GameObject _rockBtn, _paperBtn, _scissorsBtn;
+    /// <summary>The plate of the last throw — where pad focus returns when the choices come back.</summary>
+    GameObject _lastChoiceBtn;
+    UiNavScope _navScope;
 
     OverlayState _state;
     bool _shown;
@@ -135,6 +140,7 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
             _instance = null;
         if (_shown)
             IsInteractive = false;
+        UiEventSystem.Close(_navScope);
     }
 
     void Update()
@@ -150,12 +156,13 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
             return;
         }
 
-        // Cancel walks away exactly like the plate does. The pause menu yields the same press (see
-        // ConsumesCancelInput); while it is open on top, the press belongs to it instead.
-        if (!PauseMenuController.BlocksGameplayInput && CancelPressedThisFrame())
+        // Cancel walks away exactly like the plate does. The pause menu yields the same press (it checks
+        // IsInteractive and UiPressConsumedThisFrame); while it is open on top, the press belongs to it instead —
+        // including the frame it closes on, which UiPressConsumedThisFrame covers whatever the Update order.
+        if (!PauseMenuController.BlocksGameplayInput && !UiEventSystem.UiPressConsumedThisFrame && CancelPressedThisFrame())
         {
-            _cancelConsumedFrame = Time.frameCount;
             OnLeave();
+            UiEventSystem.ConsumeUiPress();
             return;
         }
 
@@ -202,8 +209,8 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
 
     /// <summary>
     /// The cancel press, keyboard and pad. The pad half is not optional: <see cref="PauseMenuController"/> gives up
-    /// its Start toggle while <see cref="ConsumesCancelInput"/> is true, and nothing hands a pad a UI selection to
-    /// work the plates with, so Start / B is a pad player's only way out of the panel.
+    /// its Start toggle while this panel is up, so Start / B is how a pad leaves without reaching WALK AWAY — and
+    /// while the plates are hidden (waiting on a throw) it is the only way.
     /// </summary>
     static bool CancelPressedThisFrame()
     {
@@ -374,6 +381,9 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
         _state = OverlayState.Waiting;
         _waitingSince = Time.unscaledTime;
         _hasPendingResult = false;
+        _lastChoiceBtn = choice == SkeletonRpsChoice.Paper ? _paperBtn
+            : choice == SkeletonRpsChoice.Scissors ? _scissorsBtn
+            : _rockBtn;
         _verdictText.gameObject.SetActive(false);
         SetChoiceButtonsVisible(false);
         // Counted before submitting: offline and on the host the throw resolves inside the call below.
@@ -401,6 +411,7 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
             MenuTheme.ApplyCursor();
+            UiEventSystem.Open(_navScope);
         }
         else
         {
@@ -412,7 +423,20 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
             }
+            UiEventSystem.Close(_navScope);
         }
+    }
+
+    /// <summary>
+    /// Pad focus: the last throw, else ROCK, while the choices are up. Nothing while they are hidden (waiting,
+    /// reveal, match over): the A that threw must not land on WALK AWAY. B / Esc / Start still walk away.
+    /// </summary>
+    Selectable DefaultNavSelection()
+    {
+        GameObject pick = _lastChoiceBtn != null && _lastChoiceBtn.activeSelf ? _lastChoiceBtn
+            : _rockBtn != null && _rockBtn.activeSelf ? _rockBtn
+            : null;
+        return pick != null ? pick.GetComponent<Selectable>() : null;
     }
 
     static bool InGameplayScene()
@@ -493,6 +517,9 @@ public sealed class SkeletonRpsOverlayController : MonoBehaviour
             new Vector2(0f, 0f), new Vector2(400f, 24f), new Vector2(184f, 58f), 24f).gameObject;
         MakePlate("WALK AWAY", MenuWidgets.PlateStyle.Danger, OnLeave,
             new Vector2(1f, 0f), new Vector2(-36f, 24f), new Vector2(196f, 58f), 21f);
+
+        // No back action: the cancel in Update owns Esc / B / Start for this panel.
+        _navScope = new UiNavScope(_root.transform, DefaultNavSelection);
 
         _root.SetActive(false);
     }

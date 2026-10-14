@@ -455,6 +455,53 @@ public partial class PlayerController : MonoBehaviour
     }
 
     /// <summary>
+    /// Drops the sprint the AI hears (and its replicated copy). Update recomputes it only on the normal movement
+    /// path, so any early-out there has to clear it or the last value sticks.
+    /// </summary>
+    void ClearAudibleSprint()
+    {
+        _isSprinting = false;
+        _audiblySprintingForAi = false;
+        if (_networkPlayerAvatar != null && _networkPlayerAvatar.IsSpawned && _networkPlayerAvatar.IsOwner)
+            _networkPlayerAvatar.PublishAudiblySprinting(false);
+    }
+
+    /// <summary>
+    /// The pause menu or the game-over card is up (a jailed "NO WAY OUT" survivor is still alive under the card).
+    /// Time keeps running — co-op can't stop it — so the body idles where it stands instead of freezing mid-stride:
+    /// the locomotion parameters ease to idle (they replicate, so observers saw the last walk or run cycle loop on
+    /// the spot), and gravity still runs with no horizontal motion, so a player who paused mid-jump lands instead of
+    /// hovering. Not for a seated player: the stool pose is raised off the floor.
+    /// </summary>
+    void SettleWhileInputBlocked()
+    {
+        // Still building the maze: there is no floor to land on yet, and the maze-ready gate owns this case.
+        if (ProceduralMazeCoordinator.ShouldBlockLocalPlayerUntilMazeReady())
+            return;
+        if (characterController == null || !characterController.enabled)
+            return;
+
+        bool wasGroundedBeforeMove = characterController.isGrounded;
+        if (wasGroundedBeforeMove && _verticalVelocity.y < 0f)
+            _verticalVelocity.y = -groundedStickDown;
+        _verticalVelocity.y += gravity * Time.deltaTime;
+        _currentHorizontalSpeed = 0f;
+        _groundMoveThisFrame = Vector3.zero;
+
+        characterController.Move(new Vector3(0f, _verticalVelocity.y * Time.deltaTime, 0f));
+        TryPlayLandFootstep(wasGroundedBeforeMove, characterController.isGrounded);
+
+        if (!driveAnimator || animator == null)
+            return;
+
+        animator.SetFloat(speedParameter, 0f, locomotionBlendDampTime, Time.deltaTime);
+        animator.SetFloat(moveXParameter, 0f, locomotionBlendDampTime, Time.deltaTime);
+        animator.SetFloat(moveYParameter, 0f, locomotionBlendDampTime, Time.deltaTime);
+        animator.SetBool(groundedParameter, characterController.isGrounded);
+        animator.SetFloat(verticalVelocityParameter, _verticalVelocity.y);
+    }
+
+    /// <summary>
     /// Apply a non-ragdoll knockback that moves the CharacterController and briefly overrides movement input
     /// (so an external force such as a swinging trap "wins" over the player's own walking). World space.
     /// Call this on the player that owns this controller (movement is owner-authoritative).
@@ -718,6 +765,8 @@ public partial class PlayerController : MonoBehaviour
             WorldRenderCuller.RequestContinuousEvaluation();
 
             CancelThrowCharge();
+            // Knocked down mid-sprint is not still sprinting; the AI hears it until the get-up otherwise.
+            ClearAudibleSprint();
             if (PauseMenuController.BlocksGameplayInput)
             {
                 _moveInput = Vector2.zero;
@@ -743,26 +792,37 @@ public partial class PlayerController : MonoBehaviour
         if (_ragdollController != null && _ragdollController.IsGettingUp)
             return;
 
-        // The RPS gate tests ConsumesCancelInput, not IsInteractive: the panel closes on the same gamepad B press
-        // that is also the drop/crouch fallback binding, and this Update runs after the overlay's (execution order
-        // 100 vs 0) — the one extra blocked frame keeps that press from falling through to HandleDropInput.
+        // UiEventSystem.HoldsGameplayInput covers the press that just closed any screen (that frame, then until the
+        // button is released): pad A/B/Start and Enter/Space are also Jump, Crouch and Attack, and this Update runs
+        // after the overlays' (execution order 100 vs 0), so the closing press would otherwise land in gameplay below.
         if (PauseMenuController.BlocksGameplayInput || BlackjackOverlayController.IsInteractive
-            || SkeletonRpsOverlayController.ConsumesCancelInput || CarnivalStoreOverlayController.IsInteractive)
+            || SkeletonRpsOverlayController.IsInteractive || CarnivalStoreOverlayController.IsInteractive
+            || UiEventSystem.HoldsGameplayInput)
         {
             CancelThrowCharge();
             _moveInput = Vector2.zero;
             _horizontalVelocity = Vector3.zero;
             SetPickupPromptVisible(false);
-            // While seated at blackjack (or facing the jail skeleton / browsing the prize counter) the game keeps
-            // running (time isn't paused), so the locomotion animator would otherwise loop the last walk pose.
-            // Force idle.
-            if ((BlackjackOverlayController.IsInteractive || SkeletonRpsOverlayController.IsInteractive
-                    || CarnivalStoreOverlayController.IsInteractive)
-                && driveAnimator && animator != null)
+            // Nothing below this gate runs, and that is where the sprint the AI hears is recomputed, so it stayed
+            // latched for as long as the screen was up: a player who sprinted up to the prize counter, or paused
+            // mid-sprint, kept drawing every enemy in earshot.
+            ClearAudibleSprint();
+            if (BlackjackOverlayController.IsInteractive || SkeletonRpsOverlayController.IsInteractive
+                || CarnivalStoreOverlayController.IsInteractive)
             {
-                animator.SetFloat(speedParameter, 0f);
-                animator.SetBool(groundedParameter, true);
-                animator.SetFloat(verticalVelocityParameter, 0f);
+                // While seated at blackjack (or facing the jail skeleton / browsing the prize counter) the game keeps
+                // running (time isn't paused), so the locomotion animator would otherwise loop the last walk pose.
+                // Force idle.
+                if (driveAnimator && animator != null)
+                {
+                    animator.SetFloat(speedParameter, 0f);
+                    animator.SetBool(groundedParameter, true);
+                    animator.SetFloat(verticalVelocityParameter, 0f);
+                }
+            }
+            else if ((PauseMenuController.BlocksGameplayInput || UiEventSystem.HoldsGameplayInput) && !_blackjackSeated)
+            {
+                SettleWhileInputBlocked();
             }
             return;
         }
@@ -2880,8 +2940,10 @@ public partial class PlayerController : MonoBehaviour
         if (keyboard != null && keyboard.gKey.wasPressedThisFrame)
             return true;
 
+        // D-pad down, next to the hotbar cycling on left/right. It used to be B, which the asset binds to Crouch,
+        // so every crouch on a pad also threw the item in hand (or the carried heavy prop) on the floor.
         Gamepad pad = Gamepad.current;
-        return pad != null && pad.buttonEast.wasPressedThisFrame;
+        return pad != null && pad.dpad.down.wasPressedThisFrame;
     }
 
     static bool WasFlashlightPressedFallback()
@@ -2928,8 +2990,9 @@ public partial class PlayerController : MonoBehaviour
         if (keyboard != null && keyboard.rKey.wasPressedThisFrame)
             return true;
 
+        // Right bumper. Y is the asset's Interact, so a pickup with the flare gun out also reloaded it.
         Gamepad pad = Gamepad.current;
-        return pad != null && pad.buttonNorth.wasPressedThisFrame;
+        return pad != null && pad.rightShoulder.wasPressedThisFrame;
     }
 
     static bool IsAttackHeldFallback()
@@ -3144,6 +3207,81 @@ public partial class PlayerController : MonoBehaviour
         }
     }
 
+    // Swing origin heights for the melee sight test: chest height standing, lower when crouched (the crouch collider
+    // is 1.15 m tall). The crouched one is also what clears the sight line to the floor-level wind-up monkey.
+    const float MeleeSightStandingHeight = 1.2f;
+    const float MeleeSightCrouchedHeight = 0.8f;
+    static readonly string[] s_MeleeSightIgnoredLayers = { EnemyLayerName, ClownLayerName, "Jailor", "Player", "MinigameBarrier" };
+    static int s_MeleeSightBlockMask;
+    readonly RaycastHit[] _meleeSightHits = new RaycastHit[16];
+
+    /// <summary>
+    /// What stops a swing short of its target: the world (walls, doors, props). Bodies never shield each other —
+    /// players, enemies, the Jailor and the Clown are left out — and neither do minigame barriers. Ignore Raycast is
+    /// out with them (players' blocking proxies live there).
+    /// </summary>
+    static int MeleeSightBlockMask
+    {
+        get
+        {
+            if (s_MeleeSightBlockMask != 0)
+                return s_MeleeSightBlockMask;
+
+            int mask = Physics.DefaultRaycastLayers;
+            for (int i = 0; i < s_MeleeSightIgnoredLayers.Length; i++)
+            {
+                int layer = LayerMask.NameToLayer(s_MeleeSightIgnoredLayers[i]);
+                if (layer >= 0)
+                    mask &= ~(1 << layer);
+            }
+
+            s_MeleeSightBlockMask = mask;
+            return mask;
+        }
+    }
+
+    /// <summary>
+    /// Whether a swing can actually reach <paramref name="target"/>: nothing solid between the attacker's chest (lower
+    /// when crouched) and the target's middle. The overlap sphere only sees enemy layers, so without this a punch or a
+    /// sword landed through closed doors and thin walls — and the hit also turned the enemy on a player it could not
+    /// get to. Aims at the target's bounds centre, at the attacker's own height where the target spans it.
+    /// </summary>
+    bool MeleeTargetVisible(Collider target)
+    {
+        Vector3 origin = transform.position
+            + Vector3.up * (IsCrouching ? MeleeSightCrouchedHeight : MeleeSightStandingHeight);
+        Bounds bounds = target.bounds;
+        Vector3 aim = new Vector3(bounds.center.x, Mathf.Clamp(origin.y, bounds.min.y, bounds.max.y), bounds.center.z);
+        Vector3 toTarget = aim - origin;
+        float distance = toTarget.magnitude;
+        if (distance <= 0.01f)
+            return true;
+
+        // The target's own non-enemy-layer parts (a held prop, a weapon) are part of it, not cover.
+        NetworkObject targetObject = target.GetComponentInParent<NetworkObject>();
+        Transform targetRoot = targetObject != null ? targetObject.transform : target.transform;
+
+        int hitCount = Physics.RaycastNonAlloc(
+            origin,
+            toTarget / distance,
+            _meleeSightHits,
+            distance,
+            MeleeSightBlockMask,
+            QueryTriggerInteraction.Ignore);
+        bool blocked = false;
+        for (int i = 0; i < hitCount; i++)
+        {
+            Transform hit = _meleeSightHits[i].transform;
+            _meleeSightHits[i] = default;
+            if (blocked || hit == null || hit.IsChildOf(transform) || hit.IsChildOf(targetRoot))
+                continue;
+
+            blocked = true;
+        }
+
+        return !blocked;
+    }
+
     bool ApplyMeleeDamageLocally()
     {
         Vector3 origin = transform.position;
@@ -3188,6 +3326,8 @@ public partial class PlayerController : MonoBehaviour
                 Vector3 flatForward = new Vector3(forward.x, 0f, forward.z);
                 if (flatDir.sqrMagnitude > 0.0001f && Vector3.Angle(flatForward, flatDir) > coneAngle)
                     continue;
+                if (!MeleeTargetVisible(col))
+                    continue;
                 // Topple it away from the punch (fall direction = player -> monkey, else the player's facing).
                 Vector3 knockDir = flatDir.sqrMagnitude > 0.0001f ? flatDir : flatForward;
                 monkey.ServerKnockOver(knockDir);
@@ -3198,6 +3338,9 @@ public partial class PlayerController : MonoBehaviour
             Vector3 dirToTarget = (col.transform.position - origin).normalized;
             float angle = Vector3.Angle(forward, dirToTarget);
             if (angle > coneAngle)
+                continue;
+
+            if (!MeleeTargetVisible(col))
                 continue;
 
             ZombieHealth zombieHealth = col.GetComponentInParent<ZombieHealth>();

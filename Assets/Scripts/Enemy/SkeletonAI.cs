@@ -387,8 +387,9 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
         // A player in the Jailor's arms is off the table for every other damage source on the level (ZombieAI,
         // SecurityGuardAI, RagdollTrap, PitKillZone, TripwireZone all reject them) — they have no control and no
         // counter-play. Drop them here too: the retention test below only looks at IsDead, so a skeleton that was
-        // already chasing would otherwise follow the Jailor and bash his cargo to death.
-        if (IsPlayerCarriedByJailor(_targetHealth))
+        // already chasing would otherwise follow the Jailor and bash his cargo to death. The same goes once he has
+        // sealed them in the cell (see IsOffLimits).
+        if (IsOffLimits(_targetHealth))
             ClearTarget();
 
         Vector3 desiredHorizontalVelocity = Vector3.zero;
@@ -448,18 +449,21 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
         // StopNavigation just cleared; TrackChaseStall only runs in Chase). Falling through repaths it instead.
         bool bashLos = !bashRequiresLineOfSight
             || HasLineOfSight(_targetHealth, detectionLineOfSightMask, detectionLineOfSightHeight, Vector3.zero);
+        // A downed target is kept, not attacked: no bash and no throw, so it closes to bash range and looms there
+        // until they are back on their feet (see IsPlayerDown).
+        bool targetDown = IsPlayerDown(_targetHealth);
         if (distanceToTarget <= bashRange && bashLos)
         {
             FaceTarget();
             StopNavigation();
-            if (Time.time >= _nextBashTime)
+            if (Time.time >= _nextBashTime && !targetDown)
                 _actionRoutine = StartCoroutine(BashRoutine());
             return Vector3.zero;
         }
 
         bool inThrowRange = distanceToTarget <= throwRange;
         bool throwLos = !throwRequiresLineOfSight || HasLineOfSight(_targetHealth, detectionLineOfSightMask, detectionLineOfSightHeight, Vector3.zero);
-        if (inThrowRange && throwLos && HasThrowClearance())
+        if (!targetDown && inThrowRange && throwLos && HasThrowClearance())
         {
             FaceTarget();
             StopNavigation();
@@ -826,7 +830,8 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
         if (throwReleaseDelay > 0f)
             yield return new WaitForSeconds(throwReleaseDelay);
 
-        if (_state != SkeletonState.Dead && _targetHealth != null && !_targetHealth.IsDead)
+        // Knocked down during the wind-up: hold the skull rather than lob it at the spot they went down.
+        if (_state != SkeletonState.Dead && _targetHealth != null && !_targetHealth.IsDead && !IsPlayerDown(_targetHealth))
         {
             FaceTarget();
             SetHeldSkullHidden(true); // the held skull becomes the projectile
@@ -921,8 +926,10 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
     {
         if (targetHealth == null || targetHealth.IsDead)
             return false;
-        if (IsPlayerCarriedByJailor(targetHealth))
-            return false; // grabbed mid-swing: the bash whiffs rather than hitting a defenceless prisoner
+        if (IsOffLimits(targetHealth))
+            return false; // grabbed or sealed in mid-swing: the bash whiffs rather than hitting a defenceless prisoner
+        if (IsPlayerDown(targetHealth))
+            return false; // knocked down mid-swing: their root is where they fell, not where the body lies
 
         Vector3 toTarget = targetHealth.transform.position - transform.position;
         toTarget.y = 0f;
@@ -979,8 +986,8 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
 
         if (attackerHealth == null || attackerHealth.IsDead)
             return;
-        if (IsPlayerCarriedByJailor(attackerHealth))
-            return; // being hauled to the cells: never retaliate onto a target that cannot fight back
+        if (IsOffLimits(attackerHealth))
+            return; // being hauled to the cells or locked in one: never retaliate onto a target that cannot fight back
 
         _targetHealth = attackerHealth;
         _target = attackerHealth.transform;
@@ -1111,6 +1118,8 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
             return false; // mid-stagger: the break window stays safe — that's the player's earned reward
         if (_targetHealth == null || _targetHealth.IsDead || _target == null)
             return false;
+        if (IsPlayerDown(_targetHealth))
+            return false;
 
         Vector3 toTarget = _target.position - transform.position;
         toTarget.y = 0f;
@@ -1183,7 +1192,7 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
             PlayerHealth candidate = hit.GetComponentInParent<PlayerHealth>();
             if (candidate == null || candidate.IsDead)
                 continue;
-            if (IsPlayerCarriedByJailor(candidate))
+            if (IsOffLimits(candidate))
                 continue;
             if (IsUnreachableSuppressed(candidate))
                 continue;
@@ -1200,43 +1209,42 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
             closestDistance = distance;
         }
 
-        if (closest == null)
+        // Always runs, not only when the overlap above came up empty: on the server a joined client has no collider
+        // that overlap can see (CharacterController off, blocking proxy on Ignore Raycast), so it only ever finds the
+        // host, and a closer client standing beside them would never be considered.
+        IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
+        for (int i = 0; i < players.Count; i++)
         {
-            IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
-            for (int i = 0; i < players.Count; i++)
-            {
-                PlayerHealth candidate = players[i];
-                if (candidate == null || candidate.IsDead)
-                    continue;
-                if (IsPlayerCarriedByJailor(candidate))
-                    continue;
-                if (IsUnreachableSuppressed(candidate))
-                    continue;
+            PlayerHealth candidate = players[i];
+            if (candidate == null || candidate.IsDead)
+                continue;
+            if (IsOffLimits(candidate))
+                continue;
+            if (IsUnreachableSuppressed(candidate))
+                continue;
 
-                float distance = Vector3.Distance(transform.position, candidate.transform.position);
-                if (distance > detectionRadius || distance >= closestDistance)
-                    continue;
-                if (!IsWithinDetectionCone(candidate.transform.position))
-                    continue;
-                if (!HasDetectionLineOfSight(candidate))
-                    continue;
+            float distance = Vector3.Distance(transform.position, candidate.transform.position);
+            if (distance > detectionRadius || distance >= closestDistance)
+                continue;
+            if (!IsWithinDetectionCone(candidate.transform.position))
+                continue;
+            if (!HasDetectionLineOfSight(candidate))
+                continue;
 
-                closest = candidate;
-                closestDistance = distance;
-            }
+            closest = candidate;
+            closestDistance = distance;
         }
 
         // Heard-sprint acquisition: no vision cone / line-of-sight gate — a sprinting player is heard from any
         // direction and around corners. Only the audible-sprint flag triggers it, so walking stays silent.
         if (closest == null && hearingRadius > 0f)
         {
-            IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;
             for (int i = 0; i < players.Count; i++)
             {
                 PlayerHealth candidate = players[i];
                 if (candidate == null || candidate.IsDead)
                     continue;
-                if (IsPlayerCarriedByJailor(candidate))
+                if (IsOffLimits(candidate))
                     continue;
                 if (IsUnreachableSuppressed(candidate))
                     continue;
@@ -1284,6 +1292,40 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
 
         NetworkPlayerAvatar avatar = playerHealth.GetComponent<NetworkPlayerAvatar>();
         return avatar != null && avatar.IsCarriedByJailor;
+    }
+
+    /// <summary>
+    /// True while the Jailor has this player locked in his cell. The Jailor, Clown and Mutant already leave a
+    /// sealed prisoner alone (<c>ClownAI.ShouldIgnorePlayer</c>); the cell door is an open lattice that sight, a
+    /// bash and a skull all pass through, and the prisoner can neither run nor fight back.
+    /// </summary>
+    static bool IsPlayerSealedInJail(PlayerHealth playerHealth)
+    {
+        if (playerHealth == null)
+            return false;
+
+        NetworkPlayerAvatar avatar = playerHealth.GetComponent<NetworkPlayerAvatar>();
+        return avatar != null && avatar.IsSealedInJailCell;
+    }
+
+    /// <summary>Carried by the Jailor or sealed in his cell: never acquired, never retaliated on, never hit.</summary>
+    static bool IsOffLimits(PlayerHealth playerHealth)
+    {
+        return IsPlayerCarriedByJailor(playerHealth) || IsPlayerSealedInJail(playerHealth);
+    }
+
+    /// <summary>
+    /// Down (a trap knockdown), held, or still getting up: the same test as <c>JailorAI.IsPlayerDowned</c> and
+    /// <c>SecurityGuardAI.IsPlayerRagdolled</c>. A ragdolled player's root stays where they went down, so range and
+    /// sight checks pass on an empty spot metres from the body. The target is kept; it just isn't attacked.
+    /// </summary>
+    static bool IsPlayerDown(PlayerHealth playerHealth)
+    {
+        if (playerHealth == null)
+            return false;
+
+        PlayerRagdollController ragdoll = playerHealth.GetComponent<PlayerRagdollController>();
+        return ragdoll != null && (ragdoll.IsRagdolled || ragdoll.IsHeld || ragdoll.IsGettingUp);
     }
 
     /// <summary>True while a target we just gave up on (because it was unreachable) is still being ignored.</summary>

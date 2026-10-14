@@ -78,8 +78,14 @@ public class MazeEnvironmentZone : MonoBehaviour
     Color _baseGround;
     float _baseReflection;
 
+    void OnEnable()
+    {
+        GameDisplayBrightness.EnvironmentApplied += HandleBrightnessApplied;
+    }
+
     void OnDisable()
     {
+        GameDisplayBrightness.EnvironmentApplied -= HandleBrightnessApplied;
         if (_fog != null)
             _fog.ClearZoneOverride(this, 0f);
         if (_baseCaptured)
@@ -123,8 +129,8 @@ public class MazeEnvironmentZone : MonoBehaviour
             return;
 
         // Capture at the start of every fade-in rather than once: the brightness slider
-        // (GameDisplayBrightness) can move reflection intensity between visits, and we want to give
-        // back what the level had, not what it had the first time.
+        // (GameDisplayBrightness) can move reflection intensity and, on a Trilight level, the ambient
+        // colours between visits, and we want to give back what the level had, not what it had the first time.
         if (_blend <= 0f)
             CaptureBase();
 
@@ -133,6 +139,29 @@ public class MazeEnvironmentZone : MonoBehaviour
 
         if (_blend <= 0f)
             RestoreEnvironment();
+    }
+
+    /// <summary>
+    /// The Environment Light slider moved while we hold the environment: it just rewrote the level's undimmed
+    /// values over ours. Take those as the new base (so leaving restores the slider's level, not the one we
+    /// captured on the way in) and dim them again. Only the values the slider writes are re-read — on a Skybox
+    /// level it leaves the ambient colours alone, and those still hold our dimmed copy.
+    /// </summary>
+    void HandleBrightnessApplied()
+    {
+        if (!_baseCaptured || _blend <= 0f)
+            return;
+
+        _baseReflection = RenderSettings.reflectionIntensity;
+        GameDisplayBrightness brightness = GameDisplayBrightness.Instance;
+        if (brightness != null && brightness.ScalesAmbientColours)
+        {
+            _baseSky = RenderSettings.ambientSkyColor;
+            _baseEquator = RenderSettings.ambientEquatorColor;
+            _baseGround = RenderSettings.ambientGroundColor;
+        }
+
+        ApplyEnvironment(_blend);
     }
 
     void CaptureBase()

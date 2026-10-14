@@ -71,10 +71,14 @@ public sealed class CarnivalBottleKnockdown : NetworkBehaviour
     /// <summary>How far a settled bottle must be pushed before the server re-opens the knock state (metres).</summary>
     const float RearmMoveDistance = 0.05f;
 
+    /// <summary>Server: minimum gap between accepted client re-hit reports on one bottle (a ball can touch it twice).</summary>
+    const float RehitReportCooldownSeconds = 0.2f;
+
     Rigidbody _rb;
     bool _knockedDown;
     bool _serverSettled;
     float _serverSettleTimer;
+    float _serverNextRehitTime;
 
     public bool IsKnockedDown => _knockedDown;
 
@@ -104,7 +108,10 @@ public sealed class CarnivalBottleKnockdown : NetworkBehaviour
     void OnCollisionEnter(Collision collision)
     {
         if (_knockedDown)
+        {
+            ReportRehitFromOwningClient(collision);
             return;
+        }
         if (collision.rigidbody == null)
             return;
         if (collision.rigidbody.GetComponent<HeavyThrowableHoldItem>() == null)
@@ -154,6 +161,78 @@ public sealed class CarnivalBottleKnockdown : NetworkBehaviour
         if (!ServerValidateReportedHit(rpcParams.Receive.SenderClientId, ref contactPoint, ref impulse))
             return;
         ServerApplyAndReplicateKnockdown(contactPoint, impulse);
+    }
+
+    /// <summary>
+    /// A ball hitting a bottle that is already down. The host needs nothing: its body stays dynamic and
+    /// <see cref="ServerTryRearmAfterRestPose"/> replicates any move. A joined client's copy, though, is frozen
+    /// kinematic on the published rest pose, so its ball bounces off it like a wall, and the server's kinematic
+    /// mirror of that ball follows the bounced path and seldom touches the server's bottle — the hit was simply
+    /// lost, and a toppled bottle could never be knocked off the shelf by a client. The owning client reports it,
+    /// exactly like the first knock.
+    /// </summary>
+    void ReportRehitFromOwningClient(Collision collision)
+    {
+        if (IsServer || !IsSpawned)
+            return;
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening)
+            return;
+        // Only the frozen copy loses the hit. While this copy is still falling it is dynamic, the ball pushes it
+        // physically, and the server's own body is still settling under its own simulation — reporting that
+        // contact as well would push the server's bottle twice.
+        if (_rb == null || !_rb.isKinematic)
+            return;
+        if (collision.rigidbody == null || collision.rigidbody.GetComponent<HeavyThrowableHoldItem>() == null)
+            return;
+        NetworkObject ballNet = collision.rigidbody.GetComponent<NetworkObject>();
+        if (ballNet == null || !ballNet.IsSpawned || ballNet.OwnerClientId != nm.LocalClientId)
+            return;
+
+        Vector3 contactPoint = collision.GetContact(0).point;
+        Vector3 impulse = collision.rigidbody.linearVelocity * collision.rigidbody.mass * impactImpulseScale;
+        RequestRehitServerRpc(contactPoint, impulse);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    void RequestRehitServerRpc(Vector3 contactPoint, Vector3 impulse, ServerRpcParams rpcParams = default)
+    {
+        if (!IsServer || !_knockedDown || _rb == null || _rb.isKinematic)
+            return;
+        if (Time.time < _serverNextRehitTime)
+            return;
+        if (!ServerValidateReportedHit(rpcParams.Receive.SenderClientId, ref contactPoint, ref impulse))
+            return;
+        _serverNextRehitTime = Time.time + RehitReportCooldownSeconds;
+
+        _rb.WakeUp();
+        _rb.AddForceAtPosition(impulse, contactPoint, ForceMode.Impulse);
+        BroadcastRehitClientRpc(contactPoint, impulse);
+
+        // Re-open the knock state now rather than waiting to see the body move 5 cm: a light re-hit that moves it
+        // less would leave clients that animated the push (above) parked off the pose the server still publishes.
+        // The settle path then publishes a fresh rest pose that every peer snaps to.
+        if (_serverSettled)
+            ServerRearm();
+    }
+
+    /// <summary>
+    /// Mirrors an accepted re-hit so a copy frozen on the rest pose visibly takes the push instead of teleporting at
+    /// the next rest-pose publish. Sent before the re-armed state, so the copy is still kinematic when this lands.
+    /// </summary>
+    [ClientRpc]
+    void BroadcastRehitClientRpc(Vector3 contactPoint, Vector3 impulse)
+    {
+        if (IsServer || _rb == null)
+            return;
+        // A copy that is still falling is already moving under its own physics, and the next rest-pose publish
+        // reconciles it; pushing it again would only double the hit on screen.
+        if (!_rb.isKinematic)
+            return;
+        _knockedDown = true;
+        _rb.isKinematic = false;
+        _rb.useGravity = true;
+        _rb.AddForceAtPosition(impulse, contactPoint, ForceMode.Impulse);
     }
 
     /// <summary>
@@ -297,6 +376,12 @@ public sealed class CarnivalBottleKnockdown : NetworkBehaviour
         if ((_rb.position - published.RestPosition).sqrMagnitude <= RearmMoveDistance * RearmMoveDistance)
             return;
 
+        ServerRearm();
+    }
+
+    /// <summary>Republishes an unsettled state (releasing every client's frozen copy) and restarts settle detection.</summary>
+    void ServerRearm()
+    {
         _serverSettled = false;
         _serverSettleTimer = 0f;
         _knockState.Value = new BottleKnockState

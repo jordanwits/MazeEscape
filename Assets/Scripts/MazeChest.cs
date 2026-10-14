@@ -239,12 +239,17 @@ public class MazeChest : NetworkBehaviour
             instance.transform.SetParent(null, true);
             if (instance.TryGetComponent(out GrabbableInventoryItem grabbable))
                 grabbable.AssignNetworkItemId(ComputeLootItemId(seed, i, idx));
-            // Chest loot spawns as a stack rather than a single unit: a full pack of glowsticks, or enough
-            // flare rounds for one full reload.
+            // Chest loot spawns as a stack rather than a single unit: a full pack of glowsticks, flashbangs or
+            // decoys, or enough flare rounds for one full reload. The grenade prefabs are authored at 1, which is
+            // what an ItemSpawn floor pickup is worth; a chest is the 3-pack.
             if (instance.TryGetComponent(out GlowstickItem glow))
                 glow.SetStackCount(GlowstickItem.MaxStack);
             else if (instance.TryGetComponent(out FlareAmmoItem flareAmmo))
                 flareAmmo.SetStackCount(FlareAmmoItem.LootStackSize);
+            else if (instance.TryGetComponent(out FlashbangItem flashbang))
+                flashbang.SetStackCount(FlashbangItem.MaxStack);
+            else if (instance.TryGetComponent(out DecoyGrenadeItem decoy))
+                decoy.SetStackCount(DecoyGrenadeItem.MaxStack);
             ApplyChestLootAtRest(instance);
         }
 

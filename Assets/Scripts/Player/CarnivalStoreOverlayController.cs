@@ -21,6 +21,9 @@ using UnityEngine.UI;
 /// The ticket balance tracks <see cref="NetworkPlayerCarnivalTickets"/> live, so a teammate's payout landing
 /// mid-browse unlocks the shelf without reopening. A single instance is created on demand and persists
 /// (DontDestroyOnLoad) so its canvas can't be torn down by scene churn.
+///
+/// On a pad the panel is a navigation scope (<see cref="UiNavScope"/>): focus lands on the first card still for
+/// sale (DONE when everything is owned), A buys, and B / Esc closes it like DONE.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class CarnivalStoreOverlayController : MonoBehaviour
@@ -60,6 +63,9 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
     Canvas _canvas;
     TMP_Text _balanceValue;
     StockTile[] _tiles;
+    Button _doneButton;
+    /// <summary>Rebuilt with the panel: a scope is tied to the root it navigates.</summary>
+    UiNavScope _navScope;
 
     bool _shown;
     int _lastDisplayedBalance = -1;
@@ -92,6 +98,7 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         // the new one for a frame.
         if (_store != store && _root != null)
         {
+            UiEventSystem.Close(_navScope);
             _root.SetActive(false);
             Destroy(_root);
             _root = null;
@@ -103,6 +110,8 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         _lastDisplayedBalance = -1;
         Refresh();
         SetShown(true);
+        // SetShown skips an already-shown panel; a rebuilt one still needs its scope open.
+        UiEventSystem.Open(_navScope);
     }
 
     void OnDestroy()
@@ -111,6 +120,7 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
             _instance = null;
         if (_shown)
             IsInteractive = false;
+        UiEventSystem.Close(_navScope);
     }
 
     void Update()
@@ -155,6 +165,7 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
             MenuTheme.ApplyCursor();
+            UiEventSystem.Open(_navScope);
         }
         else
         {
@@ -166,7 +177,22 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
             }
+            UiEventSystem.Close(_navScope);
         }
+    }
+
+    /// <summary>Pad focus: the first card still for sale, else DONE.</summary>
+    Selectable DefaultNavSelection()
+    {
+        if (_tiles != null)
+        {
+            for (int i = 0; i < _tiles.Length; i++)
+            {
+                if (_tiles[i].Button != null && _tiles[i].Button.interactable)
+                    return _tiles[i].Button;
+            }
+        }
+        return _doneButton;
     }
 
     static bool InGameplayScene()
@@ -303,6 +329,8 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         BuildHeader();
         BuildGrid(count, gridHeight, neededGridHeight > gridHeight + 0.5f);
         BuildFooter();
+
+        _navScope = new UiNavScope(_root.transform, DefaultNavSelection, OnClose);
 
         _root.SetActive(false);
     }
@@ -455,8 +483,8 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
         int captured = index;
         var button = cardRoot.gameObject.AddComponent<Button>();
         button.targetGraphic = cardBg;
-        button.transition = Selectable.Transition.None;   // MenuButtonFx owns the visuals
-        button.navigation = new Navigation { mode = Navigation.Mode.None };
+        button.transition = Selectable.Transition.None;   // MenuButtonFx owns the visuals (pad focus included)
+        button.navigation = new Navigation { mode = Navigation.Mode.Automatic };
         button.onClick.AddListener(() => OnBuy(captured));
 
         var fx = cardRoot.gameObject.AddComponent<MenuButtonFx>();
@@ -482,8 +510,8 @@ public sealed class CarnivalStoreOverlayController : MonoBehaviour
 
     void BuildFooter()
     {
-        MakePlateFx("DONE", MenuWidgets.PlateStyle.Danger, OnClose,
-            new Vector2(1f, 0f), new Vector2(-PanelPadding, 26f), new Vector2(200f, 56f), 22f);
+        _doneButton = MakePlateFx("DONE", MenuWidgets.PlateStyle.Danger, OnClose,
+            new Vector2(1f, 0f), new Vector2(-PanelPadding, 26f), new Vector2(200f, 56f), 22f).button;
     }
 
     Canvas CreateOwnedCanvas()
