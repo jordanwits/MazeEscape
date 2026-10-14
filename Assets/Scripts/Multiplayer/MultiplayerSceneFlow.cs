@@ -23,18 +23,38 @@ public class MultiplayerSceneFlow : MonoBehaviour
         "Level03",
     };
 
-    public static bool IsMazeGameplayScene(string sceneName)
+    /// <summary>Player-facing name of each entry in <see cref="MazeSectionSceneNames"/>, same order.</summary>
+    static readonly string[] MazeSectionTitles =
+    {
+        "THE DUNGEON",
+        "THE CARNIVAL",
+        "???",
+    };
+
+    public static bool IsMazeGameplayScene(string sceneName) => IndexOfMazeSection(sceneName) >= 0;
+
+    static int IndexOfMazeSection(string sceneName)
     {
         if (string.IsNullOrEmpty(sceneName))
-            return false;
+            return -1;
 
         for (int i = 0; i < MazeSectionSceneNames.Length; i++)
         {
             if (string.Equals(MazeSectionSceneNames[i], sceneName, StringComparison.OrdinalIgnoreCase))
-                return true;
+                return i;
         }
 
-        return false;
+        return -1;
+    }
+
+    /// <summary>1-based section number, the section count, and the player-facing title of a maze section scene.</summary>
+    public static bool TryGetMazeSectionTitle(string sceneName, out int number, out int count, out string title)
+    {
+        int index = IndexOfMazeSection(sceneName);
+        number = index + 1;
+        count = MazeSectionSceneNames.Length;
+        title = index >= 0 && index < MazeSectionTitles.Length ? MazeSectionTitles[index] : null;
+        return index >= 0;
     }
 
     /// <summary>Returns the next entry in <see cref="MazeSectionSceneNames"/> after <paramref name="currentSceneName"/>, if any.</summary>

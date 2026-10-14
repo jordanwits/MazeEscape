@@ -105,6 +105,12 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
     /// so the local <see cref="CharacterController"/> must not simulate until this becomes true.
     /// </summary>
     public static bool IsLocalMazeCollidersReady { get; private set; } = true;
+
+    /// <summary>
+    /// Raised on every peer once this peer's own build of a section's maze exists (scene name). Fires for a
+    /// skipped duplicate build too, since that maze is already standing. <see cref="LoadingCover"/> lifts on it.
+    /// </summary>
+    public static event Action<string> LocalMazeBuilt;
     const string TrapAnchorName = "TrapAnchor";
     const string TrapAnchor2Name = "TrapAnchor2";
     const string TrapMountPointName = "MountPoint";
@@ -492,6 +498,7 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
                 $"[Maze] Skipping duplicate maze build for scene \"{scene.name}\" seed {seed}. " +
                 "(Host/server already built this maze; avoids doubling enemies and stacked spawns.)",
                 this);
+            LocalMazeBuilt?.Invoke(scene.name);
             return;
         }
 
@@ -681,6 +688,8 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         MarkLocalMazeCollidersReadyAndResyncClientPlayer();
         if (IsServerListening())
             BroadcastMazeSeedToRemotePlayerAvatars(seed);
+
+        LocalMazeBuilt?.Invoke(scene.name);
     }
 
     static bool IsPureNetworkClient() =>

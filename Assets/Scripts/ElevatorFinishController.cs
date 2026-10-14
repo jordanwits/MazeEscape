@@ -763,7 +763,10 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         {
             // No session: this is a play-mode run of a single section.
             if (hasNextSection)
+            {
                 SceneManager.LoadScene(nextScene, LoadSceneMode.Single);
+                LoadingCover.Show(nextScene);
+            }
             else
                 RequestReturnToMainMenuLocal();
             return;
@@ -802,7 +805,10 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
                     NetworkPlayerInventory.EndServerLevelSceneSwitch();
                 }
                 if (status == SceneEventProgressStatus.Started)
+                {
+                    LoadingCover.Show(nextScene);
                     return;
+                }
 
                 Debug.LogError(
                     $"[ElevatorFinish] Could not start synchronized load of \"{nextScene}\" (status={status}). Falling back to main menu.",

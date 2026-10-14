@@ -567,6 +567,7 @@ public class MultiplayerSessionController : MonoBehaviour
                 SceneEventProgressStatus status = _networkManager.SceneManager.LoadScene(sceneName, LoadSceneMode.Single);
                 if (status == SceneEventProgressStatus.Started)
                 {
+                    LoadingCover.Show(sceneName);
                     _pendingGameLoad = null;
                     yield break;
                 }
@@ -675,6 +676,7 @@ public class MultiplayerSessionController : MonoBehaviour
 
         if (status == SceneEventProgressStatus.Started)
         {
+            LoadingCover.Show(targetScene);
             UpdateStatus($"Starting {targetScene} for all ready players...");
             return;
         }
