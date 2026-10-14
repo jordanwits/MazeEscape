@@ -95,6 +95,15 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
     [SerializeField] string grabTriggerParameter = "Grab";
     [SerializeField] float grabClipDurationFallback = 1.93f;
     [SerializeField] float attachFallbackDelay = 0.95f;
+    [Tooltip(
+        "Speed (m/s) he keeps closing on the target while the grab reaches out. The reach plays on an upper-body "
+            + "layer over his running legs, so a player who just walks away cannot step out of a committed grab — "
+            + "only a quick sprint from the edge of his reach slips it. 0 = plant in place for the whole reach.")]
+    [SerializeField, Min(0f)] float grabLungeSpeed = 5f;
+    [Tooltip(
+        "Extra reach (m) on top of Grab Range + padding when the hand closes. The arm is fully extended by then; "
+            + "the player is pulled at most this much further into his hand.")]
+    [SerializeField, Min(0f)] float grabAttachReachSlack = 0.6f;
     [SerializeField] float carrySpeed = 2.4f;
     [SerializeField] float carryStoppingDistance = 0.65f;
     [SerializeField] float carryArrivalDistance = 1.1f;
@@ -314,8 +323,12 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
     NetworkAnimator _networkAnimator;
     NetworkJailorAvatar _networkJailorAvatar;
     int _grabStateHash;
+    /// <summary>Layer holding the Grab state (the upper-body "Grab Reach" layer); -1 until resolved.</summary>
+    int _grabLayerIndex = -1;
     bool _grabAttachCompleted;
     float _grabbingStartedTime;
+    /// <summary>World radius of the grab target's capsule, so the lunge stops at body contact instead of shoving.</summary>
+    float _grabTargetRadius;
     bool _enteredCarrying;
     ObstacleAvoidanceType _resumeObstacleAvoidanceAfterCarry;
     bool _suspendedAvoidanceDuringCarry;
@@ -987,8 +1000,9 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
     {
         if (jailorFootstepAudioSource == null || characterController == null || animator == null)
             return;
+        // Grabbing is not excluded: his legs keep running through the reach while he closes on the target
+        // (the reach is upper-body only), and he stands still once the player is in his hand.
         if (_state == JailorState.Idle
-            || _state == JailorState.Grabbing
             || (_state == JailorState.JailDelivery && _jailDeliveryPhase != JailDeliveryPhase.ExitingCell))
         {
             _hasFootstepAnimSample = false;
@@ -1663,11 +1677,12 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
     /// <summary>
     /// Range + vertical + forward-cone test against the target's CURRENT position. Checked when the grab starts
-    /// and again when the hands close (<see cref="TryAttachCarriedPlayer"/>): the wind-up runs for
-    /// <see cref="attachFallbackDelay"/> and a sprinting player crosses several metres in that window, so the
+    /// and again when the hands close (<see cref="TryAttachCarriedPlayer"/>, with
+    /// <see cref="grabAttachReachSlack"/> as <paramref name="extraReach"/>): the wind-up runs for
+    /// <see cref="attachFallbackDelay"/> and a sprinting player can still outpace his lunge in that window, so the
     /// attach must not parent someone who has already broken away.
     /// </summary>
-    bool IsTargetWithinGrabReach()
+    bool IsTargetWithinGrabReach(float extraReach = 0f)
     {
         if (_target == null)
             return false;
@@ -1678,7 +1693,7 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
         Vector3 horizontalToTarget = new Vector3(to.x, 0f, to.z);
         float horizontalDist = horizontalToTarget.magnitude;
-        if (horizontalDist > grabRange + Mathf.Max(0f, grabHitRangePadding))
+        if (horizontalDist > grabRange + Mathf.Max(0f, grabHitRangePadding) + Mathf.Max(0f, extraReach))
             return false;
 
         // Forward cone only (matches Zombie swipe angle check vs committed facing).
@@ -1706,8 +1721,14 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         _grabAttachCompleted = false;
         _enteredCarrying = false;
         _grabbingStartedTime = Time.time;
-        // Arm plays the full reach on the base layer during the grab; the held override engages at carry.
+        // The reach plays on the upper-body "Grab Reach" layer (legs keep running on the base layer while he
+        // lunges); the held-arm override engages at carry.
         SetCarryingAnimatorBool(false);
+
+        CharacterController targetController = _target.GetComponent<CharacterController>();
+        _grabTargetRadius = targetController != null
+            ? targetController.radius * Mathf.Max(Mathf.Abs(_target.lossyScale.x), Mathf.Abs(_target.lossyScale.z))
+            : 0.3f;
 
         if (navMeshAgent != null && navMeshAgent.isOnNavMesh)
         {
@@ -1763,7 +1784,50 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (!_grabAttachCompleted && Time.time >= _grabbingStartedTime + grabClipDurationFallback + 0.5f)
             TryAttachCarriedPlayer();
 
-        return Vector3.zero;
+        if (_state != JailorState.Grabbing)
+            return Vector3.zero; // aborted to Chase, or already handed off to Carrying
+
+        // Once the player is in his hand he stands and lifts; until then he keeps closing on them.
+        Vector3 lunge = _grabAttachCompleted ? Vector3.zero : ComputeGrabLungeVelocity();
+        _intendedMoveSpeed = lunge.magnitude;
+        return lunge;
+    }
+
+    /// <summary>
+    /// Keeps closing on the target while the grab reaches out. Standing still for the ~1 s wind-up let anyone who
+    /// was moving at all step out of reach before the hand closed, so he aborted and re-lunged over and over until
+    /// they ran into a wall. Straight at them (they were inside grab reach when it started), stopping at body
+    /// contact instead of shoving, and never past a NavMesh edge — a lunge must not carry him into a pit.
+    /// </summary>
+    Vector3 ComputeGrabLungeVelocity()
+    {
+        if (grabLungeSpeed <= 0f || _target == null)
+            return Vector3.zero;
+
+        Vector3 to = _target.position - transform.position;
+        to.y = 0f;
+        float distance = to.magnitude;
+        if (distance < 0.001f)
+            return Vector3.zero;
+
+        float ownRadius = 0.5f;
+        if (characterController != null)
+            ownRadius = characterController.radius * Mathf.Max(Mathf.Abs(transform.lossyScale.x), Mathf.Abs(transform.lossyScale.z));
+        float gap = distance - (ownRadius + _grabTargetRadius + 0.05f);
+        if (gap <= 0.01f)
+            return Vector3.zero;
+
+        float dt = Mathf.Max(Time.deltaTime, 0.0001f);
+        Vector3 direction = to / distance;
+        float speed = Mathf.Min(grabLungeSpeed, gap / dt);
+
+        if (navMeshAgent != null
+            && navMeshAgent.enabled
+            && navMeshAgent.isOnNavMesh
+            && navMeshAgent.Raycast(transform.position + direction * (speed * dt), out NavMeshHit edge))
+            speed = Mathf.Min(speed, Mathf.Max(0f, edge.distance - 0.05f) / dt);
+
+        return direction * speed;
     }
 
     bool ShouldLeaveGrabAnimation()
@@ -1771,11 +1835,35 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         if (animator == null)
             return Time.time >= _grabbingStartedTime + grabClipDurationFallback;
 
-        AnimatorStateInfo si = animator.GetCurrentAnimatorStateInfo(0);
+        AnimatorStateInfo si = animator.GetCurrentAnimatorStateInfo(ResolveGrabLayerIndex());
         if (si.shortNameHash == _grabStateHash)
             return si.normalizedTime >= 0.98f;
 
         return Time.time >= _grabbingStartedTime + grabClipDurationFallback * 0.85f;
+    }
+
+    /// <summary>
+    /// The layer that owns the Grab state — the upper-body "Grab Reach" layer, so the legs keep running through
+    /// the reach. Found by state rather than by name so a controller that still plays it on the base layer works.
+    /// </summary>
+    int ResolveGrabLayerIndex()
+    {
+        if (animator == null)
+            return 0;
+        if (_grabLayerIndex >= 0 && _grabLayerIndex < animator.layerCount)
+            return _grabLayerIndex;
+
+        _grabLayerIndex = 0;
+        for (int i = animator.layerCount - 1; i >= 0; i--)
+        {
+            if (animator.HasState(i, _grabStateHash))
+            {
+                _grabLayerIndex = i;
+                break;
+            }
+        }
+
+        return _grabLayerIndex;
     }
 
     /// <summary>Animation event from Grab Player clip (hands reach).</summary>
@@ -1795,11 +1883,12 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
         // Nothing between ShouldStartGrab and here re-checks reach, and the attach below teleports the player
         // into the carry pose from wherever they now are — so without this a player who sprinted clear during
-        // the ~1 s wind-up gets yanked backwards into his arms and an initiated grab is unmissable. Let them go
-        // and give chase instead; the retry delay stops a target hovering at the range edge from locking him
-        // into a wind-up/abort stutter on the spot. A target knocked down during the wind-up is let go the same way
-        // (see IsPlayerDowned).
-        if (!IsTargetWithinGrabReach() || IsPlayerDowned(_targetHealth))
+        // the ~1 s wind-up gets yanked backwards into his arms and an initiated grab is unmissable. He lunges
+        // through the wind-up (ComputeGrabLungeVelocity) and the extended arm earns grabAttachReachSlack, so only
+        // a player who outpaces the lunge gets here. Let them go and give chase instead; the retry delay stops a
+        // target hovering at the range edge from locking him into a wind-up/abort stutter on the spot. A target
+        // knocked down during the wind-up is let go the same way (see IsPlayerDowned).
+        if (!IsTargetWithinGrabReach(grabAttachReachSlack) || IsPlayerDowned(_targetHealth))
         {
             _nextGrabAllowedTime = Time.time + GrabAbortRetryDelaySeconds;
             EnterChase();
@@ -3503,9 +3592,9 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             _loggedMissingJumpTriggerParam = true;
         }
 
+        // Grabbing keeps its real speed: the reach is upper-body only, so the legs run while he lunges.
         float horizontal = new Vector3(_horizontalVelocity.x, 0f, _horizontalVelocity.z).magnitude;
         if (_state == JailorState.Idle
-            || _state == JailorState.Grabbing
             || (_state == JailorState.JailDelivery && _jailDeliveryPhase != JailDeliveryPhase.ExitingCell))
             horizontal = 0f;
 
