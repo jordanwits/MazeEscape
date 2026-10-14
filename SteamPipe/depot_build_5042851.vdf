@@ -1,0 +1,20 @@
+// Windows depot for Detour. Paths are relative to the app build's ContentRoot (Builds\Detour_Release).
+"DepotBuild"
+{
+	"DepotID" "5042851"
+
+	"FileMapping"
+	{
+		"LocalPath" "*"
+		"DepotPath" "."
+		"Recursive" "1"
+	}
+
+	// Unity's Burst debug info: not part of the game (the folder name says so).
+	"FileExclusion" "Detour_BurstDebugInformation_DoNotShip\*"
+	"FileExclusion" "*_DoNotShip*"
+	// Only development builds carry this, and a shipped copy would stop SteamAPI.RestartAppIfNecessary
+	// from routing a direct exe launch back through Steam.
+	"FileExclusion" "steam_appid.txt"
+	"FileExclusion" "*.pdb"
+}

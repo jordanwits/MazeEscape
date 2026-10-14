@@ -1,0 +1,23 @@
+// SteamPipe app build for Detour (app 5042850). Run through upload.bat.
+// Paths are relative to this file.
+"AppBuild"
+{
+	"AppID" "5042850"
+	"Desc" "Detour release build"
+
+	// 1 = dry run: builds the manifest and logs what would upload, uploads nothing.
+	"Preview" "0"
+
+	// Empty = upload only. Set the build live on a branch in Steamworks (SteamPipe > Builds).
+	// Valve does not allow a script to set the default branch live; a beta branch name works here.
+	"SetLive" ""
+
+	"ContentRoot" "..\Builds\Detour_Release\"
+	"BuildOutput" ".\output\"
+
+	"Depots"
+	{
+		// Check this id in Steamworks (App Admin > SteamPipe > Depots); the first depot is normally app id + 1.
+		"5042851" "depot_build_5042851.vdf"
+	}
+}
