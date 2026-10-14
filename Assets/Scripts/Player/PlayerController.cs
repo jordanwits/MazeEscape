@@ -213,12 +213,14 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] float runAnimationSpeed = 1f;
 
     [Header("Crouch")]
-    [Tooltip("Hold this action (Crouch input, default C / gamepad East) to crouch while standing still. Moving stands the player back up (no crouch-walk). Lowers the capsule while crouched.")]
+    [Tooltip("Hold this action (Crouch input, default C / gamepad East) to crouch. Moving while held crouch-walks; sprint and jump are off while crouched. Lowers the capsule while crouched.")]
     [SerializeField] bool enableCrouch = true;
-    [Tooltip("Animator bool set true while crouched. Drives the Crouch (CrouchIdle) state.")]
+    [Tooltip("Animator bool set true while crouched. Drives the Crouch state (CrouchIdle + the crouch-walk blend).")]
     [SerializeField] string crouchParameter = "Crouching";
     [Tooltip("CharacterController height while crouched. Standing height is read from the controller at Awake.")]
     [SerializeField] float crouchHeight = 1.15f;
+    [Tooltip("Movement speed (m/s) while crouch-walking. The crouch-walk clips play at 1x at this speed.")]
+    [SerializeField] float crouchWalkSpeed = 1.2f;
     [Tooltip("Layers that block standing back up (a low ceiling). Leave empty to auto-build everything except this player and Ignore Raycast/Enemy.")]
     [SerializeField] LayerMask standUpBlockingMask;
 
@@ -929,15 +931,20 @@ public partial class PlayerController : MonoBehaviour
             jumpPressed = false;
         }
 
-        UpdateCrouchState(crouchHeld, inputMagnitude > 0.01f);
+        UpdateCrouchState(crouchHeld);
         if (_isCrouching)
-            jumpPressed = false; // crouch is a stationary pose; moving uncrouches instead of jumping
+        {
+            // Crouched: a slow walk only — no jump, no sprint.
+            jumpPressed = false;
+            sprintHeld = false;
+        }
 
         _isSprinting = sprintHeld && _currentStamina > 0f && inputMagnitude > 0.01f;
         UpdateStamina(sprintHeld, _isSprinting);
 
+        float baseSpeed = _isCrouching ? crouchWalkSpeed : _isSprinting ? runSpeed : walkSpeed;
         float targetSpeed = inputMagnitude > 0.01f
-            ? inputMagnitude * (_isSprinting ? runSpeed : walkSpeed) * EnergyBoostSpeedMultiplier
+            ? inputMagnitude * baseSpeed * EnergyBoostSpeedMultiplier
             : 0f;
         Vector3 desiredHorizontalVelocity = move * targetSpeed;
         float speedChangeRate = GetHorizontalSpeedChangeRate(desiredHorizontalVelocity, targetSpeed);
@@ -1162,17 +1169,14 @@ public partial class PlayerController : MonoBehaviour
     }
 
     /// <summary>
-    /// Crouch is a stationary pose: hold the crouch input while still to crouch; any movement input stands
-    /// the player back up so they walk normally (there is no crouch-walk). When standing still, releasing
-    /// under a low ceiling keeps the player crouched until there is room to stand.
+    /// Hold the crouch input to crouch, standing still or crouch-walking. Releasing it under a low ceiling keeps
+    /// the player crouched until there is room to stand (they can crouch-walk out from under it).
     /// </summary>
-    void UpdateCrouchState(bool crouchHeld, bool isMoving)
+    void UpdateCrouchState(bool crouchHeld)
     {
-        bool wantCrouch = crouchHeld && !isMoving;
+        bool wantCrouch = crouchHeld;
 
-        // Only block standing on headroom while stationary; moving always uncrouches so the player can
-        // walk out from under a low ceiling instead of getting stuck crouched in place.
-        if (_isCrouching && !wantCrouch && !isMoving && !HasHeadroomToStand())
+        if (_isCrouching && !wantCrouch && !HasHeadroomToStand())
             wantCrouch = true;
 
         if (wantCrouch == _isCrouching)
@@ -2277,7 +2281,7 @@ public partial class PlayerController : MonoBehaviour
         if (currentSpeed < 0.01f)
             return 1f;
 
-        float referenceSpeed = sprinting ? runSpeed : walkSpeed;
+        float referenceSpeed = _isCrouching ? crouchWalkSpeed : sprinting ? runSpeed : walkSpeed;
         if (referenceSpeed < 0.01f)
             return 1f;
 
