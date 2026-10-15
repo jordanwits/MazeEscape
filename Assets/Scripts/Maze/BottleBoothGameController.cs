@@ -44,7 +44,7 @@ public sealed class BottleBoothGameController : NetworkBehaviour, ICarnivalGameS
     [Tooltip("Points awarded for each bottle knocked off the shelf.")]
     [SerializeField, Min(0)] int pointsPerBottle = 1;
     [Tooltip("Extra points awarded if EVERY spawned bottle is knocked off (added on top of the per-bottle points).")]
-    [SerializeField, Min(0)] int allBottlesBonus = 15;
+    [SerializeField, Min(0)] int allBottlesBonus = 3;
     [Tooltip("Tickets awarded per point scored.")]
     [SerializeField, Min(0)] int ticketsPerPoint = 2;
 

@@ -26,7 +26,7 @@ public sealed class HoleBoardHoleTrigger : MonoBehaviour
     HoleBoardGameController controller;
 
     [SerializeField, Min(0), Tooltip("Points awarded when a ball is sunk through this hole.")]
-    int points = 10;
+    int points = 3;
 
     /// <summary>Front→rear direction the ball must travel. Authored as the trigger's local forward.</summary>
     Vector3 ThroughAxis => transform.forward;
@@ -132,8 +132,8 @@ public sealed class HoleBoardHoleTrigger : MonoBehaviour
         if (!TryGetComponent(out BoxCollider box))
             return;
 
-        Color tint = points >= 40 ? new Color(1f, 0.92f, 0.2f, 1f)   // yellow
-            : points >= 10 ? new Color(0.25f, 0.55f, 1f, 1f)         // blue
+        Color tint = points >= 6 ? new Color(1f, 0.92f, 0.2f, 1f)   // yellow
+            : points >= 3 ? new Color(0.25f, 0.55f, 1f, 1f)          // blue
             : new Color(0.3f, 1f, 0.45f, 1f);                        // green
         Gizmos.color = new Color(tint.r, tint.g, tint.b, 0.18f);
         Gizmos.DrawCube(box.center, box.size);

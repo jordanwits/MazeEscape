@@ -64,8 +64,8 @@ public sealed class RingTossPeg : MonoBehaviour
     {
         // Capture cylinder: ring centres resting inside this volume score this peg. Position the
         // marker so the cylinder hugs the visible peg.
-        Color c = points >= 20 ? new Color(0.3f, 0.6f, 1f, alpha)
-            : points >= 10 ? new Color(0.3f, 1f, 0.4f, alpha)
+        Color c = points >= 12 ? new Color(0.3f, 0.6f, 1f, alpha)
+            : points >= 8 ? new Color(0.3f, 1f, 0.4f, alpha)
             : new Color(1f, 0.85f, 0.2f, alpha);
 
         Vector3 baseP = transform.position;

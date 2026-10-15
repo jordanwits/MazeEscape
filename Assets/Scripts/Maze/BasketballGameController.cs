@@ -20,7 +20,7 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
 
     [Header("Round")]
     [SerializeField, Min(1f)] float roundDurationSeconds = 15f;
-    [SerializeField, Min(1)] int ticketsPerBasket = 2;
+    [SerializeField, Min(1)] int ticketsPerBasket = 5;
     [Tooltip("Minimum gap between two scores so a single rebounding shot can't count multiple times.")]
     [SerializeField, Min(0f)] float scoreCooldownSeconds = 0.4f;
 

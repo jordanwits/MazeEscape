@@ -14,7 +14,7 @@ using UnityEngine;
 /// in-flight ball finish passing through, then pays out and despawns the balls.
 /// </para>
 /// Scoring: each <see cref="HoleBoardHoleTrigger"/> reports the ball passing cleanly through it and
-/// adds that hole's point value (blue centre holes 10, big green holes 5, small yellow holes 40 — set
+/// adds that hole's point value (big green holes 2, blue centre holes 3, small yellow holes 6 — set
 /// per trigger). The total pays out <see cref="ticketsPerPoint"/> tickets per point via a single
 /// <see cref="CarnivalTicketBundle"/> popped out of <see cref="prizeChuteAnchor"/>.
 /// Scoring is server-authoritative; clients only see replicated spawns/despawns and the score.
