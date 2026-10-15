@@ -8,13 +8,14 @@ using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Esc-toggled in-game pause menu (replaces the old F8 IMGUI overlay): Resume, Settings
-/// (audio / environment light / voice), Crew (per-player voice volume and mute, online only), Leave Session,
-/// Quit. Lives on the multiplayer bootstrap object so it persists across scene loads; only active in maze
-/// gameplay scenes. Gameplay scripts poll <see cref="BlocksGameplayInput"/> to mute player input while open.
+/// (audio / environment light / voice), Leave Session, Quit — with the crew box (per-player voice volume and mute,
+/// online only) beside the list while no card is out. Lives on the multiplayer bootstrap object so it persists
+/// across scene loads; only active in maze gameplay scenes. Gameplay scripts poll <see cref="BlocksGameplayInput"/> to mute player input while open.
 ///
-/// On a pad: Start opens it on RESUME and walks back one layer per press (modal, settings / crew card, the menu).
+/// On a pad: Start opens it on RESUME and walks back one layer per press (modal, settings card, the menu).
 /// B and Esc walk back the same way, through <see cref="UiEventSystem"/>, which owns "back" for whichever screen is
-/// on top; the settings and crew cards and the confirm modal are navigation scopes of their own.
+/// on top; the settings card and the confirm modal are navigation scopes of their own. The crew box is part of the
+/// menu's own scope, so a pad moves sideways between the list and the crew rows.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class PauseMenuController : MonoBehaviour
@@ -41,18 +42,17 @@ public sealed class PauseMenuController : MonoBehaviour
     bool _isOpen;
     bool _settingsOpen;
 
-    // Pad navigation: the menu itself (lands on RESUME, back = resume), and each right-hand card while it is out
-    // (lands on its first control, back = put the card away).
+    // Pad navigation: the menu itself (lands on RESUME, back = resume; covers the crew box too), and the settings
+    // card while it is out (lands on its first control, back = put the card away).
     UiNavScope _navScope;
     UiNavScope _settingsNavScope;
-    UiNavScope _crewNavScope;
 
-    // CREW card: your voice mix for everyone else, the same rows the lobby roster has (MenuCrewVoiceRow). The
-    // lobby is the only other place to set it, and voice doesn't run there, so this is where it gets used.
-    GameObject _crewNav;
+    // Crew box beside the list: your voice mix for everyone else, the same rows the lobby roster has
+    // (MenuCrewVoiceRow). The lobby is the only other place to set it, and voice doesn't run there, so this is where
+    // it gets used. Shown only on the menu's root — the settings card takes over when it is out.
     MenuScreenFader _crewFader;
     RectTransform _crewListRoot;
-    bool _crewOpen;
+    bool _crewShown;
     bool _crewBuilt;
 
     /// <summary>
@@ -64,6 +64,9 @@ public sealed class PauseMenuController : MonoBehaviour
         public TextMeshProUGUI Name;
         public MenuCrewVoiceRow Voice;
     }
+
+    const float CrewBoxWidth = 460f;
+    const float CrewBoxScale = 1.35f;
 
     readonly List<ulong> _crewRowIds = new();
     readonly List<ulong> _crewIdScratch = new();
@@ -147,8 +150,6 @@ public sealed class PauseMenuController : MonoBehaviour
             _modal.Close();
         else if (_settingsOpen)
             ShowSettings(false);
-        else if (_crewOpen)
-            ShowCrew(false);
         else
             Close(false);
     }
@@ -164,10 +165,9 @@ public sealed class PauseMenuController : MonoBehaviour
             BuildUi();
 
         _root.SetActive(true);
-        ShowSettings(false, true);
-        ShowCrew(false, true);
         _isOpen = true;
         s_open = true;
+        ShowSettings(false, true);
 
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
@@ -184,17 +184,18 @@ public sealed class PauseMenuController : MonoBehaviour
         _isOpen = false;
         s_open = false;
         _settingsOpen = false;
-        _crewOpen = false;
+        _crewShown = false;
+        if (_crewFader != null)
+            _crewFader.Hide(true);
 
         if (_root != null)
             _root.SetActive(false);
         if (_modal != null)
             _modal.Close();
 
-        // Cards first and the menu last: the selection handed back is whatever was focused before pausing (an
-        // overlay's plate underneath), not a card's opener.
+        // The card first and the menu last: the selection handed back is whatever was focused before pausing (an
+        // overlay's plate underneath), not the card's opener.
         UiEventSystem.Close(_settingsNavScope);
-        UiEventSystem.Close(_crewNavScope);
         UiEventSystem.Close(_navScope);
 
         // The shared EventSystem outlives this menu (it used to own a throwaway one), so let go of a pause plate it
@@ -267,7 +268,6 @@ public sealed class PauseMenuController : MonoBehaviour
 
         _resumeButton = MenuWidgets.CreateNavButton(nav, "RESUME", () => Close(false), out _);
         MenuWidgets.CreateNavButton(nav, "SETTINGS", () => ShowSettings(!_settingsOpen), out _);
-        _crewNav = MenuWidgets.CreateNavButton(nav, "CREW", () => ShowCrew(!_crewOpen), out _).gameObject;
 
         MenuWidgets.CreateNavButton(nav, "LEAVE SESSION", () =>
         {
@@ -330,36 +330,37 @@ public sealed class PauseMenuController : MonoBehaviour
             MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 6f);
         _settingsPanel = MenuSettingsPanel.Build(card);
 
-        // ---- crew panel (right; the same slot as settings, one or the other)
+        // ---- crew box (top-right, on the same 150 margin as the title block; grows downward as players join). No
+        // heading: the rows are the whole box. The shared rows are sized for the lobby's corner roster, so the box is
+        // scaled up as a whole rather than re-laid out. It sits under the menu's root, so the menu's nav scope reaches
+        // its sliders and mics.
         RectTransform crewScreen = MenuWidgets.CreateRect("Screen_Crew", root);
-        crewScreen.anchorMin = new Vector2(1f, 0.5f);
-        crewScreen.anchorMax = new Vector2(1f, 0.5f);
-        crewScreen.pivot = new Vector2(1f, 0.5f);
-        crewScreen.anchoredPosition = new Vector2(-150f, 0f);
-        crewScreen.sizeDelta = new Vector2(720f, 200f);
+        crewScreen.anchorMin = new Vector2(1f, 1f);
+        crewScreen.anchorMax = new Vector2(1f, 1f);
+        crewScreen.pivot = new Vector2(1f, 1f);
+        crewScreen.anchoredPosition = new Vector2(-150f, -150f);
+        crewScreen.sizeDelta = new Vector2(CrewBoxWidth, 200f);
+        crewScreen.localScale = new Vector3(CrewBoxScale, CrewBoxScale, 1f);
         crewScreen.gameObject.AddComponent<CanvasGroup>();
         _crewFader = crewScreen.gameObject.AddComponent<MenuScreenFader>();
 
-        RectTransform crewCard = MenuWidgets.CreateCard(crewScreen, "Card", 720f);
+        RectTransform crewCard = MenuWidgets.CreateCard(crewScreen, "Card", CrewBoxWidth, new RectOffset(30, 30, 22, 24));
         var crewCardRoot = (RectTransform)crewCard.parent;
-        crewCardRoot.anchorMin = new Vector2(1f, 0.5f);
-        crewCardRoot.anchorMax = new Vector2(1f, 0.5f);
-        crewCardRoot.pivot = new Vector2(1f, 0.5f);
+        crewCardRoot.anchorMin = new Vector2(1f, 1f);
+        crewCardRoot.anchorMax = new Vector2(1f, 1f);
+        crewCardRoot.pivot = new Vector2(1f, 1f);
         crewCardRoot.anchoredPosition = Vector2.zero;
 
-        MenuWidgets.CreateText(crewCard, "Title", "CREW", 34f, MenuTheme.Bone,
-            MenuWidgets.FontKind.Display, TextAlignmentOptions.Left, 6f);
         _crewListRoot = MenuWidgets.CreateRect("CrewList", crewCard);
-        MenuWidgets.AddVertical(_crewListRoot.gameObject, new RectOffset(0, 0, 4, 2), 12f);
+        MenuWidgets.AddVertical(_crewListRoot.gameObject, new RectOffset(0, 0, 2, 2), 12f);
 
         _settingsFader.Hide(true);
         _crewFader.Hide(true);
         _modal = MenuModal.Create(root);
 
         _navScope = new UiNavScope(_root.transform, () => _resumeButton, () => Close(false));
-        // Both cards land on their first control: the top slider, or the first crew row (nothing when SOLO).
+        // The card lands on its first control, the top slider.
         _settingsNavScope = new UiNavScope(screen, null, () => ShowSettings(false));
-        _crewNavScope = new UiNavScope(crewScreen, null, () => ShowCrew(false));
 
         _root.SetActive(false);
     }
@@ -375,9 +376,6 @@ public sealed class PauseMenuController : MonoBehaviour
 
     void ShowSettings(bool show, bool instant = false)
     {
-        if (show)
-            ShowCrew(false, instant);
-
         _settingsOpen = show;
         if (_settingsFader == null)
             return;
@@ -393,26 +391,27 @@ public sealed class PauseMenuController : MonoBehaviour
             _settingsFader.Hide(instant);
             UiEventSystem.Close(_settingsNavScope);
         }
+
+        UpdateCrewVisibility(instant);
     }
 
-    void ShowCrew(bool show, bool instant = false)
+    /// <summary>The crew box is out on the menu's root only: paused, no settings card, and a session with a crew.</summary>
+    void UpdateCrewVisibility(bool instant)
     {
-        if (show)
-            ShowSettings(false, instant);
-
-        _crewOpen = show;
-        if (_crewFader == null)
+        bool show = _isOpen && !_settingsOpen && HasCrewSession();
+        if (_crewFader == null || (show == _crewShown && !instant))
             return;
+
+        _crewShown = show;
         if (show)
         {
             RefreshCrew(true);
-            _crewFader.Show(instant);
-            UiEventSystem.Open(_crewNavScope);
+            // Always faded in: shown instantly on open, the rows land a frame before the card behind them has sized.
+            _crewFader.Show();
         }
         else
         {
             _crewFader.Hide(instant);
-            UiEventSystem.Close(_crewNavScope);
         }
     }
 
@@ -431,13 +430,11 @@ public sealed class PauseMenuController : MonoBehaviour
         }
         if (_leaveLabel != null)
             _leaveLabel.text = _session != null && _session.IsSessionActive ? "LEAVE SESSION" : "BACK TO MENU";
-        if (_crewNav != null)
-            _crewNav.SetActive(HasCrewSession());
     }
 
     void RefreshDynamic()
     {
-        if (_crewOpen)
+        if (_crewShown)
             RefreshCrew(false);
 
         if (_statusLabel == null || _session == null)

@@ -7,7 +7,7 @@ using UnityEngine.UI;
 /// and a bare mic glyph in its top-right corner that mutes them. Both write <see cref="VoicePlayerMixSettings"/>,
 /// which is listener-side only — nothing is replicated, so the person you turn down is never told.
 ///
-/// Shared by the lobby roster (<see cref="MainMenuController"/>) and the pause menu's CREW card
+/// Shared by the lobby roster (<see cref="MainMenuController"/>) and the pause menu's crew box
 /// (<see cref="PauseMenuController"/>); each lays out its own name line above it and must leave
 /// <see cref="MicSize"/> + 8 free on that line's right.
 /// </summary>
