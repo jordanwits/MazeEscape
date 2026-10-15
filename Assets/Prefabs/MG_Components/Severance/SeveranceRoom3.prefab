@@ -8623,6 +8623,7 @@ GameObject:
   - component: {fileID: 4088096331358033471}
   - component: {fileID: 1606531658726212124}
   - component: {fileID: 4950945982309755645}
+  - component: {fileID: 3649000442400794369}
   m_Layer: 0
   m_Name: SeveranceRoom3
   m_TagString: Untagged
@@ -8698,6 +8699,21 @@ AudioReverbZone:
   m_Density: 100
   m_LFReference: 250
   m_RoomLF: 0
+--- !u!114 &3649000442400794369
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8527796770612684017}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 83a5766eeaf33bb4797f848535eabd23, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::AchievementRoomZone
+  achievement: 26
+  localCenter: {x: 0, y: 3.5, z: 0}
+  localSize: {x: 15, y: 6, z: 15}
 --- !u!1 &8793339651037190911
 GameObject:
   m_ObjectHideFlags: 0

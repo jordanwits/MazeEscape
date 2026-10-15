@@ -178,6 +178,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         if (!IsServer || !IsSpawned)
             return;
 
+        AchievementHooks.ServerTeamWipe(everyoneDead);
         TeamWipeRpc(everyoneDead);
     }
 
@@ -198,6 +199,7 @@ public class NetworkPlayerRespawn : NetworkBehaviour
         // the booth round never sees its prop released and nobody else can pick it up.
         NetworkHeavyThrowableHold.FindHeldByPlayerObjectId(NetworkObjectId)?.ServerForceReleaseForHolderDeath();
         _isDead.Value = true;
+        AchievementHooks.ServerPlayerDied(OwnerClientId);
 
         NetworkPlayerRagdoll netRagdoll = GetComponent<NetworkPlayerRagdoll>();
         netRagdoll?.NotifyDeathRagdollFromServer();

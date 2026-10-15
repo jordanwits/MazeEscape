@@ -138,6 +138,7 @@ public sealed class CarnivalTicketBundle : NetworkBehaviour
             return;
 
         wallet.ServerAdd(_value.Value);
+        AchievementRunTracker.ServerNoteTicketsEarned(playerObj.OwnerClientId, _value.Value);
 
         NetworkObject self = GetComponent<NetworkObject>();
         if (self != null && self.IsSpawned)

@@ -271,8 +271,13 @@ public class ProceduralMazeConfig : ScriptableObject
     [Tooltip("Placed on children named LightSpawn, LightSpawn1, LightSpawn2, … on the start piece. At maze build, spawns one per connected player, in order, up to the number of those transforms. Use a NetworkObject prefab in multiplayer.")]
     [SerializeField] GameObject mazeStartFlashlightPrefab;
 
+    [Header("Achievements")]
+    [Tooltip("Speedrunner par: finishing this section within this many seconds of the maze being built unlocks it. 0 disables it for this section.")]
+    [SerializeField, Min(0f)] float speedrunParSeconds = 480f;
+
     public bool EnableGeneration => enableGeneration;
     public string TargetSceneName => targetSceneName;
+    public float SpeedrunParSeconds => speedrunParSeconds;
     public bool BuildOfflineInPlayMode => buildOfflineInPlayMode;
     public bool RandomizeOfflineSeed => randomizeOfflineSeed;
     public bool RandomizeHostSeed => randomizeHostSeed;

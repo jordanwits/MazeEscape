@@ -81,9 +81,11 @@ public class BomberHealth : MonoBehaviour
         if (fromPlayerMelee)
             amount *= meleeDamageScale;
 
+        AchievementHooks.ServerEnemyHit(attackerHealth);
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         if (CurrentHealth <= 0f)
         {
+            AchievementHooks.ServerEnemyKilled(EnemyKind.Bomber, attackerHealth, this);
             Die();
             return true;
         }

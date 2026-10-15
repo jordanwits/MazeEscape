@@ -474,6 +474,33 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
             _livingRequired.Value = required;
     }
 
+    /// <summary>
+    /// Server: the living players inside the cab right now. Recounted at departure rather than read from the
+    /// FixedUpdate counters — a hinge cab's leaves can be reopened and a death during departure is allowed.
+    /// </summary>
+    System.Collections.Generic.List<ulong> ServerCollectPlayersAboard()
+    {
+        var aboard = new System.Collections.Generic.List<ulong>();
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || interiorVolume == null)
+            return aboard;
+
+        Bounds b = interiorVolume.bounds;
+        foreach (System.Collections.Generic.KeyValuePair<ulong, NetworkClient> pair in nm.ConnectedClients)
+        {
+            NetworkObject playerObject = pair.Value.PlayerObject;
+            if (playerObject == null
+                || !playerObject.TryGetComponent(out PlayerHealth health)
+                || health.IsDead
+                || !ServerIsPlayerPositionInsideVolume(b, playerObject.transform.position))
+                continue;
+
+            aboard.Add(pair.Key);
+        }
+
+        return aboard;
+    }
+
     static bool ServerIsPlayerPositionInsideVolume(Bounds b, Vector3 feetPosition)
     {
         Vector3 sample = feetPosition + Vector3.up * 0.85f;
@@ -771,6 +798,9 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
                 RequestReturnToMainMenuLocal();
             return;
         }
+
+        // While the avatars still exist: the despawn sweep and the load below tear them down.
+        AchievementRunTracker.ServerSectionCompleted(currentName, !hasNextSection, ServerCollectPlayersAboard());
 
         if (hasNextSection)
         {

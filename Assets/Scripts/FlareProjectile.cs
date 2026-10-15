@@ -157,6 +157,15 @@ public class FlareProjectile : NetworkBehaviour
         BomberHealth bomber = hit.collider.GetComponentInParent<BomberHealth>();
         MutantHealth mutant = hit.collider.GetComponentInParent<MutantHealth>();
 
+        bool hitLiveEnemy = (zombie != null && !zombie.IsDead)
+            || (skeleton != null && !skeleton.IsDead)
+            || (guard != null && !guard.IsDead)
+            || (clown != null && !clown.IsDead)
+            || (bomber != null && !bomber.IsDead)
+            || (mutant != null && !mutant.IsDead);
+        if (hitLiveEnemy)
+            AchievementAwards.ServerAward(_shooterHealth, AchievementId.SignalFire);
+
         if (zombie != null && !zombie.IsDead)
         {
             zombie.TakeDamage(impactDamage, fromPlayerMelee: false, attacker: _shooterRoot, attackerHealth: _shooterHealth);

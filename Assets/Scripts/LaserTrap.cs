@@ -23,7 +23,7 @@ using UnityEditor;
 /// sanity check on distance and rate) and broadcasts the zap sound.
 /// </summary>
 [DisallowMultipleComponent]
-public class LaserTrap : NetworkBehaviour
+public partial class LaserTrap : NetworkBehaviour
 {
     [Serializable]
     public class Curtain
@@ -294,6 +294,8 @@ public class LaserTrap : NetworkBehaviour
 
     void DetectLocalPlayerHit(double t)
     {
+        TrackLimboPasses(t);
+
         if (Time.time < _nextLocalHitTime)
             return;
 
@@ -345,6 +347,7 @@ public class LaserTrap : NetworkBehaviour
         float sweepDirection)
     {
         _nextLocalHitTime = Time.time + perPlayerHitCooldown;
+        NoteLimboHit(c);
 
         // A sweeping curtain throws you behind itself (the stretch it already cleared); a fixed wall pushes you back
         // out the side you walked in from.

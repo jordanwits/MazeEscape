@@ -686,6 +686,9 @@ public partial class PlayerController
             return;
         }
 
+        if (TryHealTeammateFromInteract())
+            return;
+
         // Grabbable items go through the gated reach (arm extends, grant fires at the apex).
         // Chest/door/carnival interactions above stay instant.
         BeginGatedPickup();

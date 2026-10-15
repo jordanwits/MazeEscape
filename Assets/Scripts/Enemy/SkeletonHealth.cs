@@ -52,9 +52,11 @@ public class SkeletonHealth : MonoBehaviour
         if (IsDead || amount <= 0f)
             return false;
 
+        AchievementHooks.ServerEnemyHit(attackerHealth);
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         if (CurrentHealth <= 0f)
         {
+            AchievementHooks.ServerEnemyKilled(EnemyKind.Skeleton, attackerHealth, this);
             Die();
             return true;
         }

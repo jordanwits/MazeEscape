@@ -46,9 +46,11 @@ public class ZombieHealth : MonoBehaviour
 
         // Damage always lands now — the AI's poise system decides the reaction (flinch, stagger or counter),
         // never whether the hit counts.
+        AchievementHooks.ServerEnemyHit(attackerHealth);
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         if (CurrentHealth <= 0f)
         {
+            AchievementHooks.ServerEnemyKilled(EnemyKind.Zombie, attackerHealth, this);
             Die();
             return true;
         }

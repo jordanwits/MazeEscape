@@ -1468,6 +1468,7 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
     void AssignTarget(PlayerHealth health)
     {
+        AchievementHooks.ServerEnemyTargeted(health);
         _targetHealth = health;
         _target = health.transform;
         _hasInvestigationPoint = false;
@@ -2678,8 +2679,12 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             _lureCommitUntil = Time.time + LureCommitSeconds;
         _lureIsDecoy = fromDecoy;
 
+        bool freshMonkeyPull = monkey != null && (!claimed || monkey != _lureMonkey);
+
         // Track the monkey behind this lure so the Clown can club it over once it arrives (ShouldSmashMonkey).
         _lureMonkey = monkey;
+        if (freshMonkeyPull)
+            AchievementHooks.ServerMonkeyPulledClown(monkey.ServerActivator, transform.position);
 
         // Claim his attention on BOTH paths below, so it is refreshed even once he has arrived and is
         // only topping up his linger.

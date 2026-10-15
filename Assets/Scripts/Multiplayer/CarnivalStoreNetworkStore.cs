@@ -186,6 +186,9 @@ public sealed class CarnivalStoreNetworkStore : NetworkBehaviour
         if (entry.price > 0 && !wallet.ServerTrySpend(entry.price))
             return CarnivalStorePurchaseResult.NotEnoughTickets;
 
+        // Both branches below grant the purchase.
+        AchievementAwards.ServerAward(buyerClientId, AchievementId.RetailTherapy);
+
         if (entry.grant == CarnivalStoreGrant.ExtraInventorySlot)
         {
             // No sale-list entry: the unlock is per-player state on the buyer's own inventory, which

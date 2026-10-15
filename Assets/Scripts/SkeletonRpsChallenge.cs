@@ -117,6 +117,8 @@ public class SkeletonRpsChallenge : MonoBehaviour
     bool _revealSfxAlternate;
     AudioSource _sfx;
     Coroutine _winOpenRoutine;
+    /// <summary>Who won the match the pending door open is for — credited with anyone it frees (Jailbreak).</summary>
+    ulong _winOpenClientKey;
 
     public HingeInteractDoor JailDoor => jailDoor;
     public ulong ChallengeId => jailDoor != null ? jailDoor.DoorId : 0UL;
@@ -354,7 +356,11 @@ public class SkeletonRpsChallenge : MonoBehaviour
         result.PlayerWonMatch = playerWonMatch;
 
         if (playerWonMatch)
+        {
+            AchievementAwards.ServerAward(clientKey, AchievementId.RockBeatsBones);
+            _winOpenClientKey = clientKey;
             ScheduleWinDoorOpen();
+        }
     }
 
     static bool PlayerBeats(SkeletonRpsChoice player, SkeletonRpsChoice skeleton)
@@ -394,7 +400,9 @@ public class SkeletonRpsChallenge : MonoBehaviour
         // Unconditional, and ahead of the unlock branches: the win is what frees the winner, not the state of the
         // lock. Anything that cleared the lock during the reveal delay (the Jailor's delivery open) leaves those
         // branches nothing to do, and this notification is the only thing that clears IsSealedInJailCell.
-        jailDoor.ServerNotifyJailUnlockedByPlayerKey();
+        AchievementHooks.ServerBeginJailUnlock(_winOpenClientKey);
+        try { jailDoor.ServerNotifyJailUnlockedByPlayerKey(); }
+        finally { AchievementHooks.ServerEndJailUnlock(); }
 
         NetworkManager nm = NetworkManager.Singleton;
         bool online = nm != null && nm.IsListening;

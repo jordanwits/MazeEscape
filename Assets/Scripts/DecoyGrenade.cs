@@ -334,7 +334,9 @@ public class DecoyGrenade : NetworkBehaviour
             }
 
             if (logLureDecisions) Debug.Log($"[Decoy]   {who}: CALLED - {travel:F1}m walk (straight {straight:F1}m)", this);
-            enemy.LureToNoise(target);
+            AchievementHooks.ServerBeginDecoyLure(_throwerRoot != null ? _throwerRoot.GetComponent<PlayerHealth>() : null);
+            try { enemy.LureToNoise(target); }
+            finally { AchievementHooks.ServerEndDecoyLure(); }
         }
 
         s_lurables.Clear();

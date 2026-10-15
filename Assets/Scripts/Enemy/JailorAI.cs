@@ -2240,6 +2240,7 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
             NetworkPlayerAvatar sealAvatar = ph.GetComponent<NetworkPlayerAvatar>();
             if (sealAvatar != null)
                 sealAvatar.ServerSetSealedInJailCell(true);
+            AchievementAwards.ServerAward(ph, AchievementId.SpecialDelivery);
         }
 
         _carryPreservedPlayerLossyScale = Vector3.one;
@@ -2970,6 +2971,7 @@ public class JailorAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
     void AssignTarget(PlayerHealth health)
     {
+        AchievementHooks.ServerEnemyTargeted(health);
         _targetHealth = health;
         _target = health.transform;
         _hasInvestigationPoint = false;

@@ -526,6 +526,8 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
                 s.Status = (byte)BlackjackHandStatus.Blackjack;
                 SetSeat(i, s);
                 anyPlayerBlackjack = true;
+                if (AchievementAwards.TryGetOwnerOfNetworkObject(s.OccupantNetObjId, out ulong naturalOwner))
+                    AchievementAwards.ServerAward(naturalOwner, AchievementId.Blackjack);
             }
         }
 
@@ -686,6 +688,14 @@ public sealed class BlackjackGameController : NetworkBehaviour, ICarnivalScoreSo
             s.LastResult = (byte)result;
             s.LastPayout = credit - s.Bet;
             SetSeat(i, s);
+
+            if ((result == BlackjackSeatResult.Win || result == BlackjackSeatResult.Blackjack)
+                && AchievementAwards.TryGetOwnerOfNetworkObject(s.OccupantNetObjId, out ulong winner))
+            {
+                AchievementAwards.ServerAward(winner, AchievementId.WinnerWinner);
+                // Earned, not credited: the credit includes the returned stake.
+                AchievementRunTracker.ServerNoteTicketsEarned(winner, s.LastPayout);
+            }
         }
 
         _phase.Value = BlackjackPhase.Payout;

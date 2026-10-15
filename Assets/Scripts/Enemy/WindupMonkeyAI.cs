@@ -227,8 +227,9 @@ public class WindupMonkeyAI : NetworkBehaviour
         }
 
         bool active = _activated.Value;
-        if (!active && AnyLivingPlayerWithin(activationRadius))
+        if (!active && TryGetNearestLivingPlayerWithin(activationRadius, out PlayerHealth activator))
         {
+            ServerActivator = activator;
             if (IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
                 _activated.Value = true;       // replicates + fires HandleActivatedChanged
             else
@@ -295,19 +296,27 @@ public class WindupMonkeyAI : NetworkBehaviour
             new Keyframe(1.00f, 1f));
     }
 
-    bool AnyLivingPlayerWithin(float radius)
+    /// <summary>Server: the player whose approach wound this monkey up — credited when its clap pulls the Clown off someone.</summary>
+    public PlayerHealth ServerActivator { get; private set; }
+
+    bool TryGetNearestLivingPlayerWithin(float radius, out PlayerHealth nearest)
     {
-        float r2 = radius * radius;
+        nearest = null;
+        float best = radius * radius;
         var players = PlayerHealthRegistry.All;
         for (int i = 0; i < players.Count; i++)
         {
             PlayerHealth p = players[i];
             if (p == null || p.IsDead)
                 continue;
-            if ((p.transform.position - transform.position).sqrMagnitude <= r2)
-                return true;
+            float d2 = (p.transform.position - transform.position).sqrMagnitude;
+            if (d2 <= best)
+            {
+                best = d2;
+                nearest = p;
+            }
         }
-        return false;
+        return nearest != null;
     }
 
     /// <summary>

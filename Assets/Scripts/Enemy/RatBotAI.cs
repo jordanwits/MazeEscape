@@ -320,6 +320,8 @@ public class RatBotAI : NetworkBehaviour, IBlindableEnemy
             return;
         }
 
+        UpdateWalkPastAchievement();
+
         // Flashbanged: no stalking, no contact grab — just stumble in circles until it wears off. A pounce
         // already in flight is deliberately exempt (see IsBlinded) so a victim can never be left mid-throw.
         if (IsBlinded)
@@ -377,6 +379,7 @@ public class RatBotAI : NetworkBehaviour, IBlindableEnemy
         if (!IsValidStalkTarget(_stalkTarget))
         {
             _stalkTarget = AcquireStalkTarget();
+            AchievementHooks.ServerEnemyTargeted(_stalkTarget);
             ResetTargetTracking(); // also arms the escape-flee timer for the fresh target
         }
         UpdateTargetTracking();
@@ -601,8 +604,48 @@ public class RatBotAI : NetworkBehaviour, IBlindableEnemy
         return cc != null ? cc.radius : 0.3f;
     }
 
+    // ---- Don't Blink achievement (server) ------------------------------------------------------------------
+    // A player who comes within WalkPastNearRadius of a live bot and then gets WalkPastClearRadius away without
+    // being pounced has walked past it. Only while it is a threat: a blinded or fleeing bot clears every pass.
+
+    const float WalkPastNearRadius = 3f;
+    const float WalkPastClearRadius = 8f;
+    readonly HashSet<PlayerHealth> _walkPastArmed = new();
+
+    void UpdateWalkPastAchievement()
+    {
+        if (IsBlinded || _state == RatBotState.Fleeing)
+        {
+            _walkPastArmed.Clear();
+            return;
+        }
+
+        if (_state == RatBotState.Pouncing)
+            return;
+
+        var players = PlayerHealthRegistry.All;
+        for (int i = 0; i < players.Count; i++)
+        {
+            PlayerHealth player = players[i];
+            if (player == null || player.IsDead)
+            {
+                _walkPastArmed.Remove(player);
+                continue;
+            }
+
+            Vector3 flat = player.transform.position - transform.position;
+            flat.y = 0f;
+            float d2 = flat.sqrMagnitude;
+            if (d2 <= WalkPastNearRadius * WalkPastNearRadius)
+                _walkPastArmed.Add(player);
+            else if (d2 >= WalkPastClearRadius * WalkPastClearRadius && _walkPastArmed.Remove(player))
+                AchievementAwards.ServerAward(player, AchievementId.DontBlink);
+        }
+    }
+
     void StartPounce(PlayerHealth target)
     {
+        _walkPastArmed.Remove(target);
         _pounceTargetHealth = target;
         _pounceTargetRagdoll = target != null ? target.GetComponent<PlayerRagdollController>() : null;
         _pounceTargetNetRagdoll = target != null ? target.GetComponent<NetworkPlayerRagdoll>() : null;

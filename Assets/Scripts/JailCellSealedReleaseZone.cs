@@ -89,6 +89,8 @@ public class JailCellSealedReleaseZone : MonoBehaviour
         if (door != jailDoor || !IsAuthority())
             return;
 
+        AchievementHooks.ServerJailPrisonersFreed(CollectSealedPrisonerClientIds());
+
         foreach (PlayerHealth ph in _occupants)
         {
             if (ph == null || ph.IsDead)
@@ -110,6 +112,29 @@ public class JailCellSealedReleaseZone : MonoBehaviour
         _noWayOutSince.Clear();
 
         RefreshJailorTrappedInsideDoorBypass();
+    }
+
+    /// <summary>Owners of every living player this cell still holds sealed — the ones an unlock is about to free.</summary>
+    List<ulong> CollectSealedPrisonerClientIds()
+    {
+        var freed = new List<ulong>();
+        foreach (PlayerHealth ph in _occupants)
+        {
+            if (ph == null || ph.IsDead || !ph.TryGetComponent(out NetworkPlayerAvatar avatar) || !avatar.IsSealedInJailCell)
+                continue;
+            if (AchievementAwards.TryGetOwner(ph, out ulong clientId) && !freed.Contains(clientId))
+                freed.Add(clientId);
+        }
+
+        foreach (NetworkPlayerAvatar avatar in _sealedByThisZone)
+        {
+            if (avatar == null || !avatar.IsSealedInJailCell || !avatar.TryGetComponent(out PlayerHealth ph) || ph.IsDead)
+                continue;
+            if (AchievementAwards.TryGetOwner(ph, out ulong clientId) && !freed.Contains(clientId))
+                freed.Add(clientId);
+        }
+
+        return freed;
     }
 
     /// <summary>Server / offline host: mark everyone currently inside this zone as sealed in jail (after <see cref="JailCellDoorTripwire"/> closes the door).</summary>

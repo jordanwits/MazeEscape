@@ -22,7 +22,7 @@ using UnityEditor;
 /// doing a single swing-and-return, and pushes instead of ragdolling.
 /// </summary>
 [DisallowMultipleComponent]
-public class SwingingAxeTrap : NetworkBehaviour
+public partial class SwingingAxeTrap : NetworkBehaviour
 {
     [Header("Pivots (rotate at the base of each handle)")]
     [Tooltip("Each transform is a hinge pivot whose child is one axe mesh. All pivots swing together.")]
@@ -223,6 +223,8 @@ public class SwingingAxeTrap : NetworkBehaviour
                 DetectAndDamage(dt);
             else
                 _hasPrevBlade = false;
+
+            UpdateCloseShaveCrossings(_phase > 0.0001f);
         }
         else
         {
@@ -430,6 +432,7 @@ public class SwingingAxeTrap : NetworkBehaviour
         // Damage is authoritative here (server, or local when offline). PlayerHealth.TakeDamage no-ops on
         // non-server peers, and the result replicates via NetworkPlayerRespawn.
         ph.TakeDamage(damagePerHit);
+        NoteCloseShaveHit(ph);
 
         Vector3 pushVel = pushDirHorizontal * pushHorizontalSpeed;
 

@@ -179,6 +179,7 @@ public class TeleportOrb : NetworkBehaviour
             return;
 
         respawn.ServerTeleport(dest, rot);
+        AchievementAwards.ServerAward(senderId, AchievementId.NowYouSeeMe);
 
         if (consumeOnUse)
             _consumed.Value = true;

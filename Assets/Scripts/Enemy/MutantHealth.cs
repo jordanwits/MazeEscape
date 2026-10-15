@@ -86,9 +86,11 @@ public class MutantHealth : MonoBehaviour
         if (fromPlayerMelee)
             amount *= meleeDamageScale / Mathf.Max(1f, _playerMultiplier);
 
+        AchievementHooks.ServerEnemyHit(attackerHealth);
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         if (CurrentHealth <= 0f)
         {
+            AchievementHooks.ServerEnemyKilled(EnemyKind.Mutant, attackerHealth, this);
             Die();
             return true;
         }

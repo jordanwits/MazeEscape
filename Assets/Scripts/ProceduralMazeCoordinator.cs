@@ -415,6 +415,17 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         }
     }
 
+    /// <summary>The Speedrunner par of a section, from its config (see <see cref="ProceduralMazeConfig.SpeedrunParSeconds"/>).</summary>
+    public bool TryGetSpeedrunParSeconds(string sceneName, out float seconds)
+    {
+        seconds = 0f;
+        if (!TryGetSectionConfigForScene(sceneName, out ProceduralMazeConfig config) || config == null)
+            return false;
+
+        seconds = config.SpeedrunParSeconds;
+        return true;
+    }
+
     bool TryGetSectionConfigForScene(string sceneName, out ProceduralMazeConfig config)
     {
         config = null;

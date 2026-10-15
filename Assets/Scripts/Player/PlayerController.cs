@@ -2430,6 +2430,9 @@ public partial class PlayerController : MonoBehaviour
             return;
         }
 
+        if (TryShowTeammateHealPrompt())
+            return;
+
         // No pickup prompt while the reach is in flight (it would flash "press E" mid-grab).
         bool shouldShow = !PickupReachActive && ShouldShowPickupPrompt();
         SetPickupPromptVisible(shouldShow, pickupPromptMessage);
@@ -3372,6 +3375,7 @@ public partial class PlayerController : MonoBehaviour
                 float damage = zombieHealth.MaxHealth * damageFraction;
                 if (zombieHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                     damagedAny = true;
+                NoteSwordKill(zombieHealth.IsDead);
                 continue;
             }
 
@@ -3387,6 +3391,7 @@ public partial class PlayerController : MonoBehaviour
                     damagedAny = true;
                     _meleeHitSkeletonThisSwing = true;
                 }
+                NoteSwordKill(skeletonHealth.IsDead);
                 continue;
             }
 
@@ -3402,6 +3407,7 @@ public partial class PlayerController : MonoBehaviour
                 float damage = guardHealth.MaxHealth * damageFraction;
                 if (guardHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                     damagedAny = true;
+                NoteSwordKill(guardHealth.IsDead);
                 continue;
             }
 
@@ -3416,6 +3422,7 @@ public partial class PlayerController : MonoBehaviour
                 float damage = clownHealth.MaxHealth * damageFraction;
                 if (clownHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                     damagedAny = true;
+                NoteSwordKill(clownHealth.IsDead);
                 continue;
             }
 
@@ -3431,6 +3438,7 @@ public partial class PlayerController : MonoBehaviour
                 float damage = bomberHealth.MaxHealth * damageFraction;
                 if (bomberHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                     damagedAny = true;
+                NoteSwordKill(bomberHealth.IsDead);
                 continue;
             }
 
@@ -3446,12 +3454,20 @@ public partial class PlayerController : MonoBehaviour
                 float damage = mutantHealth.MaxHealth * damageFraction;
                 if (mutantHealth.TakeDamage(damage, fromPlayerMelee: true, attacker: transform, attackerHealth: _playerHealth))
                     damagedAny = true;
+                NoteSwordKill(mutantHealth.IsDead);
                 continue;
             }
 
         }
 
         return damagedAny;
+    }
+
+    /// <summary>Server copy of the swinger: a swing that just killed its target with the sword selected earns Blade Runner.</summary>
+    void NoteSwordKill(bool killed)
+    {
+        if (killed && IsSwordSelected)
+            AchievementAwards.ServerAward(_playerHealth, AchievementId.BladeRunner);
     }
 
     public void PlayMeleeHitSfx()

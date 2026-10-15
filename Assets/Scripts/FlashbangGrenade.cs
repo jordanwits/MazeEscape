@@ -224,6 +224,8 @@ public class FlashbangGrenade : NetworkBehaviour
                 continue;
 
             SendPlayerBlind(player, strength);
+            if (_throwerRoot != null && player.transform != _throwerRoot)
+                AchievementAwards.ServerAward(_throwerRoot.GetComponent<PlayerHealth>(), AchievementId.FriendlyFire);
         }
     }
 
@@ -286,6 +288,8 @@ public class FlashbangGrenade : NetworkBehaviour
 
             // Unlike a player, an enemy is either blinded or not — no partial whiteout to scale.
             EnemyBlindEffect.Apply(enemyComponent, blindSeconds);
+            if (_throwerRoot != null)
+                AchievementAwards.ServerAward(_throwerRoot.GetComponent<PlayerHealth>(), AchievementId.LookAway);
         }
 
         s_blastEnemies.Clear();

@@ -85,9 +85,11 @@ public class SecurityGuardHealth : MonoBehaviour
         if (fromPlayerMelee)
             amount *= meleeDamageScale;
 
+        AchievementHooks.ServerEnemyHit(attackerHealth);
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         if (CurrentHealth <= 0f)
         {
+            AchievementHooks.ServerEnemyKilled(EnemyKind.SecurityGuard, attackerHealth, this);
             Die();
             return true;
         }

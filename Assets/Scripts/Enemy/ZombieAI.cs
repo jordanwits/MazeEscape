@@ -595,6 +595,7 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
             _poise -= punchPoiseDamage;
             if (_poise <= 0f)
             {
+                AchievementHooks.ServerPoiseBroken(attackerHealth);
                 BeginPoiseBreakStagger();
                 return;
             }
@@ -1144,6 +1145,7 @@ public class ZombieAI : MonoBehaviour, IBlindableEnemy
         if (_target == null)
             return;
 
+        AchievementHooks.ServerEnemyTargeted(_targetHealth);
         _state = ZombieState.Chase;
         _nextChaseRepathTime = 0f; // repath immediately on the fresh chase
         PlayGroanAndScheduleNext();

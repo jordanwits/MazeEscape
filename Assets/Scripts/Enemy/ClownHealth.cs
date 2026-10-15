@@ -121,9 +121,11 @@ public class ClownHealth : MonoBehaviour
         if (fromPlayerMelee)
             amount *= meleeDamageScale;
 
+        AchievementHooks.ServerEnemyHit(attackerHealth);
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         if (CurrentHealth <= 0f)
         {
+            AchievementHooks.ServerEnemyKilled(EnemyKind.Clown, attackerHealth, this);
             Die();
             return true;
         }

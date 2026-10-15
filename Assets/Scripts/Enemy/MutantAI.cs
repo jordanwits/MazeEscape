@@ -808,6 +808,7 @@ public class MutantAI : MonoBehaviour, IBlindableEnemy
 
     void SetTarget(PlayerHealth target)
     {
+        AchievementHooks.ServerEnemyTargeted(target);
         _targetHealth = target;
         _target = target != null ? target.transform : null;
         if (_target != null)

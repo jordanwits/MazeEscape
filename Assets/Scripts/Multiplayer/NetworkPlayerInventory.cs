@@ -1535,13 +1535,29 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         if (!IsServer)
             return;
 
-        int sel = SelectedSlotIndex;
+        if (!ServerTryResolveSelectedBandage(out int sel, out GrabbableInventoryItem g))
+            return;
+
+        PlayerHealth health = playerController != null
+            ? playerController.GetComponent<PlayerHealth>()
+            : GetComponent<PlayerHealth>();
+        if (health == null || health.IsDead || health.CurrentHealth >= health.MaxHealth)
+            return;
+
+        health.Heal(BandageItem.HealthRestoreAmount);
+        ServerConsumeSelectedBandage(sel, g);
+    }
+
+    /// <summary>Server: the bandage in the selected slot, resolved by id or (when the id has not landed yet) by type.</summary>
+    bool ServerTryResolveSelectedBandage(out int sel, out GrabbableInventoryItem g)
+    {
+        sel = SelectedSlotIndex;
+        g = null;
         ulong id = GetSlotItemId(sel);
         bool slotSaysBandage = GetSlotItemTypeId(sel) == GrabbableInventoryItem.TypeIdBandage;
         if (id == 0UL && !slotSaysBandage)
-            return;
+            return false;
 
-        GrabbableInventoryItem g = null;
         bool resolved = id != 0UL
             && GrabbableInventoryItem.TryGetRegistered(id, out g)
             && g is BandageItem;
@@ -1556,16 +1572,12 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                 && g is BandageItem;
         }
 
-        if (!resolved || g == null)
-            return;
+        return resolved && g != null;
+    }
 
-        PlayerHealth health = playerController != null
-            ? playerController.GetComponent<PlayerHealth>()
-            : GetComponent<PlayerHealth>();
-        if (health == null || health.IsDead || health.CurrentHealth >= health.MaxHealth)
-            return;
-
-        health.Heal(BandageItem.HealthRestoreAmount);
+    /// <summary>Server: plays the wrap on every peer and removes the used bandage from the slot and the world.</summary>
+    void ServerConsumeSelectedBandage(int sel, GrabbableInventoryItem g)
+    {
         PlayBandageUseObserversClientRpc();
 
         SetSlotItemId(sel, 0UL);
@@ -1650,6 +1662,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
         // The gulp is diegetic (positional), so play it on every observer like the bandage — not owner-only.
         PlayEnergyDrinkUseObserversClientRpc();
+        AchievementRunTracker.ServerNoteEnergyDrink(OwnerClientId);
 
         SetSlotItemId(sel, 0UL);
         SetSlotItemTypeId(sel, GrabbableInventoryItem.TypeIdNone);
@@ -2409,7 +2422,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                     return;
                 if (!ServerHasKeyItem())
                     return;
-                door.ApplyProceduralRemoteUnlock();
+                ServerApplyProceduralUnlockCredited(door);
                 if (door.IsLocked)
                     return;
                 if (!ServerTryConsumeKeyItem())
@@ -2435,7 +2448,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                 return;
             if (!ServerHasKeyItem())
                 return;
-            if (!door.ServerUnlockFromKey())
+            if (!ServerUnlockFromKeyCredited(door))
                 return;
             ServerBroadcastProceduralDoorUnlockIfNeeded(door);
             if (!ServerTryConsumeKeyItem())
@@ -2444,6 +2457,22 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         }
 
         RequestUnlockHingeDoorServerRpc(doorNet.NetworkObjectId);
+    }
+
+    // Key unlocks credit this player with any prisoners the unlock frees (the Jailbreak achievement): the jail
+    // zone hears about the release synchronously inside these calls, but the door event carries no unlocker.
+    bool ServerUnlockFromKeyCredited(HingeInteractDoor door)
+    {
+        AchievementHooks.ServerBeginJailUnlock(OwnerClientId);
+        try { return door.ServerUnlockFromKey(); }
+        finally { AchievementHooks.ServerEndJailUnlock(); }
+    }
+
+    void ServerApplyProceduralUnlockCredited(HingeInteractDoor door)
+    {
+        AchievementHooks.ServerBeginJailUnlock(OwnerClientId);
+        try { door.ApplyProceduralRemoteUnlock(); }
+        finally { AchievementHooks.ServerEndJailUnlock(); }
     }
 
     public void RequestToggleHingeDoor(HingeInteractDoor door)
@@ -2500,7 +2529,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             return;
         if (!ServerHasKeyItem())
             return;
-        if (!door.ServerUnlockFromKey())
+        if (!ServerUnlockFromKeyCredited(door))
             return;
         ServerBroadcastProceduralDoorUnlockIfNeeded(door);
         if (!ServerTryConsumeKeyItem())
@@ -2526,7 +2555,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
 
         if (door.IsSpawned)
         {
-            if (!door.ServerUnlockFromKey())
+            if (!ServerUnlockFromKeyCredited(door))
                 return;
             ServerBroadcastProceduralDoorUnlockIfNeeded(door);
             if (!ServerTryConsumeKeyItem())
@@ -2534,7 +2563,7 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
             return;
         }
 
-        door.ApplyProceduralRemoteUnlock();
+        ServerApplyProceduralUnlockCredited(door);
         if (door.IsLocked)
             return;
         if (!ServerTryConsumeKeyItem())

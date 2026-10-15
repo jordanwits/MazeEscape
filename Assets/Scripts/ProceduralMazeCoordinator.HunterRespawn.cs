@@ -177,6 +177,7 @@ public partial class ProceduralMazeCoordinator
 
         Transform parent = _hunterRespawnEnemiesRoot != null ? _hunterRespawnEnemiesRoot : null;
         spawned = Instantiate(_hunterRespawnPrefab, position, Quaternion.identity, parent);
+        AchievementHooks.ServerNoteReplacementHunter(spawned);
 
         if (_networkManager != null && _networkManager.IsListening)
         {

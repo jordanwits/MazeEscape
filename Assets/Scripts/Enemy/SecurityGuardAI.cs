@@ -649,6 +649,7 @@ public class SecurityGuardAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
 
     void SetTarget(PlayerHealth targetHealth)
     {
+        AchievementHooks.ServerEnemyTargeted(targetHealth);
         // A whiff streak describes ONE fight — how well this player has been slipping his reach. Switching
         // prey (getting punched from behind mid-chase, say) starts that read from scratch, or the new
         // target would be met with a hurricane lunge earned entirely by someone else. Guarded on an actual

@@ -138,6 +138,9 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
     EnemyBlindEffect _blindEffect;
     Vector3 _lurePoint;
     bool _hasLurePoint;
+    // Achievements: who threw the decoy he is heading for, and whether that decoy is what lit his fuse.
+    PlayerHealth _lureThrower;
+    bool _fuseLitByLure;
     float _lureHoldUntil;
     bool _provoked;
     float _verticalVelocity;
@@ -424,6 +427,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
 
     void BeginChase(PlayerHealth target)
     {
+        AchievementHooks.ServerEnemyTargeted(target);
         _target = target;
         _hasLurePoint = false;   // a real victim voids any decoy's claim on him
         _nextRepathTime = 0f;
@@ -446,6 +450,7 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         if (_state == BomberState.Priming || _state == BomberState.Spent)
             return;
 
+        _fuseLitByLure = _state == BomberState.Lured;
         EnterState(BomberState.Priming);
         _detonateAtTime = Time.time + fuseSeconds;
 
@@ -465,6 +470,10 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         if (_state == BomberState.Spent)
             return;
         _state = BomberState.Spent;
+
+        // A decoy lit him and no player took over as his target before the blast: he went off on the decoy.
+        if (_fuseLitByLure && _target == null)
+            AchievementAwards.ServerAward(_lureThrower, AchievementId.WrongTarget);
 
         Vector3 point = transform.position + Vector3.up * blastHeight;
 
@@ -1030,6 +1039,8 @@ public class BomberAI : NetworkBehaviour, IBlindableEnemy, ILurableEnemy
         _lurePoint = worldPoint;
         _hasLurePoint = true;
         _lureHoldUntil = Time.time + LureHoldSeconds;
+        if (AchievementHooks.ServerCurrentDecoyThrower != null)
+            _lureThrower = AchievementHooks.ServerCurrentDecoyThrower;
         if (_state != BomberState.Lured)
         {
             _nextRepathTime = 0f;

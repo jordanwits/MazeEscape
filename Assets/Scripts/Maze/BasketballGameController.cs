@@ -23,6 +23,8 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
     [SerializeField, Min(1)] int ticketsPerBasket = 5;
     [Tooltip("Minimum gap between two scores so a single rebounding shot can't count multiple times.")]
     [SerializeField, Min(0f)] float scoreCooldownSeconds = 0.4f;
+    [Tooltip("Baskets in one round that count as winning the booth (the Nothing But Net achievement, for whoever started the round).")]
+    [SerializeField, Min(1)] int achievementWinScore = 5;
 
     [Header("Anchors")]
     [SerializeField] Transform ballSpawnAnchor;
@@ -172,10 +174,14 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
         ServerStartRound(startingPlayerNetObjId);
     }
 
+    /// <summary>Server: who pressed start on the round in progress (their player object id).</summary>
+    ulong _roundStarterNetObjId;
+
     void ServerStartRound(ulong startingPlayerNetObjId)
     {
         if (!IsServer || _isActive.Value)
             return;
+        _roundStarterNetObjId = startingPlayerNetObjId;
         if (basketballPrefab == null)
         {
             Debug.LogError($"[BasketballGameController] basketballPrefab is not assigned on {name}.", this);
@@ -288,6 +294,10 @@ public sealed class BasketballGameController : NetworkBehaviour, ICarnivalGameSt
         _isActive.Value = false;
         int finalScore = _score.Value;
         _lastFinishedScore.Value = finalScore;
+
+        if (finalScore >= achievementWinScore
+            && AchievementAwards.TryGetOwnerOfNetworkObject(_roundStarterNetObjId, out ulong starter))
+            AchievementAwards.ServerAward(starter, AchievementId.NothingButNet);
 
         if (_spawnedBallNet != null && _spawnedBallNet.IsSpawned)
             _spawnedBallNet.Despawn(true);

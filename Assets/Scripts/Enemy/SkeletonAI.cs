@@ -1015,6 +1015,7 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
             _poise -= punchPoiseDamage;
             if (_poise <= 0f)
             {
+                AchievementHooks.ServerPoiseBroken(attackerHealth);
                 BeginPoiseBreakStagger();
                 return;
             }
@@ -1265,6 +1266,7 @@ public class SkeletonAI : MonoBehaviour, IBlindableEnemy
 
         _targetHealth = closest;
         _target = closest.transform;
+        AchievementHooks.ServerEnemyTargeted(closest);
     }
 
     static bool IsPlayerAudiblySprinting(PlayerHealth playerHealth)
