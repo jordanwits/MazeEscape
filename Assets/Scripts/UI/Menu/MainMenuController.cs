@@ -11,7 +11,8 @@ using UnityEngine.UI;
 /// Joining someone else's game is invite-only — there is no id to type in anywhere.
 ///
 /// Each screen is a <see cref="UiNavScope"/> while it shows. A pad lands on PLAY OFFLINE, the first setting, or
-/// READY UP; B / Esc goes back from settings, and in the lobby asks to leave (the lobby has no BACK on purpose).
+/// the lobby's READY / START plate; B / Esc goes back from settings, and in the lobby asks to leave (the lobby has
+/// no BACK on purpose).
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class MainMenuController : MonoBehaviour
@@ -27,30 +28,28 @@ public sealed class MainMenuController : MonoBehaviour
     /// <summary>Corner radius of the lobby's survivor plates; smaller than a panel's so they read as cards, not boards.</summary>
     const int PortraitRadius = 12;
 
+    /// <summary>Distance from the screen edge to every lobby corner group, so the four corners frame the hallway evenly.</summary>
+    const float LobbyMargin = 80f;
+
     // Left-hand lobby column: the crew roster as bare elements in the top-left corner. No card —
     // the roster sits directly on the canvas, over the hallway.
     const float LobbyColumnWidth = 402f;
-    const float LobbyColumnInset = 76f;
 
     /// <summary>Crew row for another player: name line over the voice slider (<see cref="MenuCrewVoiceRow"/>).</summary>
     const float CrewRowHeight = MenuCrewVoiceRow.RowHeight;
     /// <summary>Your own crew row is a single name line — you cannot mute or re-mix yourself.</summary>
     const float CrewSelfRowHeight = 30f;
 
-    // Lobby survivor grid: 2x2 on the right, above START. Values measured off the hand-placed
-    // layout, then squared up — the GridLayoutGroup is what keeps the four plates exactly aligned.
-    const float SurvivorPlateWidth = 108f;
-    const float SurvivorPlateHeight = 154f;
-    const float SurvivorGridSpacingX = 31f;
-    const float SurvivorGridSpacingY = 50f;
-    const float SurvivorGridInsetRight = 159f;
+    // Bottom-right dock: the survivor plates in one row over the lobby action button, both the
+    // dock's full width. Four 112-wide plates with 12 between them make the 484.
+    const float LobbyDockWidth = 484f;
+    const float SurvivorPlateHeight = 158f;
+    const float SurvivorPlateSpacing = 12f;
+    const float LobbyActionHeight = 72f;
 
-    /// <summary>
-    /// Bottom of the plate grid. Chosen so the grid plus its caption sit centred in the gap between
-    /// the top of the screen (the right column is otherwise empty since the crew card moved under
-    /// LOBBY) and the START block (top edge y=212). The caption-to-grid-top block is 392 tall.
-    /// </summary>
-    const float SurvivorGridBottom = 362f;
+    // LEAVE LOBBY, bottom-left, centred on the action button's line.
+    const float LeaveWidth = 240f;
+    const float LeaveHeight = 56f;
 
     [Tooltip("Wordmark shown at the top of the menu. Assets/Branding is outside Resources, so this is a direct scene reference.")]
     [SerializeField] Sprite logoSprite;
@@ -84,20 +83,24 @@ public sealed class MainMenuController : MonoBehaviour
         public Image Ledge;
     }
 
+    /// <summary>
+    /// What the lobby's one action plate does when pressed. Everyone toggles between READY UP and READY;
+    /// the host's plate becomes START once every player, the host included, is ready.
+    /// </summary>
+    enum LobbyAction { ReadyUp, Ready, Start }
+
     // lobby screen
     TextMeshProUGUI _lobbyGateLabel;
     TextMeshProUGUI _crewCountLabel;
     RectTransform _crewListRoot;
     RectTransform _playerListRoot;
     CharacterCard[] _characterCards;
-    Button _readyButton;
-    MenuButtonFx _readyFx;
-    TextMeshProUGUI _readyLabel;
-    Button _startButton;
-    GameObject _startSection;
+    Button _lobbyActionButton;
+    MenuButtonFx _lobbyActionFx;
+    LobbyAction _lobbyAction;
     /// <summary>Host-only: the level picker only feeds the host's START.</summary>
     GameObject _levelSelectSection;
-    /// <summary>The section the host deploys to; set by the top-centre level picker.</summary>
+    /// <summary>The section the host deploys to; set by the top-right level picker.</summary>
     string _selectedScene = MultiplayerSceneFlow.GameSceneName;
     Button _inviteButton;
 
@@ -199,8 +202,8 @@ public sealed class MainMenuController : MonoBehaviour
 
         _rootNavScope = new UiNavScope(_rootFader.transform, () => _playOfflineButton);
         _settingsNavScope = new UiNavScope(_settingsFader.transform, null, () => ShowScreen(MenuScreen.Root));
-        // READY UP, not a survivor plate: your own plate is not clickable, and ready is the one thing everyone does.
-        _lobbyNavScope = new UiNavScope(_lobbyFader.transform, () => _readyButton, ConfirmLeaveLobby);
+        // The action plate, not a survivor plate: your own plate is not clickable, and ready is the one thing everyone does.
+        _lobbyNavScope = new UiNavScope(_lobbyFader.transform, () => _lobbyActionButton, ConfirmLeaveLobby);
     }
 
     /// <summary>
@@ -331,20 +334,19 @@ public sealed class MainMenuController : MonoBehaviour
     // ---------------------------------------------------------------- lobby screen
 
     /// <summary>
-    /// The lobby spreads over the whole screen instead of stacking into one card: the crew roster
-    /// top-left, the level picker top-centre, the host's deploy controls bottom-right, the exit
-    /// bottom-left, and the survivor plates on the right. Nothing here sits in a panel — the middle
-    /// stays empty on purpose so the hallway, and whoever is patrolling it, remains the backdrop with
-    /// the local player's picked survivor standing in it (see <see cref="LobbyCharacterPreview"/>).
+    /// The lobby is three corner groups on one margin: the crew roster top-left, the survivor plates
+    /// and the one action plate (READY UP / READY / START) bottom-right, and the exit bottom-left. The
+    /// host's level picker sits top-right on its own, so it can be dropped without touching the rest.
+    /// Nothing here sits in a panel — the middle stays empty on purpose so the hallway, and whoever
+    /// is patrolling it, remains the backdrop with the local player's picked survivor standing in it
+    /// (see <see cref="LobbyCharacterPreview"/>).
     /// </summary>
     MenuScreenFader BuildLobbyScreen(Transform root)
     {
         RectTransform screen = CreateFullScreenRoot(root, "Screen_Lobby", out MenuScreenFader fader);
 
-        // Strip first so the edge elements draw over it if a wide screen ever brings them into contact.
-        BuildLobbySurvivorStrip(screen);
+        BuildLobbyDock(screen);
         BuildLobbyCrewPanel(screen);
-        BuildLobbyStartControls(screen);
         BuildLobbyExitControls(screen);
         BuildLevelSelect(screen);
 
@@ -362,7 +364,7 @@ public sealed class MainMenuController : MonoBehaviour
         column.anchorMin = new Vector2(0f, 1f);
         column.anchorMax = new Vector2(0f, 1f);
         column.pivot = new Vector2(0f, 1f);
-        column.anchoredPosition = new Vector2(LobbyColumnInset, -LobbyColumnInset);
+        column.anchoredPosition = new Vector2(LobbyMargin, -LobbyMargin);
         column.sizeDelta = new Vector2(LobbyColumnWidth, 100f);
         MenuWidgets.AddVertical(column.gameObject, new RectOffset(0, 0, 0, 0), 10f);
         // Pivot is the top edge, so the column grows downward as players join.
@@ -393,32 +395,54 @@ public sealed class MainMenuController : MonoBehaviour
     }
 
     /// <summary>
-    /// Host's go button, bottom-centre — between the exits bottom-left and READY UP bottom-right.
-    /// No panel around it: START is one action, and a card here would crowd the survivor strip.
+    /// Bottom-right dock: the survivor plates in one row, then the ready count and the lobby's one
+    /// action plate — pick who you play, then ready up. The dock's bottom edge is pinned to the
+    /// margin and it grows upward, so the action plate never moves.
     /// </summary>
-    void BuildLobbyStartControls(Transform screen)
+    void BuildLobbyDock(Transform screen)
     {
-        RectTransform holder = MenuWidgets.CreateRect("StartControls", screen);
-        holder.anchorMin = new Vector2(0.5f, 0f);
-        holder.anchorMax = new Vector2(0.5f, 0f);
-        holder.pivot = new Vector2(0.5f, 0f);
-        holder.anchoredPosition = new Vector2(0f, 108f);
-        holder.sizeDelta = new Vector2(320f, 104f);
-        MenuWidgets.AddVertical(holder.gameObject, new RectOffset(0, 0, 0, 0), 10f);
-        _startSection = holder.gameObject;   // host-only
+        RectTransform dock = MenuWidgets.CreateRect("Dock", screen);
+        dock.anchorMin = new Vector2(1f, 0f);
+        dock.anchorMax = new Vector2(1f, 0f);
+        dock.pivot = new Vector2(1f, 0f);
+        dock.anchoredPosition = new Vector2(-LobbyMargin, LobbyMargin);
+        dock.sizeDelta = new Vector2(LobbyDockWidth, 100f);
+        MenuWidgets.AddVertical(dock.gameObject, new RectOffset(0, 0, 0, 0), 0f);
+        var fitter = dock.gameObject.AddComponent<ContentSizeFitter>();
+        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        _lobbyGateLabel = MenuWidgets.CreateText(holder, "Gate", string.Empty,
-            14f, MenuTheme.Faint, MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 4f);
+        if (_session != null && _session.LobbyCharacterCount > 0)
+        {
+            BuildCharacterSelect(dock);
+        }
+        else
+        {
+            _playerListRoot = MenuWidgets.CreateRect("PlayerList", dock);
+            MenuWidgets.AddVertical(_playerListRoot.gameObject, new RectOffset(0, 0, 0, 0), 8f);
+        }
+
+        MenuWidgets.CreateSpacer(dock, 28f);
+
+        // Everyone sees the count, so a joiner can tell who the room is waiting on.
+        _lobbyGateLabel = MenuWidgets.CreateText(dock, "Gate", string.Empty,
+            14f, MenuTheme.Mist, MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 4f);
         MenuWidgets.SetLayout(_lobbyGateLabel, minHeight: 20f, preferredHeight: 20f);
 
-        _startButton = MenuWidgets.CreatePrimaryButton(holder, "START", OnStartClicked, 70f);
+        MenuWidgets.CreateSpacer(dock, 10f);
+
+        // Built as a Nav plate so it carries the solid plate's shadow in all three states.
+        _lobbyActionFx = MenuWidgets.CreatePlate(dock, "LobbyAction", "READY UP", OnLobbyActionClicked,
+            MenuWidgets.PlateStyle.Nav, LobbyActionHeight, 24f);
+        _lobbyActionButton = _lobbyActionFx.button;
+        ApplyLobbyAction(LobbyAction.ReadyUp);
     }
 
     /// <summary>
-    /// Which maze section the run starts on, pinned top-centre where the wordmark sits on the root
-    /// screen. Ships in release builds. Host-only: only the host has a START, and only the host's
-    /// <see cref="_selectedScene"/> is read (see <see cref="OnStartClicked"/>), so showing the picker
-    /// to a joiner would be a control that does nothing.
+    /// Which maze section the run starts on: a small LEVEL picker in the top-right corner, level with
+    /// the CREW heading. Temporary — it will not ship in the final game, so it stands alone and
+    /// nothing else is laid out around it. Host-only: only the host has a START, and only the host's
+    /// <see cref="_selectedScene"/> is read (see <see cref="StartGameFromLobby"/>), so showing the
+    /// picker to a joiner would be a control that does nothing.
     /// </summary>
     void BuildLevelSelect(Transform screen)
     {
@@ -426,24 +450,30 @@ public sealed class MainMenuController : MonoBehaviour
         if (scenes == null || scenes.Length <= 1)
             return;
 
-        RectTransform holder = MenuWidgets.CreateRect("LevelSelect", screen);
-        holder.anchorMin = new Vector2(0.5f, 1f);
-        holder.anchorMax = new Vector2(0.5f, 1f);
-        holder.pivot = new Vector2(0.5f, 1f);
-        holder.anchoredPosition = new Vector2(0f, -76f);
-        holder.sizeDelta = new Vector2(340f, 74f);
-        MenuWidgets.AddVertical(holder.gameObject, new RectOffset(0, 0, 0, 0), 8f, TextAnchor.UpperCenter);
+        const float height = 34f;
+        const float headWidth = 64f;
+        const float gap = 12f;
+        float segmentsWidth = scenes.Length * 46f + (scenes.Length - 1) * 8f;
+
+        RectTransform holder = MenuWidgets.CreateRow(screen, "LevelSelect", height, gap, TextAnchor.MiddleRight);
+        holder.anchorMin = new Vector2(1f, 1f);
+        holder.anchorMax = new Vector2(1f, 1f);
+        holder.pivot = new Vector2(1f, 1f);
+        holder.anchoredPosition = new Vector2(-LobbyMargin, -LobbyMargin);
+        holder.sizeDelta = new Vector2(headWidth + gap + segmentsWidth, height);
         _levelSelectSection = holder.gameObject;
 
-        TextMeshProUGUI head = MenuWidgets.CreateText(holder, "Head", "START LEVEL", 13f,
-            MenuTheme.WithAlpha(MenuTheme.Mist, 0.9f), MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 8f);
-        MenuWidgets.SetLayout(head, minHeight: 20f, preferredHeight: 20f);
+        TextMeshProUGUI head = MenuWidgets.CreateText(holder, "Head", "LEVEL", 13f,
+            MenuTheme.WithAlpha(MenuTheme.Mist, 0.9f), MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineRight, 8f);
+        MenuWidgets.SetLayout(head, minWidth: headWidth, preferredWidth: headWidth);
 
         var labels = new string[scenes.Length];
         for (int i = 0; i < scenes.Length; i++)
             labels[i] = (i + 1).ToString();
 
-        MenuSegmented levelSelect = MenuWidgets.CreateSegmented(holder, labels, 40f);
+        MenuSegmented levelSelect = MenuWidgets.CreateSegmented(holder, labels, height);
+        MenuWidgets.SetLayout(levelSelect, minWidth: segmentsWidth, preferredWidth: segmentsWidth,
+            minHeight: height, preferredHeight: height);
 
         int startIndex = System.Array.IndexOf(scenes, _selectedScene);
         if (startIndex < 0)
@@ -566,75 +596,18 @@ public sealed class MainMenuController : MonoBehaviour
             new MenuCrewVoiceRow(root, clientId, 20f);
     }
 
-    void BuildLobbySurvivorStrip(Transform screen)
-    {
-        RectTransform grid = MenuWidgets.CreateRect("Survivors", screen);
-        grid.anchorMin = new Vector2(1f, 0f);
-        grid.anchorMax = new Vector2(1f, 0f);
-        grid.pivot = new Vector2(1f, 0f);
-        grid.anchoredPosition = new Vector2(-SurvivorGridInsetRight, SurvivorGridBottom);
-        grid.sizeDelta = new Vector2(
-            SurvivorPlateWidth * 2f + SurvivorGridSpacingX,
-            SurvivorPlateHeight * 2f + SurvivorGridSpacingY);
-
-        if (_session != null && _session.LobbyCharacterCount > 0)
-        {
-            BuildCharacterSelect(grid);
-        }
-        else
-        {
-            _playerListRoot = MenuWidgets.CreateRect("PlayerList", grid);
-            MenuWidgets.AddVertical(_playerListRoot.gameObject, new RectOffset(0, 0, 0, 0), 8f);
-            _playerListRoot.SetStretch();
-        }
-
-        // header reads as a caption under the grid, not a title over it
-        TextMeshProUGUI head = MenuWidgets.CreateText(screen, "SurvivorsHead", "SURVIVORS", 15f,
-            MenuTheme.WithAlpha(MenuTheme.Mist, 0.85f), MenuWidgets.FontKind.Display, TextAlignmentOptions.Center, 10f);
-        RectTransform headRt = head.rectTransform;
-        headRt.anchorMin = new Vector2(1f, 0f);
-        headRt.anchorMax = new Vector2(1f, 0f);
-        headRt.pivot = new Vector2(1f, 1f);
-        headRt.anchoredPosition = new Vector2(-SurvivorGridInsetRight, SurvivorGridBottom - 12f);
-        headRt.sizeDelta = new Vector2(SurvivorPlateWidth * 2f + SurvivorGridSpacingX, 22f);
-
-        // READY UP sits bottom-right under the survivor grid rather than in a side panel — it is the
-        // one thing every player (host or not) has to press.
-        RectTransform readyHolder = MenuWidgets.CreateRect("ReadyHolder", screen);
-        readyHolder.anchorMin = new Vector2(1f, 0f);
-        readyHolder.anchorMax = new Vector2(1f, 0f);
-        readyHolder.pivot = new Vector2(1f, 0f);
-        readyHolder.anchoredPosition = new Vector2(-118f, 108f);
-        readyHolder.sizeDelta = new Vector2(460f, 70f);
-
-        _readyButton = MenuWidgets.CreateGhostButton(readyHolder, "READY UP", OnReadyClicked, false, 70f);
-        ((RectTransform)_readyButton.transform).SetStretch();
-        _readyFx = _readyButton.GetComponent<MenuButtonFx>();
-        _readyLabel = _readyButton.GetComponentInChildren<TextMeshProUGUI>();
-        if (_readyFx != null)
-        {
-            // ready reads as a locked-in moss plate, not the mustard used for selection
-            _readyFx.fillSelected = MenuTheme.Moss;
-            _readyFx.frameSelected = MenuTheme.WithAlpha(new Color(0.24f, 0.29f, 0.13f, 1f), 0.95f);
-            _readyFx.labelSelected = MenuTheme.InkOnAccent;
-        }
-    }
-
     void BuildLobbyExitControls(Transform screen)
     {
-        RectTransform holder = MenuWidgets.CreateRect("ExitControls", screen);
-        holder.anchorMin = new Vector2(0f, 0f);
-        holder.anchorMax = new Vector2(0f, 0f);
-        holder.pivot = new Vector2(0f, 0f);
-        holder.anchoredPosition = new Vector2(76f, 108f);
-        holder.sizeDelta = new Vector2(260f, 70f);
-        var layout = MenuWidgets.CreateRow(holder, "Row", 70f, 12f);
-        ((RectTransform)layout).SetStretch();
-
         // The only way out of the lobby: there is no BACK, so you cannot leave a live session
-        // running behind the root menu.
-        Button leave = MenuWidgets.CreateGhostButton(layout, "LEAVE LOBBY", ConfirmLeaveLobby, true, 56f);
-        MenuWidgets.SetLayout(leave.transform, minWidth: 260f, preferredWidth: 260f, minHeight: 56f, preferredHeight: 56f);
+        // running behind the root menu. Centred on the action plate's line so the two bottom
+        // corners share a baseline; the pivot stays centred so hover grows the plate in place.
+        Button leave = MenuWidgets.CreateGhostButton(screen, "LEAVE LOBBY", ConfirmLeaveLobby, true, LeaveHeight);
+        var leaveRt = (RectTransform)leave.transform;
+        leaveRt.anchorMin = Vector2.zero;
+        leaveRt.anchorMax = Vector2.zero;
+        leaveRt.pivot = new Vector2(0.5f, 0.5f);
+        leaveRt.anchoredPosition = new Vector2(LobbyMargin + LeaveWidth * 0.5f, LobbyMargin + LobbyActionHeight * 0.5f);
+        leaveRt.sizeDelta = new Vector2(LeaveWidth, LeaveHeight);
     }
 
     /// <summary>LEAVE LOBBY, and the lobby's back press: always through the confirm, never straight out.</summary>
@@ -653,18 +626,19 @@ public sealed class MainMenuController : MonoBehaviour
     /// One portrait plate per lobby character. Each plate doubles as the player roster: it shows
     /// who holds the character and their ready state. Exactly one player may hold each character.
     /// </summary>
-    void BuildCharacterSelect(RectTransform gridHolder)
+    void BuildCharacterSelect(RectTransform dock)
     {
-        // A GridLayoutGroup owns the cell positions, so the plates cannot drift out of alignment
-        // the way hand-placed ones do.
-        var grid = gridHolder.gameObject.AddComponent<GridLayoutGroup>();
-        grid.cellSize = new Vector2(SurvivorPlateWidth, SurvivorPlateHeight);
-        grid.spacing = new Vector2(SurvivorGridSpacingX, SurvivorGridSpacingY);
-        grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-        grid.constraintCount = 2;
-        grid.startCorner = GridLayoutGroup.Corner.UpperLeft;
-        grid.startAxis = GridLayoutGroup.Axis.Horizontal;
-        grid.childAlignment = TextAnchor.UpperLeft;
+        // One row across the dock; the layout group splits its width evenly, so the plates stay
+        // exactly aligned with the action plate's edges under them.
+        RectTransform strip = MenuWidgets.CreateRect("Survivors", dock);
+        MenuWidgets.SetLayout(strip, minHeight: SurvivorPlateHeight, preferredHeight: SurvivorPlateHeight);
+        var row = strip.gameObject.AddComponent<HorizontalLayoutGroup>();
+        row.spacing = SurvivorPlateSpacing;
+        row.childAlignment = TextAnchor.MiddleCenter;
+        row.childControlWidth = true;
+        row.childControlHeight = true;
+        row.childForceExpandWidth = true;
+        row.childForceExpandHeight = true;
 
         int count = _session.LobbyCharacterCount;
         _characterCards = new CharacterCard[count];
@@ -674,8 +648,8 @@ public sealed class MainMenuController : MonoBehaviour
             int index = i;
             MultiplayerProjectSettings.LobbyCharacter character = _session.GetLobbyCharacter(i);
 
-            // no LayoutElement: the grid drives cell size
-            RectTransform root = MenuWidgets.CreateRect("Character_" + i, gridHolder);
+            // no LayoutElement: the row drives the plate size
+            RectTransform root = MenuWidgets.CreateRect("Character_" + i, strip);
 
             RectTransform plate = MenuWidgets.CreateStretched("Plate", root);
 
@@ -855,20 +829,56 @@ public sealed class MainMenuController : MonoBehaviour
             _session.StartOnlineHost();
     }
 
-    void OnReadyClicked()
-    {
-        if (_session != null)
-            _session.SetLocalPlayerReady(!_session.IsLocalReady);
-    }
-
-    void OnStartClicked()
+    /// <summary>
+    /// Does what the plate currently says rather than re-deriving it, so a press can never do
+    /// something other than its label — e.g. un-ready the host on a START press.
+    /// </summary>
+    void OnLobbyActionClicked()
     {
         if (_session == null)
             return;
+        if (_lobbyAction == LobbyAction.Start)
+            StartGameFromLobby();
+        else
+            _session.SetLocalPlayerReady(_lobbyAction == LobbyAction.ReadyUp);
+    }
+
+    void StartGameFromLobby()
+    {
         if (_flow != null)
             _flow.RequestStartGameFromLobby(_selectedScene);
         else
             _session.StartGameFromLobby(_selectedScene);
+    }
+
+    /// <summary>
+    /// Restyles the action plate for its state: a dark plate to READY UP, locked-in moss once READY,
+    /// and the mustard primary for the host's START.
+    /// </summary>
+    void ApplyLobbyAction(LobbyAction action)
+    {
+        _lobbyAction = action;
+        if (_lobbyActionFx == null)
+            return;
+
+        bool start = action == LobbyAction.Start;
+        MenuWidgets.ApplyPlateStyle(_lobbyActionFx, start ? MenuWidgets.PlateStyle.Primary : MenuWidgets.PlateStyle.Nav);
+        // ApplyPlateStyle only ever turns the ledge on, so coming back from START has to turn it off.
+        _lobbyActionFx.ledgeAlways = start;
+
+        // Ready reads as a locked-in moss plate, not the mustard used for selection. Kept on START too:
+        // the fade out of the selected state is then a moss-to-mustard crossfade instead of a snap.
+        _lobbyActionFx.fillSelected = MenuTheme.Moss;
+        _lobbyActionFx.frameSelected = MenuTheme.WithAlpha(new Color(0.24f, 0.29f, 0.13f, 1f), 0.95f);
+        _lobbyActionFx.labelSelected = MenuTheme.InkOnAccent;
+        _lobbyActionFx.SetSelected(action == LobbyAction.Ready);
+
+        if (_lobbyActionFx.label != null)
+        {
+            _lobbyActionFx.label.text = action == LobbyAction.Start ? "START"
+                : action == LobbyAction.Ready ? "READY"
+                : "READY UP";
+        }
     }
 
     void QuitApplication()
@@ -971,35 +981,33 @@ public sealed class MainMenuController : MonoBehaviour
         }
         bool everyoneReady = _session.AreAllLobbyPlayersReady && lobbyPlayers.Count > 0;
 
-        // crew line is for everyone, not just the host, so non-hosts can still see the gate
         if (_crewCountLabel != null)
         {
-            // headcount only — the ready gate lives above START
+            // headcount only — the ready count sits over the action plate
             int slots = Mathf.Max(_session.LobbyCharacterCount, lobbyPlayers.Count);
             _crewCountLabel.text = $"{lobbyPlayers.Count}/{slots}";
             _crewCountLabel.color = MenuTheme.Mist;
         }
 
         bool isHost = _session.IsLobbyHost;
-        if (_startSection != null && _startSection.activeSelf != isHost)
-            _startSection.SetActive(isHost);
         if (_levelSelectSection != null && _levelSelectSection.activeSelf != isHost)
             _levelSelectSection.SetActive(isHost);
-        if (isHost && _startButton != null)
+
+        if (_lobbyGateLabel != null)
         {
-            _startButton.interactable = _session.CanHostStartGame;
-            if (_lobbyGateLabel != null)
-            {
-                _lobbyGateLabel.text = everyoneReady ? "ALL READY" : $"{ready}/{lobbyPlayers.Count} READY";
-                _lobbyGateLabel.color = everyoneReady ? MenuTheme.Moss : MenuTheme.Faint;
-            }
+            _lobbyGateLabel.text = everyoneReady ? "ALL READY" : $"{ready}/{lobbyPlayers.Count} READY";
+            _lobbyGateLabel.color = everyoneReady ? MenuTheme.Moss : MenuTheme.Mist;
         }
 
-        bool localReady = _session.IsLocalReady;
-        if (_readyLabel != null)
-            _readyLabel.text = localReady ? "READY" : "READY UP";
-        if (_readyFx != null)
-            _readyFx.SetSelected(localReady);
+        // The host's own ready is part of "everyone", so START only ever follows the host's READY;
+        // anyone joining or un-readying drops the host back to READY.
+        LobbyAction action = !_session.IsLocalReady ? LobbyAction.ReadyUp
+            : isHost && everyoneReady ? LobbyAction.Start
+            : LobbyAction.Ready;
+        if (action != _lobbyAction)
+            ApplyLobbyAction(action);
+        if (_lobbyActionButton != null)
+            _lobbyActionButton.interactable = !_session.IsGameStartRequested;
 
         // Kept visible but dimmed when there is nothing to invite into, so the row doesn't pop in and out.
         if (_inviteButton != null)
