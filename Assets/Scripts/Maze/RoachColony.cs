@@ -50,6 +50,7 @@ public class RoachColony : MonoBehaviour
     readonly List<DecorativeRoach> _roaches = new();
 
     Camera _viewer;
+    int _sightMask = -1;
     float _nextPoll;
     float _nextCameraCheck;
     bool _spent;
@@ -237,8 +238,23 @@ public class RoachColony : MonoBehaviour
         if (distance <= 0.05f)
             return false;
 
-        return Physics.Raycast(from, delta / distance, distance - 0.2f, surfaceMask,
+        return Physics.Raycast(from, delta / distance, distance - 0.2f, SightMask,
             QueryTriggerInteraction.Ignore);
+    }
+
+    /// <summary>
+    /// <see cref="surfaceMask"/> without the character layers. The sight line ends at the player's root, inside
+    /// their own capsule (their CharacterController on their machine, their blocking proxy on everyone else's), so
+    /// with those layers in the mask the target blocked its own sight line from almost every angle.
+    /// </summary>
+    int SightMask
+    {
+        get
+        {
+            if (_sightMask == -1)
+                _sightMask = surfaceMask & ~LayerMask.GetMask("Player", "Ignore Raycast", "Enemy", "Jailor", "Clown");
+            return _sightMask;
+        }
     }
 
     static void RefreshPlayerCache()

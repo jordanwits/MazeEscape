@@ -151,12 +151,13 @@ public class RagdollCameraCollision : MonoBehaviour
     /// Everything solid in the world, minus the dynamic characters. We deliberately keep ALL world-geometry
     /// layers (Default and any others the maze floor/walls might use) because excluding the wrong one would make
     /// every query silently miss the floor. The player's own body is filtered separately by the transform.root
-    /// check in each query, and triggers by QueryTriggerInteraction.Ignore.
+    /// check in each query, and triggers by QueryTriggerInteraction.Ignore. Ignore Raycast holds the other players'
+    /// blocking-proxy capsules; a teammate standing over a downed player must not shove their camera around.
     /// </summary>
     LayerMask BuildSolidMask()
     {
         int mask = ~0;
-        string[] excluded = { "Player", "Enemy", "Jailor", "Clown" };
+        string[] excluded = { "Player", "Enemy", "Jailor", "Clown", "Ignore Raycast" };
         foreach (string n in excluded)
         {
             int l = LayerMask.NameToLayer(n);

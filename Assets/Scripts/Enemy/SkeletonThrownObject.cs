@@ -238,8 +238,11 @@ public class SkeletonThrownObject : NetworkBehaviour
         int mask = worldMask.value;
         int playerLayer = LayerMask.NameToLayer("Player");
         int enemyLayer = LayerMask.NameToLayer("Enemy");
+        // Joined clients' blocking-proxy capsules: a spared player must not stop the skull like a wall.
+        int ignoreRaycastLayer = LayerMask.NameToLayer("Ignore Raycast");
         if (playerLayer >= 0) mask &= ~(1 << playerLayer);
         if (enemyLayer >= 0) mask &= ~(1 << enemyLayer);
+        if (ignoreRaycastLayer >= 0) mask &= ~(1 << ignoreRaycastLayer);
         return mask;
     }
 

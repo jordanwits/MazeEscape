@@ -89,6 +89,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
     float _standingCapsuleHeight;
     Vector3 _standingCapsuleCenter;
     bool _blockingProxyCrouched;
+    bool _blockingProxyBodyDown;
+    PlayerRagdollController _ragdollController;
     float _smoothedLookPitchDegrees;
     bool _hasSmoothedLookPitch;
     bool _warnedParentedWorldScaleRepair;
@@ -243,6 +245,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             avatarRenderers = GetComponentsInChildren<Renderer>(true);
         if (playerInventory == null)
             playerInventory = GetComponent<NetworkPlayerInventory>();
+        _ragdollController = GetComponent<PlayerRagdollController>();
 
         if (characterController != null)
         {
@@ -358,6 +361,8 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         UpdateRemoteFlashlightProxy();
 
         UpdateRemoteBlockingProxyCrouchFit();
+
+        UpdateRemoteBlockingProxyBodyDown();
 
         EnforceUnitWorldScale();
 
@@ -551,6 +556,13 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
     const string BlockingProxyObjectName = "NetworkPlayerBlockingProxy";
 
+    /// <summary>
+    /// True for the blocking proxy capsule's own GameObject. It carries a Rigidbody, so anything that gathers a
+    /// player's child bodies (the ragdoll bone cache) has to skip it.
+    /// </summary>
+    public static bool IsBlockingProxy(GameObject candidate) =>
+        candidate != null && candidate.name == BlockingProxyObjectName;
+
     void EnsureRemoteBlockingProxyObject()
     {
         if (characterController == null)
@@ -564,6 +576,7 @@ public class NetworkPlayerAvatar : NetworkBehaviour
             _blockingProxyRoot = existing;
             if (ignoreRaycastLayer >= 0)
                 existing.gameObject.layer = ignoreRaycastLayer;
+            ConfigureBlockingProxyContacts(existing.GetComponent<CapsuleCollider>());
             SyncBlockingProxyCapsuleToCharacterController();
             SetBlockingProxyActive(false);
             return;
@@ -584,12 +597,26 @@ public class NetworkPlayerAvatar : NetworkBehaviour
 
         CapsuleCollider capsule = proxyObject.AddComponent<CapsuleCollider>();
         capsule.isTrigger = false;
+        ConfigureBlockingProxyContacts(capsule);
 
         if (ignoreRaycastLayer >= 0)
             proxyObject.layer = ignoreRaycastLayer;
 
         SyncBlockingProxyCapsuleToCharacterController();
         SetBlockingProxyActive(false);
+    }
+
+    /// <summary>
+    /// The proxy contacts only the player layer: the other players' CharacterControllers it exists for (and their
+    /// ragdoll bones). Trigger volumes, enemy controllers and thrown props ignore it, as they did during the months
+    /// the ragdoll bone cache kept its collider switched off, so turning it back on changes player-vs-player
+    /// blocking and nothing else. Physics queries ignore layer overrides; the Ignore Raycast layer keeps it out of
+    /// those.
+    /// </summary>
+    void ConfigureBlockingProxyContacts(CapsuleCollider capsule)
+    {
+        if (capsule != null)
+            capsule.excludeLayers = ~(1 << gameObject.layer);
     }
 
     void SyncBlockingProxyCapsuleToCharacterController()
@@ -652,8 +679,38 @@ public class NetworkPlayerAvatar : NetworkBehaviour
         SyncBlockingProxyCapsuleToCharacterController();
 
         bool useProxy = _isAlive && inNetSession && !isLocalOwner && !jailorCarried
-                        && !_blockingProxySuppressedForRagdoll;
+                        && !_blockingProxySuppressedForRagdoll
+                        && !IsBodyDownOnThisPeer();
         SetBlockingProxyActive(useProxy);
+    }
+
+    /// <summary>
+    /// Ragdolled, held by an enemy or getting up on this peer. The owner's CharacterController is off for all of
+    /// that, so the capsule standing in for it is off too; otherwise an invisible upright capsule stays where the
+    /// player went down until they are back on their feet.
+    /// </summary>
+    bool IsBodyDownOnThisPeer() =>
+        _ragdollController != null
+        && (_ragdollController.IsRagdolled || _ragdollController.IsHeld || _ragdollController.IsGettingUp);
+
+    /// <summary>
+    /// The ragdoll states flip inside <see cref="PlayerRagdollController"/> with no callback here, so a remote
+    /// copy polls them and re-evaluates the proxy only when the answer changes.
+    /// </summary>
+    void UpdateRemoteBlockingProxyBodyDown()
+    {
+        if (_blockingProxyRoot == null || !IsSpawned || IsOwner || _isDormant)
+            return;
+
+        bool bodyDown = IsBodyDownOnThisPeer();
+        if (bodyDown == _blockingProxyBodyDown)
+            return;
+
+        _blockingProxyBodyDown = bodyDown;
+
+        NetworkManager nm = _networkManager != null ? _networkManager : NetworkManager.Singleton;
+        bool inNetSession = nm != null && nm.IsListening;
+        UpdateRemoteBlockingProxyEnabled(inNetSession, IsOwner, IsCarriedByJailor);
     }
 
     bool _blockingProxySuppressedForRagdoll;

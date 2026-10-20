@@ -211,6 +211,11 @@ public class PlayerRagdollController : MonoBehaviour
             Rigidbody rb = bodies[i];
             if (rb == null || rb.gameObject == gameObject)
                 continue;
+            // NetworkPlayerAvatar's blocking proxy (the capsule other players bump into) has a Rigidbody too, and its
+            // Awake runs first. Cached as a bone, its collider was switched off with the bones, so remote players
+            // were never solid.
+            if (NetworkPlayerAvatar.IsBlockingProxy(rb.gameObject))
+                continue;
 
             _ragdollBodies.Add(rb);
             Collider[] cols = rb.GetComponents<Collider>();
@@ -907,7 +912,8 @@ public class PlayerRagdollController : MonoBehaviour
     /// <see cref="groundLayers"/> minus every character layer, for the stand-up snaps. They look for the floor under
     /// the body, and an enemy or another player standing over the victim is not somewhere to stand up on: the get-up
     /// planted a victim on top of the Mutant's capsule, and from that height the next ray began above the corridor's
-    /// ceiling slab and put them on the roof of the maze.
+    /// ceiling slab and put them on the roof of the maze. Ignore Raycast is where other players' blocking-proxy
+    /// capsules live, so it goes too.
     /// </summary>
     int GroundSnapMask
     {
@@ -917,7 +923,7 @@ public class PlayerRagdollController : MonoBehaviour
                 return _groundSnapMask;
 
             int mask = groundLayers.value;
-            foreach (string layer in new[] { "Player", "Enemy", "Jailor", "Clown" })
+            foreach (string layer in new[] { "Player", "Enemy", "Jailor", "Clown", "Ignore Raycast" })
             {
                 int index = LayerMask.NameToLayer(layer);
                 if (index >= 0)

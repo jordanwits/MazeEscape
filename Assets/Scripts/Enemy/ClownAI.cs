@@ -2410,8 +2410,11 @@ public class ClownAI : MonoBehaviour, IBlindableEnemy, ILurableEnemy
         else
             intendedDir.Normalize();
 
-        // Everything except actors blocks (auto) unless an explicit mask is set.
-        int mask = knockbackObstacleMask.value != 0 ? knockbackObstacleMask.value : ~_wallSlideIgnoreLayers;
+        // Everything except actors blocks (auto) unless an explicit mask is set. Ignore Raycast is excluded too: joined
+        // clients' blocking-proxy capsules sit there, and a teammate fleeing ahead is not a wall.
+        int mask = knockbackObstacleMask.value != 0
+            ? knockbackObstacleMask.value
+            : ~(_wallSlideIgnoreLayers | (1 << LayerMask.NameToLayer("Ignore Raycast")));
         Vector3 origin = new Vector3(hitPoint.x, hitPoint.y + knockbackProbeHeight, hitPoint.z);
 
         // If the intended direction is already open, keep it (open room / aligned hallway).
