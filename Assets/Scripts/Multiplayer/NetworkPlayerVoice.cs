@@ -26,9 +26,6 @@ public class NetworkPlayerVoice : NetworkBehaviour
     /// capture driver at that moment (up to 160 ms on the USB headset measured here) and was otherwise never sent.
     /// </summary>
     const float PushToTalkReleaseTailSeconds = 0.2f;
-    /// <summary>Open-mic voice gate hangover in whole frames (<see cref="ProximityVoiceSession.VoiceActivationHangoverSeconds"/>).</summary>
-    static readonly int VoiceGateHangoverFrames =
-        Mathf.RoundToInt(ProximityVoiceSession.VoiceActivationHangoverSeconds * SampleRate / FrameSamples);
 
     [Header("3D (others hear you here)")]
     [Tooltip("If null, resolved to CameraPitch or player camera.")]
@@ -55,12 +52,6 @@ public class NetworkPlayerVoice : NetworkBehaviour
     float[] _wrap1;
     float[] _wrap2;
     ushort _sendSequence;
-
-    /// <summary>Frames the open-mic gate still sends after the last loud one (counts down in audio time, not wall time).</summary>
-    int _voiceGateFramesLeft;
-    /// <summary>The last frame the closed gate held back, sent first when speech starts so the onset isn't clipped.</summary>
-    readonly short[] _voicePreRoll = new short[FrameSamples];
-    bool _hasVoicePreRoll;
 
     /// <summary>Receive side: newest frame sequence accepted from this speaker, and when (see <see cref="EnqueuePcm16Frame"/>).</summary>
     ushort _lastReceivedSequence;
@@ -301,9 +292,6 @@ public class NetworkPlayerVoice : NetworkBehaviour
         {
             _micReadPosition = w;
             _micReadCursorStale = false;
-            // Whatever the voice gate held or was counting down belongs to audio from before the pause.
-            _hasVoicePreRoll = false;
-            _voiceGateFramesLeft = 0;
         }
         _lastMicPullRealtime = now;
 
@@ -352,45 +340,12 @@ public class NetworkPlayerVoice : NetworkBehaviour
             _micSendScratch[i] = (short)(f * 32767f);
         }
 
-        if (VoiceUserSettings.IsOpenMic && !PassOpenMicVoiceGate())
-            return;
-
+        // Open mic streams every frame, silence included (raw 16 kHz PCM, about 32 KB/s per speaker, relayed by the
+        // host to every other player). A sender-side voice gate was tried and cut quiet syllables and word tails,
+        // which listeners heard as choppy speech. The AI still only reacts to speech-loud frames (see
+        // ProximityVoiceSession.IsSpeech).
         _sendSequence++;
         ProximityVoiceSession.SendVoiceFrameUp(_sendSequence, _micSendScratch, FrameSamples);
-    }
-
-    /// <summary>
-    /// Open mic used to stream every frame, silence included: raw 16 kHz PCM, about 32 KB/s per speaker, which the
-    /// host relays to every other player (about 2.3 Mbit/s of upload at four players with nobody talking). Now a
-    /// frame goes out only while it is speech-loud (<see cref="ProximityVoiceSession.VoiceActivationRmsThreshold"/>)
-    /// or within the hangover after the last loud one. The frame just before an onset is held back and sent first,
-    /// so the start of a word isn't clipped. Push-to-talk is not gated: holding the key already says "send".
-    /// Also resets the receiver's playback latency at every pause (its queue drains while nothing arrives).
-    /// </summary>
-    bool PassOpenMicVoiceGate()
-    {
-        if (ProximityVoiceSession.FrameRms(_micSendScratch, FrameSamples) >= ProximityVoiceSession.VoiceActivationRmsThreshold)
-        {
-            _voiceGateFramesLeft = VoiceGateHangoverFrames;
-        }
-        else if (_voiceGateFramesLeft > 0)
-        {
-            _voiceGateFramesLeft--;
-        }
-        else
-        {
-            System.Array.Copy(_micSendScratch, _voicePreRoll, FrameSamples);
-            _hasVoicePreRoll = true;
-            return false;
-        }
-
-        if (_hasVoicePreRoll)
-        {
-            _hasVoicePreRoll = false;
-            _sendSequence++;
-            ProximityVoiceSession.SendVoiceFrameUp(_sendSequence, _voicePreRoll, FrameSamples);
-        }
-        return true;
     }
 
     public void EnqueuePcm16Frame(ushort frameSeq, short[] frame, int count)
@@ -399,7 +354,7 @@ public class NetworkPlayerVoice : NetworkBehaviour
             return;
 
         // Frames ride unreliable delivery, so one can arrive behind a newer one (or twice); playing it then would
-        // put that audio out of order. A pause longer than a second (voice gate, push-to-talk, ghost filtering)
+        // put that audio out of order. A pause longer than a second (push-to-talk, ghost filtering)
         // starts a fresh window, so a sequence counter that moved on a long way meanwhile is never mistaken for old.
         float now = Time.unscaledTime;
         if (now - _lastReceivedRealtime < 1f && unchecked((short)(frameSeq - _lastReceivedSequence)) <= 0)
@@ -435,9 +390,9 @@ public class NetworkPlayerVoice : NetworkBehaviour
         const int TrimAboveSamples = SampleRate * 400 / 1000;
         const int TrimToSamples = SampleRate * 200 / 1000;
         /// <summary>
-        /// Once the queue runs dry, silence is held until this much has arrived again. The open-mic voice gate stops
-        /// the stream between utterances, so every utterance starts on an empty queue; without a cushion the first
-        /// frame that lands a little late (network jitter, a capture burst) played as a gap mid-word.
+        /// Once the queue runs dry, silence is held until this much has arrived again. Push-to-talk stops the stream
+        /// between presses, and any stall empties the queue; without a cushion the first frame that lands a little
+        /// late (network jitter, a capture burst) played as a gap mid-word.
         /// </summary>
         const int PrefillSamples = SampleRate * 80 / 1000;
 
