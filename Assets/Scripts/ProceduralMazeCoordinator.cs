@@ -4006,12 +4006,15 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             return;
 
         // Rebuild the flat candidate list in the exact layout the spawn loops below index into:
-        // [zombies][hunters][skeletons][monkeys].
+        // [zombies][hunters][skeletons][monkeys]. Each slot draws from what the previous ones left, in the
+        // shuffled order; a slot with a spacing rule skips cells too close to its own earlier picks. With no
+        // rule this is exactly "the next N cells", so levels that don't set one are unchanged.
+        List<Vector2Int> otherPool = new(otherCells);
         candidates = new List<Vector2Int>(totalSpawns);
-        candidates.AddRange(otherCells.GetRange(0, zombiesToSpawn));
+        candidates.AddRange(TakeSpacedCells(otherPool, zombiesToSpawn, _config.MazeEnemyMinCellsApart));
         candidates.AddRange(hunterCells);
-        candidates.AddRange(otherCells.GetRange(zombiesToSpawn, skeletonsToSpawn));
-        candidates.AddRange(otherCells.GetRange(zombiesToSpawn + skeletonsToSpawn, monkeysToSpawn));
+        candidates.AddRange(TakeSpacedCells(otherPool, skeletonsToSpawn, _config.MazeSkeletonMinCellsApart));
+        candidates.AddRange(TakeSpacedCells(otherPool, monkeysToSpawn, _config.MazeWindupMonkeyMinCellsApart));
 
         if (wantZombies)
         {
@@ -5578,6 +5581,45 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         Vector3 bottom = floorPos + Vector3.up * (r + 0.06f);
         Vector3 top = floorPos + Vector3.up * (h - r);
         return !Physics.CheckCapsule(bottom, top, r, Physics.AllLayers, QueryTriggerInteraction.Ignore);
+    }
+
+    /// <summary>
+    /// Removes and returns <paramref name="count"/> cells from <paramref name="pool"/>, walking it in order and
+    /// keeping every pick at least <paramref name="minCellsApart"/> (Manhattan, in cells) from the others. When the
+    /// pool runs out of cells that far apart, the rule relaxes one cell at a time so the count is still met.
+    /// </summary>
+    static List<Vector2Int> TakeSpacedCells(List<Vector2Int> pool, int count, int minCellsApart)
+    {
+        List<Vector2Int> picked = new(count);
+        for (int apart = Mathf.Max(0, minCellsApart); picked.Count < count && pool.Count > 0; apart--)
+        {
+            for (int i = 0; i < pool.Count && picked.Count < count; i++)
+            {
+                Vector2Int cell = pool[i];
+                bool farEnough = true;
+                for (int p = 0; p < picked.Count && apart > 0; p++)
+                {
+                    Vector2Int other = picked[p];
+                    if (Mathf.Abs(cell.x - other.x) + Mathf.Abs(cell.y - other.y) < apart)
+                    {
+                        farEnough = false;
+                        break;
+                    }
+                }
+
+                if (!farEnough)
+                    continue;
+
+                picked.Add(cell);
+                pool.RemoveAt(i);
+                i--;
+            }
+
+            if (apart <= 0)
+                break;
+        }
+
+        return picked;
     }
 
     float ResolveMazeEnemyMinSeparationXZ(float cellSize)

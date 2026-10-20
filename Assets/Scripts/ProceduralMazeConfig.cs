@@ -24,6 +24,10 @@ public class MazeEnemySpawn
     public GameObject enemyPrefab;
     [Tooltip("How many of this enemy to spawn. Ignored while Enemy Prefab is empty.")]
     public int enemyCount;
+    [Tooltip("Minimum grid distance (cells, counted along rows + columns, walls ignored) between two enemies "
+        + "of THIS slot. Falls back to closer cells only when the maze has too few spread-out cells to fit "
+        + "the count. 0 = no spacing rule. Ignored for Enemy 2, which already takes the farthest cells.")]
+    public int minCellsApart;
 }
 
 [CreateAssetMenu(menuName = "Maze Escape/Procedural Maze Config", fileName = "ProceduralMazeConfig")]
@@ -360,6 +364,7 @@ public class ProceduralMazeConfig : ScriptableObject
     // slot 2 is the far-reserved chaser, slot 3 the skeletons, etc.); the inspector labels stay generic.
     public GameObject MazeEnemyPrefab => enemy1 != null ? enemy1.enemyPrefab : null;
     public int MazeEnemyCount => enemy1 != null ? Mathf.Max(0, enemy1.enemyCount) : 0;
+    public int MazeEnemyMinCellsApart => enemy1 != null ? Mathf.Max(0, enemy1.minCellsApart) : 0;
     public float MazeEnemySpawnHeight => mazeEnemySpawnHeight;
     public int MazeEnemyMinCellsFromStart => Mathf.Max(0, mazeEnemyMinCellsFromStart);
     public bool MazeEnemyExcludeExitCell => mazeEnemyExcludeExitCell;
@@ -371,9 +376,11 @@ public class ProceduralMazeConfig : ScriptableObject
         Mathf.Max(MazeEnemyMinCellsFromStart, enemy2MinCellsFromStart);
     public GameObject MazeSkeletonPrefab => enemy3 != null ? enemy3.enemyPrefab : null;
     public int MazeSkeletonCount => enemy3 != null ? Mathf.Max(0, enemy3.enemyCount) : 0;
+    public int MazeSkeletonMinCellsApart => enemy3 != null ? Mathf.Max(0, enemy3.minCellsApart) : 0;
 
     public GameObject MazeWindupMonkeyPrefab => enemy4 != null ? enemy4.enemyPrefab : null;
     public int MazeWindupMonkeyCount => enemy4 != null ? Mathf.Max(0, enemy4.enemyCount) : 0;
+    public int MazeWindupMonkeyMinCellsApart => enemy4 != null ? Mathf.Max(0, enemy4.minCellsApart) : 0;
     public bool AssignJailorCarryDestinationAfterSpawn => assignJailorCarryDestinationAfterSpawn;
     public bool PreferJailorCarryAnchorFromMazePrefab => preferJailorCarryAnchorFromMazePrefab;
     public string JailorCarryAnchorTransformName =>
