@@ -5290,6 +5290,54 @@ BoxCollider:
   serializedVersion: 3
   m_Size: {x: 1, y: 1, z: 1}
   m_Center: {x: 0, y: 0, z: 0}
+--- !u!1 &5091997775491088621
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8524191607488178330}
+  - component: {fileID: 921697247164829983}
+  m_Layer: 0
+  m_Name: BandageSpawn
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8524191607488178330
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5091997775491088621}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 1.5941, y: 1.2913, z: -5.3914}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4088096331358033471}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &921697247164829983
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5091997775491088621}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3d346d94fc05a3244927fbb02b6aa439, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MazeItemSpawnPoint
+  itemPrefab: {fileID: 6200471747207828773, guid: 88fbd24a3c94b7449bae2b07282b95c4, type: 3}
+  spawnChance: 0.5
+  standUprightOnMarker: 1
+  uprightRotationOffset: {x: -90, y: 0, z: 0}
 --- !u!1 &5155719615682498765
 GameObject:
   m_ObjectHideFlags: 0
@@ -8692,6 +8740,8 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 8524191607488178330}
+  - {fileID: 6439007570888219200}
   - {fileID: 5620839274709551924}
   - {fileID: 4756658248244373588}
   - {fileID: 7301766536347348695}
@@ -9582,6 +9632,54 @@ Transform:
   - {fileID: 973635578593769977}
   m_Father: {fileID: 5620839274709551924}
   m_LocalEulerAnglesHint: {x: 0, y: 2.472, z: 0}
+--- !u!1 &9139746084782771496
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6439007570888219200}
+  - component: {fileID: 8177903635840029901}
+  m_Layer: 0
+  m_Name: FlareAmmoSpawn
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6439007570888219200
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9139746084782771496}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -4.942, y: 2.1563, z: 4.147}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4088096331358033471}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &8177903635840029901
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9139746084782771496}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3d346d94fc05a3244927fbb02b6aa439, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MazeItemSpawnPoint
+  itemPrefab: {fileID: 8486127490677680942, guid: 67bf06df404bf0c4cba9e9bb1c8f7f06, type: 3}
+  spawnChance: 0.7
+  standUprightOnMarker: 1
+  uprightRotationOffset: {x: 0, y: 0, z: 0}
 --- !u!1 &9181100743162956433
 GameObject:
   m_ObjectHideFlags: 0
@@ -10046,11 +10144,42 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    m_RemovedComponents: []
+    m_RemovedComponents:
+    - {fileID: 350624755816252481, guid: df5f74d542da77f46b448ff86a251662, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 8080791612385640318, guid: df5f74d542da77f46b448ff86a251662, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 7087719299402118444}
   m_SourcePrefab: {fileID: 100100000, guid: df5f74d542da77f46b448ff86a251662, type: 3}
+--- !u!1 &7413283344027170945 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 8080791612385640318, guid: df5f74d542da77f46b448ff86a251662, type: 3}
+  m_PrefabInstance: {fileID: 1640991163370211327}
+  m_PrefabAsset: {fileID: 0}
+--- !u!64 &7087719299402118444
+MeshCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7413283344027170945}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 5
+  m_Convex: 0
+  m_CookingOptions: 30
+  m_Mesh: {fileID: -6165085207186274666, guid: e3432be1e4fca6b4e96ef725ef793fb9, type: 3}
 --- !u!4 &7902292598532825659 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 8894448206046553540, guid: df5f74d542da77f46b448ff86a251662, type: 3}
