@@ -185,6 +185,33 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] AudioClip swordSwooshClip;
     [Tooltip("Optional blade impact sound. Falls back to the punch impact clips when empty.")]
     [SerializeField] AudioClip swordHitClip;
+
+    [Header("Crowbar Melee")]
+    [Tooltip("Reach of a crowbar swing. A little short of the sword: the bar is shorter than the blade.")]
+    [SerializeField] float crowbarMeleeRange = 2.8f;
+    [Tooltip("Half-angle of the crowbar's damage cone. An overhead strike comes down on what is in front of "
+        + "you, so it is narrower than the sword's sideways sweep.")]
+    [SerializeField] float crowbarMeleeAngle = 70f;
+    [Tooltip("Crowbar damage as a fraction of the target's max health — a step above the sword's 0.6. "
+        + "0.65 keeps every two-hit (zombie, skeleton) and four-hit (security guard) kill the sword has; from "
+        + "0.67 up the guard drops in three, which is the line between 'slightly better' and a new tier.")]
+    [SerializeField, Range(0.05f, 1f)] float crowbarDamageFraction = 0.65f;
+    [Tooltip("Playback speed of the crowbar swing. Drives the animator (CrowbarSwingSpeed) AND the derived "
+        + "hit delay, so they cannot drift apart. Slower than the sword: the overhead wind-up is the price of the "
+        + "harder hit.")]
+    [SerializeField, Range(0.5f, 3f)] float crowbarSwingAnimSpeed = 1.4f;
+    [Tooltip("Cooldown between crowbar swings. Must cover the committed part of the swing at the speed above.")]
+    [SerializeField] float crowbarCooldown = 0.9f;
+    [Tooltip("Stamina spent on a crowbar swing.")]
+    [SerializeField] float crowbarStaminaCost = 14f;
+    [Tooltip("Optional swing whoosh for the crowbar. Falls back to the sword's, then the shared melee swoosh.")]
+    [SerializeField] AudioClip crowbarSwooshClip;
+    [Tooltip("Metallic impact played when the crowbar connects with an enemy. Falls back to the punch impact "
+        + "clips when empty.")]
+    [SerializeField] AudioClip crowbarHitClip;
+    [Tooltip("Volume of the crowbar impact. Its own knob rather than the punch's: the metal clip is mastered about "
+        + "5 dB quieter than the punch clips, so at the punch volume a crowbar hit sounded weaker than a fist.")]
+    [SerializeField, Range(0f, 1f)] float crowbarHitVolume = 0.18f;
     [Tooltip("Universal 'you got hit' thud played to THIS player on any damage (zombie, skeleton, clown, traps). Name kept for prefab serialization; used by the hurt-feedback partial.")]
     [SerializeField] AudioClip zombieHitClip;
     [SerializeField, Range(0f, 1f)] float zombieHitVolume = 0.75f;
@@ -541,6 +568,7 @@ public partial class PlayerController : MonoBehaviour
         // Every peer, not just the owner: this is a constant read off the shared prefab, and a non-owner has
         // to play the swing at the same pace or its whoosh and the replicated hit stop lining up.
         PushSwordSwingSpeedToAnimator();
+        PushCrowbarSwingSpeedToAnimator();
 
         if (facingTransform == null)
         {
@@ -3112,7 +3140,7 @@ public partial class PlayerController : MonoBehaviour
     }
 
     /// <summary>
-    /// One melee attack. Which weapon it is — bare fists or the selected sword — only changes the numbers
+    /// One melee attack. Which weapon it is — bare fists, the sword or the crowbar — only changes the numbers
     /// and the animator trigger; the authority path below is identical either way.
     /// </summary>
     void TryMelee()
@@ -3133,9 +3161,9 @@ public partial class PlayerController : MonoBehaviour
             animator.SetTrigger(trigger);
 
         // The punch's whoosh fires now, at the top of the animation, which is where its short jab lands. The
-        // sword's comes from an animation event partway into the swing instead (see OnSwordSwingWhoosh) —
-        // playing it here would put the sound at the start of the wind-up, a third of a second early.
-        if (!IsSwordSelected)
+        // weapons' come from an animation event partway into the swing instead (OnSwordSwingWhoosh /
+        // OnCrowbarSwingWhoosh) — playing it here would put the sound at the start of the wind-up.
+        if (!IsMeleeWeaponSelected)
             PlayMeleeSwooshSfx();
 
         StartCoroutine(ApplyMeleeDamageAfterDelay(ActiveMeleeHitDelay));
@@ -3172,7 +3200,7 @@ public partial class PlayerController : MonoBehaviour
 
     public void ApplyServerAuthoritativeMeleeDamage()
     {
-        bool sword = IsSwordSelected;
+        byte weapon = SelectedMeleeWeaponTypeId;
         bool hit = ApplyMeleeDamageLocally();
         if (!hit)
             return;
@@ -3183,8 +3211,10 @@ public partial class PlayerController : MonoBehaviour
             // not a generic weapon thud. Keep this order in step with PlayMeleeImpactSfxForThisSwing.
             if (_meleeHitSkeletonThisSwing)
                 _networkPlayerCombat.NotifyObserversSkeletonHit();
-            else if (sword)
+            else if (weapon == GrabbableInventoryItem.TypeIdSword)
                 _networkPlayerCombat.NotifyObserversSwordHit();
+            else if (weapon == GrabbableInventoryItem.TypeIdCrowbar)
+                _networkPlayerCombat.NotifyObserversCrowbarHit();
             else
                 _networkPlayerCombat.NotifyObserversMeleeHit(PickRandomMeleeHitClipIndex());
         }
@@ -3205,6 +3235,8 @@ public partial class PlayerController : MonoBehaviour
             PlaySkeletonHitSfx();
         else if (IsSwordSelected)
             PlaySwordHitSfx();
+        else if (IsCrowbarSelected)
+            PlayCrowbarHitSfx();
         else
             PlayMeleeHitSfx();
     }
@@ -3311,7 +3343,7 @@ public partial class PlayerController : MonoBehaviour
         Vector3 forward = transform.forward;
 
         // Weapon profile is sampled once per swing so a mid-swing slot change cannot split the test between
-        // a punch's reach and a sword's damage.
+        // a punch's reach and a weapon's damage.
         float range = ActiveMeleeRange;
         float coneAngle = ActiveMeleeAngle;
         float damageFraction = ActiveMeleeDamageFraction;

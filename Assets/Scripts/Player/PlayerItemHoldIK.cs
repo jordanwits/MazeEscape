@@ -51,6 +51,8 @@ public class PlayerItemHoldIK : MonoBehaviour
     [Tooltip("The sword swing lives on its own upper-body-masked layer, so it needs its own gate entry.")]
     [SerializeField] string swordLayerName = "Sword Swing";
     [SerializeField] string swordStateName = "SwordSwing";
+    [Tooltip("The crowbar swing is a second state on the sword's layer and needs the same gate.")]
+    [SerializeField] string crowbarStateName = "CrowbarSwing";
 
     static readonly int HoldPoseHash = Animator.StringToHash("HoldPose");
     static readonly int SeatedHash = Animator.StringToHash("Seated");
@@ -342,12 +344,14 @@ public class PlayerItemHoldIK : MonoBehaviour
     }
 
     /// <summary>
-    /// Same gate as the punch, on the sword's own layer. Humanoid IK applies after every layer, so an
-    /// un-gated hold would drag the swinging fist back onto the blade's rest position mid-swing.
+    /// Same gate as the punch, on the sword's own layer (which also carries the crowbar swing). Humanoid IK
+    /// applies after every layer, so an un-gated hold would drag the swinging fist back onto the weapon's rest
+    /// position mid-swing.
     /// </summary>
     bool IsPlayingSwordSwingState()
     {
-        return IsPlayingStateOnLayer(ResolveSwordLayerIndex(), swordStateName);
+        int layer = ResolveSwordLayerIndex();
+        return IsPlayingStateOnLayer(layer, swordStateName) || IsPlayingStateOnLayer(layer, crowbarStateName);
     }
 
     bool IsPlayingStateOnLayer(int layer, string stateName)

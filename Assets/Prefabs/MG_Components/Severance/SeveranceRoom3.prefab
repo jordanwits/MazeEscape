@@ -8466,6 +8466,54 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
+--- !u!1 &8089680896008044952
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1918582431841401510}
+  - component: {fileID: 5778109595593420172}
+  m_Layer: 0
+  m_Name: CrowbarSpawn
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1918582431841401510
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8089680896008044952}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0.62932044, z: 0, w: 0.777146}
+  m_LocalPosition: {x: 3, y: 1.728, z: -3.55}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4088096331358033471}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &5778109595593420172
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8089680896008044952}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3d346d94fc05a3244927fbb02b6aa439, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MazeItemSpawnPoint
+  itemPrefab: {fileID: 3456975151097640183, guid: 7d564212109c31248b7308703773b896, type: 3}
+  spawnChance: 1
+  standUprightOnMarker: 1
+  uprightRotationOffset: {x: 90, y: 0, z: 0}
 --- !u!1 &8133870918700312104
 GameObject:
   m_ObjectHideFlags: 0
@@ -8649,6 +8697,7 @@ Transform:
   - {fileID: 7301766536347348695}
   - {fileID: 1945433706680908018}
   - {fileID: 3500432392901370578}
+  - {fileID: 1918582431841401510}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &1606531658726212124

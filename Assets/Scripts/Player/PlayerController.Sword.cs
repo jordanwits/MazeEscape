@@ -47,61 +47,112 @@ public partial class PlayerController
     }
 
     /// <summary>
-    /// True when the attacking player has a sword in the selected slot. Deliberately answered from the
-    /// replicated slot type rather than the item object, so it gives the same answer on the server (which
-    /// adjudicates the hit for a remote attacker) as it does on the owner.
+    /// Type id of the melee weapon in the selected slot — <see cref="GrabbableInventoryItem.TypeIdSword"/>,
+    /// <see cref="GrabbableInventoryItem.TypeIdCrowbar"/>, or <see cref="GrabbableInventoryItem.TypeIdNone"/> for
+    /// bare fists (anything else in hand still punches). Deliberately answered from the replicated slot type
+    /// rather than the item object, so it gives the same answer on the server (which adjudicates the hit for a
+    /// remote attacker) as it does on the owner.
     /// </summary>
-    public bool IsSwordSelected
+    public byte SelectedMeleeWeaponTypeId
     {
         get
         {
+            byte typeId = GrabbableInventoryItem.TypeIdNone;
             if (IsUsingNetworkedInventory)
             {
                 if (_networkPlayerInventory == null)
-                    return false;
+                    return GrabbableInventoryItem.TypeIdNone;
                 int selected = _networkPlayerInventory.SelectedSlotIndex;
                 if (selected < 0 || selected >= InventorySlotCapacity)
-                    return false;
+                    return GrabbableInventoryItem.TypeIdNone;
                 if (IsHeavyThrowableForcingInventoryStash(
                         SelfNetworkObject != null ? SelfNetworkObject.NetworkObjectId : 0UL))
                 {
-                    return false;   // hotbar is pocketed while carrying a heavy throwable
+                    return GrabbableInventoryItem.TypeIdNone;   // hotbar is pocketed while carrying a heavy throwable
                 }
 
-                return _networkPlayerInventory.GetSlotItemTypeId(selected) == GrabbableInventoryItem.TypeIdSword;
+                typeId = _networkPlayerInventory.GetSlotItemTypeId(selected);
+            }
+            else
+            {
+                if (NetworkHeavyThrowableHold.FindOfflineHeldBy(this) != null)
+                    return GrabbableInventoryItem.TypeIdNone;
+
+                if (_localSelectedSlot < 0 || _localSelectedSlot >= InventorySlotCapacity)
+                    return GrabbableInventoryItem.TypeIdNone;
+
+                GrabbableInventoryItem item = _localInventorySlots[_localSelectedSlot];
+                typeId = item != null ? item.ItemTypeId : GrabbableInventoryItem.TypeIdNone;
             }
 
-            if (NetworkHeavyThrowableHold.FindOfflineHeldBy(this) != null)
-                return false;
-
-            return _localSelectedSlot >= 0 && _localSelectedSlot < InventorySlotCapacity
-                && _localInventorySlots[_localSelectedSlot] is SwordItem;
+            return typeId == GrabbableInventoryItem.TypeIdSword || typeId == GrabbableInventoryItem.TypeIdCrowbar
+                ? typeId
+                : GrabbableInventoryItem.TypeIdNone;
         }
     }
 
-    /// <summary>Reach of the current melee: the sword's longer arc, or the bare-handed punch.</summary>
-    float ActiveMeleeRange => IsSwordSelected ? swordMeleeRange : meleeRange;
+    /// <summary>True when the attacking player has a sword in the selected slot. See <see cref="SelectedMeleeWeaponTypeId"/>.</summary>
+    public bool IsSwordSelected => SelectedMeleeWeaponTypeId == GrabbableInventoryItem.TypeIdSword;
+
+    /// <summary>True when a swung weapon (sword or crowbar) replaces the punch, i.e. the swing is not bare-handed.</summary>
+    public bool IsMeleeWeaponSelected => SelectedMeleeWeaponTypeId != GrabbableInventoryItem.TypeIdNone;
+
+    /// <summary>Reach of the current melee: a weapon's longer arc, or the bare-handed punch.</summary>
+    float ActiveMeleeRange => SelectedMeleeWeaponTypeId switch
+    {
+        GrabbableInventoryItem.TypeIdSword => swordMeleeRange,
+        GrabbableInventoryItem.TypeIdCrowbar => crowbarMeleeRange,
+        _ => meleeRange
+    };
 
     /// <summary>Half-angle of the current melee cone. A swing sweeps wider than a straight punch.</summary>
-    float ActiveMeleeAngle => IsSwordSelected ? swordMeleeAngle : meleeAngle;
+    float ActiveMeleeAngle => SelectedMeleeWeaponTypeId switch
+    {
+        GrabbableInventoryItem.TypeIdSword => swordMeleeAngle,
+        GrabbableInventoryItem.TypeIdCrowbar => crowbarMeleeAngle,
+        _ => meleeAngle
+    };
 
     /// <summary>Damage as a fraction of the target's max health, so it scales with every enemy species.</summary>
-    float ActiveMeleeDamageFraction => IsSwordSelected ? swordDamageFraction : meleeDamageFraction;
+    float ActiveMeleeDamageFraction => SelectedMeleeWeaponTypeId switch
+    {
+        GrabbableInventoryItem.TypeIdSword => swordDamageFraction,
+        GrabbableInventoryItem.TypeIdCrowbar => crowbarDamageFraction,
+        _ => meleeDamageFraction
+    };
 
     /// <summary>
-    /// Seconds from the swing starting to the blade being where the damage test runs. For the sword this is
+    /// Seconds from the swing starting to the weapon being where the damage test runs. For a weapon this is
     /// DERIVED — the authored impact frame divided by the playback speed — so speeding the animation up moves
     /// the hit with it instead of leaving damage landing after the blade has already passed through.
     /// </summary>
-    float ActiveMeleeHitDelay => IsSwordSelected
-        ? SwordItem.SwingImpactSeconds / Mathf.Max(0.05f, swordSwingAnimSpeed)
-        : meleeHitDelay;
+    float ActiveMeleeHitDelay => SelectedMeleeWeaponTypeId switch
+    {
+        GrabbableInventoryItem.TypeIdSword => SwordItem.SwingImpactSeconds / Mathf.Max(0.05f, swordSwingAnimSpeed),
+        GrabbableInventoryItem.TypeIdCrowbar => CrowbarItem.SwingImpactSeconds / Mathf.Max(0.05f, crowbarSwingAnimSpeed),
+        _ => meleeHitDelay
+    };
 
-    float ActiveMeleeCooldown => IsSwordSelected ? swordCooldown : meleeCooldown;
+    float ActiveMeleeCooldown => SelectedMeleeWeaponTypeId switch
+    {
+        GrabbableInventoryItem.TypeIdSword => swordCooldown,
+        GrabbableInventoryItem.TypeIdCrowbar => crowbarCooldown,
+        _ => meleeCooldown
+    };
 
-    float ActiveMeleeStaminaCost => IsSwordSelected ? swordStaminaCost : punchStaminaCost;
+    float ActiveMeleeStaminaCost => SelectedMeleeWeaponTypeId switch
+    {
+        GrabbableInventoryItem.TypeIdSword => swordStaminaCost,
+        GrabbableInventoryItem.TypeIdCrowbar => crowbarStaminaCost,
+        _ => punchStaminaCost
+    };
 
-    string ActiveMeleeTrigger => IsSwordSelected ? SwordSwingTrigger : meleeTrigger;
+    string ActiveMeleeTrigger => SelectedMeleeWeaponTypeId switch
+    {
+        GrabbableInventoryItem.TypeIdSword => SwordSwingTrigger,
+        GrabbableInventoryItem.TypeIdCrowbar => CrowbarSwingTrigger,
+        _ => meleeTrigger
+    };
 
     /// <summary>
     /// Server-side cooldown gate in <see cref="NetworkPlayerCombat"/> uses this, so a sword attacker is not
@@ -115,8 +166,13 @@ public partial class PlayerController
     /// </summary>
     public float ActiveMeleeHitDelayForServer => ActiveMeleeHitDelay;
 
-    /// <summary>Swing whoosh — the sword clip when one is assigned, otherwise the shared melee swoosh.</summary>
-    AudioClip ActiveMeleeSwooshClip => IsSwordSelected && swordSwooshClip != null ? swordSwooshClip : meleeSwooshClip;
+    /// <summary>Swing whoosh — the weapon's own clip when one is assigned, otherwise the shared melee swoosh.</summary>
+    AudioClip ActiveMeleeSwooshClip => SelectedMeleeWeaponTypeId switch
+    {
+        GrabbableInventoryItem.TypeIdSword when swordSwooshClip != null => swordSwooshClip,
+        GrabbableInventoryItem.TypeIdCrowbar => CrowbarSwooshClip,
+        _ => meleeSwooshClip
+    };
 
     /// <summary>
     /// Impact sound for a sword hit. Falls back to the punch clips when no sword-specific clip is assigned,

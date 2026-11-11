@@ -3256,6 +3256,7 @@ MonoBehaviour:
   footstepClip2: {fileID: 8300000, guid: 510199d7fcb4bff4fa1af1098c837530, type: 3}
   walkFootstepInterval: 0.54
   runFootstepInterval: 0.36
+  crouchFootstepInterval: 0.6
   footstepVolume: 0.01
   minimumFootstepSpeed: 0.15
   flashlightClickClip: {fileID: 8300000, guid: 06e885263fd95c644bb0d90350b95b2e, type: 3}
@@ -3298,6 +3299,15 @@ MonoBehaviour:
   swordStaminaCost: 12
   swordSwooshClip: {fileID: 0}
   swordHitClip: {fileID: 0}
+  crowbarMeleeRange: 2.8
+  crowbarMeleeAngle: 70
+  crowbarDamageFraction: 0.65
+  crowbarSwingAnimSpeed: 1.4
+  crowbarCooldown: 0.9
+  crowbarStaminaCost: 14
+  crowbarSwooshClip: {fileID: 0}
+  crowbarHitClip: {fileID: 8300000, guid: 29ea4fb31d3c6674085ee235f7731cd8, type: 3}
+  crowbarHitVolume: 0.18
   zombieHitClip: {fileID: 8300000, guid: 760ebab85d080824fa55f9111cd5c194, type: 3}
   zombieHitVolume: 0.1
   driveAnimator: 1
@@ -3319,6 +3329,7 @@ MonoBehaviour:
   enableCrouch: 1
   crouchParameter: Crouching
   crouchHeight: 1.15
+  crouchWalkSpeed: 1.2
   standUpBlockingMask:
     serializedVersion: 2
     m_Bits: 0
@@ -3809,6 +3820,7 @@ MonoBehaviour:
   meleeStateNameOnUpperLayer: RightHook
   swordLayerName: Sword Swing
   swordStateName: SwordSwing
+  crowbarStateName: CrowbarSwing
 --- !u!114 &6779623960595251579
 MonoBehaviour:
   m_ObjectHideFlags: 0

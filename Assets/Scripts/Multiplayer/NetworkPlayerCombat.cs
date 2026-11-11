@@ -94,17 +94,17 @@ public class NetworkPlayerCombat : NetworkBehaviour
 
     /// <summary>
     /// Owner already plays swoosh in <c>TryMelee</c>; other clients get it from the server. Not for the
-    /// sword: this runs when the SERVER adjudicates, which is a hit-delay plus a round trip after the swing
+    /// weapons: this runs when the SERVER adjudicates, which is a hit-delay plus a round trip after the swing
     /// began, so the sound would arrive well after the observer's own blade had already come down. The sword's
-    /// whoosh is an animation event in SwordSwing.anim, which every peer fires off its own clip in step with
-    /// the animation it is actually showing.
+    /// and crowbar's whooshes are animation events in their swing clips, which every peer fires off its own
+    /// clip in step with the animation it is actually showing.
     /// </summary>
     void PlayMeleeSwooshForNonOwnerClients()
     {
         if (!IsServer)
             return;
 
-        if (playerController != null && playerController.IsSwordSelected)
+        if (playerController != null && playerController.IsMeleeWeaponSelected)
             return;
 
         NetworkManager nm = NetworkManager.Singleton;
@@ -176,5 +176,20 @@ public class NetworkPlayerCombat : NetworkBehaviour
     void PlaySwordHitObserversClientRpc(ClientRpcParams clientRpcParams = default)
     {
         playerController?.PlaySwordHitSfx();
+    }
+
+    /// <summary>Server-only: crowbar impact sound on every client, whatever the bar connected with.</summary>
+    public void NotifyObserversCrowbarHit()
+    {
+        if (!IsServer)
+            return;
+
+        PlayCrowbarHitObserversClientRpc();
+    }
+
+    [ClientRpc]
+    void PlayCrowbarHitObserversClientRpc(ClientRpcParams clientRpcParams = default)
+    {
+        playerController?.PlayCrowbarHitSfx();
     }
 }

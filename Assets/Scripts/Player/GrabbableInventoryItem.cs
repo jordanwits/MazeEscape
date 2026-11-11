@@ -33,6 +33,8 @@ public class GrabbableInventoryItem : MonoBehaviour
     /// server-side "do you hold a key" checks stay mutually exclusive.
     /// </summary>
     public const byte TypeIdClownKey = 15;
+    /// <summary>Crowbar: a one-handed melee weapon, swung overhead. Level03's weapon, sibling of the sword.</summary>
+    public const byte TypeIdCrowbar = 16;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -137,7 +139,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     /// Take the held rotation straight from the hand bone instead of the fixed player-space aim
     /// <see cref="HeldItemHandSocketFollow"/> normally forces. Everything carried so far wants the forced
     /// aim — a flashlight must point forward however the wrist sits — but a swung weapon has to travel with
-    /// the arm, so <see cref="SwordItem"/> overrides this to true.
+    /// the arm, so <see cref="SwordItem"/> and <see cref="CrowbarItem"/> override this to true.
     /// </summary>
     public virtual bool HeldFollowsHandRotation => false;
 
@@ -198,6 +200,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhFlareGun;
     static Sprite s_hudPhFlareAmmo;
     static Sprite s_hudPhSword;
+    static Sprite s_hudPhCrowbar;
     static Sprite s_hudPhFlashbang;
 
     /// <summary>Inspector <see cref="_slotIcon"/> if set; otherwise a simple circular runtime glyph (transparent outside the disk).</summary>
@@ -235,6 +238,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdFlareAmmo;
         if (GetComponent<SwordItem>() != null)
             return TypeIdSword;
+        if (GetComponent<CrowbarItem>() != null)
+            return TypeIdCrowbar;
         if (GetComponent<FlashbangItem>() != null)
             return TypeIdFlashbang;
         if (GetComponent<RingTossItem>() != null)
@@ -261,6 +266,7 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdFlareGun => FlareGunItem.SharedHudSlotIcon ?? (s_hudPhFlareGun ??= CreatePlaceholderSprite(0.95f, 0.32f, 0.12f)),
             TypeIdFlareAmmo => FlareAmmoItem.SharedHudSlotIcon ?? (s_hudPhFlareAmmo ??= CreatePlaceholderSprite(0.9f, 0.6f, 0.18f)),
             TypeIdSword => SwordItem.SharedHudSlotIcon ?? (s_hudPhSword ??= CreatePlaceholderSprite(0.72f, 0.74f, 0.78f)),
+            TypeIdCrowbar => CrowbarItem.SharedHudSlotIcon ?? (s_hudPhCrowbar ??= CreatePlaceholderSprite(0.62f, 0.2f, 0.18f)),
             TypeIdFlashbang => FlashbangItem.SharedHudSlotIcon ?? (s_hudPhFlashbang ??= CreatePlaceholderSprite(0.86f, 0.88f, 0.95f)),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
