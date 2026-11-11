@@ -2310,14 +2310,22 @@ public partial class PlayerController : MonoBehaviour
         return Mathf.Clamp(normalized.x, -1f, 1f);
     }
 
+    /// <summary>
+    /// MoveX/MoveY for the Walk/Run/Crouch 2D blend trees. Those trees sample the square: Idle at (0,0), the four
+    /// cardinals, and back diagonals at (±1,-1). Any point inside the square gives Idle weight, and because a blend
+    /// tree plays at the weight-averaged clip length, the 10 s Idle clip drags the ~1 s walk cycle into slow motion
+    /// (W+D at (0.71,0.71) is ~23% Idle, a ~3x slower stride). So the direction is pushed out to the square's edge,
+    /// where Idle weight is zero; how fast the player moves is carried by AnimSpeed, not by the blend position.
+    /// </summary>
     Vector2 ComputeLocomotionBlend(Vector2 input)
     {
         if (input.sqrMagnitude < 0.01f)
             return Vector2.zero;
 
+        float largestAxis = Mathf.Max(Mathf.Abs(input.x), Mathf.Abs(input.y));
         return new Vector2(
-            Mathf.Clamp(input.x, -1f, 1f),
-            Mathf.Clamp(input.y, -1f, 1f));
+            Mathf.Clamp(input.x / largestAxis, -1f, 1f),
+            Mathf.Clamp(input.y / largestAxis, -1f, 1f));
     }
 
     float ComputeAnimationSpeed(float currentSpeed, bool sprinting)
