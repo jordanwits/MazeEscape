@@ -202,6 +202,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhSword;
     static Sprite s_hudPhCrowbar;
     static Sprite s_hudPhFlashbang;
+    static Sprite s_hudPhDecoyGrenade;
 
     /// <summary>Inspector <see cref="_slotIcon"/> if set; otherwise a simple circular runtime glyph (transparent outside the disk).</summary>
     public Sprite GetEffectiveSlotIconForHud()
@@ -242,6 +243,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdCrowbar;
         if (GetComponent<FlashbangItem>() != null)
             return TypeIdFlashbang;
+        if (GetComponent<DecoyGrenadeItem>() != null)
+            return TypeIdDecoyGrenade;
         if (GetComponent<RingTossItem>() != null)
             return _itemTypeId != TypeIdNone ? _itemTypeId : TypeIdRingBlue;
         if (GetComponent<StarBallItem>() != null)
@@ -268,6 +271,7 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdSword => SwordItem.SharedHudSlotIcon ?? (s_hudPhSword ??= CreatePlaceholderSprite(0.72f, 0.74f, 0.78f)),
             TypeIdCrowbar => CrowbarItem.SharedHudSlotIcon ?? (s_hudPhCrowbar ??= CreatePlaceholderSprite(0.62f, 0.2f, 0.18f)),
             TypeIdFlashbang => FlashbangItem.SharedHudSlotIcon ?? (s_hudPhFlashbang ??= CreatePlaceholderSprite(0.86f, 0.88f, 0.95f)),
+            TypeIdDecoyGrenade => DecoyGrenadeItem.SharedHudSlotIcon ?? (s_hudPhDecoyGrenade ??= CreatePlaceholderSprite(0.3f, 0.62f, 0.28f)),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
     }
