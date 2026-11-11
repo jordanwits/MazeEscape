@@ -279,14 +279,14 @@ MonoBehaviour:
   hinge: {fileID: 652085209167734106}
   openLocalEuler: {x: 0, y: 90, z: 0}
   hingeRestPoseIsOpen: 0
-  moveDuration: 1
+  moveDuration: 0.8
   interactMaxDistance: 5
   useKeyToUnlock: 0
   jailCellStartUnlocked: 0
   openAfterUnlockDelay: 0.45
   doorUnlockClip: {fileID: 0}
-  doorOpenClip: {fileID: 8300000, guid: 77d87fc9c97416f40906541d18efd180, type: 3}
-  doorCloseClip: {fileID: 0}
+  doorOpenClip: {fileID: 8300000, guid: 44b63b0db16ce624b97e45ebde0a0971, type: 3}
+  doorCloseClip: {fileID: 8300000, guid: bc37ad25465405a428a26ff0facd9a7b, type: 3}
   doorLockedRattleClip: {fileID: 8300000, guid: 5385312606cdc0044bf28f2b30b61bb3, type: 3}
   doorUnlockVolume: 0.75
   doorOpenVolume: 0.1
