@@ -35,6 +35,8 @@ public class GrabbableInventoryItem : MonoBehaviour
     public const byte TypeIdClownKey = 15;
     /// <summary>Crowbar: a one-handed melee weapon, swung overhead. Level03's weapon, sibling of the sword.</summary>
     public const byte TypeIdCrowbar = 16;
+    /// <summary>Harmonica: hold Attack to play a track, each new hold plays the next. Found in Level01's jail cell.</summary>
+    public const byte TypeIdHarmonica = 17;
 
     static readonly Dictionary<ulong, GrabbableInventoryItem> Registered = new();
 
@@ -109,6 +111,14 @@ public class GrabbableInventoryItem : MonoBehaviour
 
     /// <summary>How the hand shapes itself around this item while held.</summary>
     public HeldGripStyle GripStyle => gripStyle;
+
+    /// <summary>
+    /// Where the right hand's seat sits in this item's own frame (the grip point, scaled exactly as the
+    /// hand-socket seating methods scale it). Zero when the item has no grip point.
+    /// </summary>
+    public Vector3 HeldGripLocalOffset => gripPointRight != null
+        ? Vector3.Scale(gripPointRight.localPosition, transform.localScale)
+        : Vector3.zero;
 
     /// <summary>
     /// The "HoldPose" animator value for this item's grip: 1 fist, 3 pinch, 4 cup, 5 ball. Kept here so the
@@ -203,6 +213,7 @@ public class GrabbableInventoryItem : MonoBehaviour
     static Sprite s_hudPhCrowbar;
     static Sprite s_hudPhFlashbang;
     static Sprite s_hudPhDecoyGrenade;
+    static Sprite s_hudPhHarmonica;
 
     /// <summary>Inspector <see cref="_slotIcon"/> if set; otherwise a simple circular runtime glyph (transparent outside the disk).</summary>
     public Sprite GetEffectiveSlotIconForHud()
@@ -245,6 +256,8 @@ public class GrabbableInventoryItem : MonoBehaviour
             return TypeIdFlashbang;
         if (GetComponent<DecoyGrenadeItem>() != null)
             return TypeIdDecoyGrenade;
+        if (GetComponent<HarmonicaItem>() != null)
+            return TypeIdHarmonica;
         if (GetComponent<RingTossItem>() != null)
             return _itemTypeId != TypeIdNone ? _itemTypeId : TypeIdRingBlue;
         if (GetComponent<StarBallItem>() != null)
@@ -272,6 +285,7 @@ public class GrabbableInventoryItem : MonoBehaviour
             TypeIdCrowbar => CrowbarItem.SharedHudSlotIcon ?? (s_hudPhCrowbar ??= CreatePlaceholderSprite(0.62f, 0.2f, 0.18f)),
             TypeIdFlashbang => FlashbangItem.SharedHudSlotIcon ?? (s_hudPhFlashbang ??= CreatePlaceholderSprite(0.86f, 0.88f, 0.95f)),
             TypeIdDecoyGrenade => DecoyGrenadeItem.SharedHudSlotIcon ?? (s_hudPhDecoyGrenade ??= CreatePlaceholderSprite(0.3f, 0.62f, 0.28f)),
+            TypeIdHarmonica => HarmonicaItem.SharedHudSlotIcon ?? (s_hudPhHarmonica ??= CreatePlaceholderSprite(0.6f, 0.6f, 0.62f)),
             _ => s_hudPhDefault ??= CreatePlaceholderSprite(0.65f, 0.65f, 0.68f)
         };
     }

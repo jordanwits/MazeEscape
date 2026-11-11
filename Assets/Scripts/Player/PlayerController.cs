@@ -1927,6 +1927,10 @@ public partial class PlayerController : MonoBehaviour
         // keep running while control is lost (ragdolled, carried), not something gated on being able to move.
         TickFlashbangBlind();
 
+        // Harmonica hold-to-play. Above the early-returns on purpose: the frames where Update stops handling
+        // Attack (paused, ragdolled, grabbed, dead) are exactly the ones that must stop the track.
+        TickHarmonicaInput();
+
         // Directional melee recoil kick (fired from the hit-SFX methods on connect). Before the early-returns so
         // it always springs back to center even if control is momentarily lost mid-recovery.
         UpdateMeleeCameraKick();
@@ -3072,6 +3076,7 @@ public partial class PlayerController : MonoBehaviour
     //  - Holding something throwable — a carried heavy throwable, or a selected flashbang: press starts
     //    charging, holding fills the charge, release throws with distance scaled by how long it was held.
     //    A charged release never falls through to melee.
+    //  - Holding a harmonica: hold to play a track, release to stop (PlayerController.Harmonica).
     //  - Otherwise: a press performs a melee, exactly as before.
     void HandleAttackInput(bool pressed, bool released, bool held)
     {
@@ -3082,6 +3087,14 @@ public partial class PlayerController : MonoBehaviour
         // Third charge source, same gesture. Only one hotbar slot is selected at a time so these are
         // mutually exclusive by construction; the explicit ordering just makes the precedence readable.
         bool holdingDecoy = !holdingThrowable && !holdingFlashbang && HasSelectedDecoyGrenade();
+
+        // A harmonica in hand turns Attack into hold-to-play and never punches (PlayerController.Harmonica).
+        if (!holdingThrowable && !holdingFlashbang && !holdingDecoy && HasSelectedHarmonica())
+        {
+            CancelThrowCharge();
+            HandleHarmonicaAttackInput(pressed, held);
+            return;
+        }
 
         if (pressed && (holdingThrowable || holdingFlashbang || holdingDecoy))
         {

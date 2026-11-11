@@ -172,6 +172,10 @@ public class HeldItemHandSocketFollow : MonoBehaviour
             _heldItem.ApplyHandSocketHeldPose(seat);
         }
 
+        // Harmonica being played: lift it from the carry pose just applied up to the mouth, arm and all.
+        if (_heldItem is HarmonicaItem harmonica && harmonica.PlayPoseWeight > 0.001f)
+            ApplyHarmonicaPlayPose(harmonica, seat);
+
         CaptureGrip(seat);
 
         if (_heldItem is FlashlightItem flashlight)
@@ -179,6 +183,138 @@ public class HeldItemHandSocketFollow : MonoBehaviour
     }
 
     bool IsBodyLimp() => _ragdoll != null && (_ragdoll.IsRagdolled || _ragdoll.IsHeld);
+
+    // ---------- harmonica: raised to the mouth while playing ----------
+
+    Transform _headBone;
+    Transform _lowerArmR;
+    bool _fistAxesCached;
+    Vector3 _fistTunnelInHand;   // little-finger knuckle -> index knuckle, hand-local
+    Vector3 _forearmInHand;      // wrist -> back along the forearm, hand-local (perpendicular to the tunnel)
+
+    /// <summary>
+    /// Playing pose, procedural so it holds on every head angle and every peer: the harmonica is placed on the
+    /// lips in the head's frame (<see cref="HarmonicaItem.TryGetPlayPose"/>), the fist is turned so its tunnel
+    /// runs along the harmonica toward the mouth with the back of the hand facing out, and a two-bone IK on the
+    /// right arm brings the fist to the harmonica's right end. Blended from the carry pose by
+    /// <see cref="HarmonicaItem.PlayPoseWeight"/>, with the elbow hint starting at the animated elbow so the
+    /// lift starts exactly where the carry pose is. The item is finally re-seated on the actual hand, so it can
+    /// never float off the fist if the mouth is out of reach.
+    /// </summary>
+    void ApplyHarmonicaPlayPose(HarmonicaItem harmonica, Transform seat)
+    {
+        if (_headBone == null)
+            _headBone = animator.GetBoneTransform(HumanBodyBones.Head);
+        if (_upperArmR == null)
+            _upperArmR = animator.GetBoneTransform(HumanBodyBones.RightUpperArm);
+        if (_lowerArmR == null)
+            _lowerArmR = animator.GetBoneTransform(HumanBodyBones.RightLowerArm);
+        if (_handBone == null)
+            _handBone = animator.GetBoneTransform(HumanBodyBones.RightHand);
+        if (_headBone == null || _upperArmR == null || _lowerArmR == null || _handBone == null || seat == null)
+            return;
+        if (!CacheFistAxes(seat))
+            return;
+
+        bool firstPersonView = playerController != null && playerController.IsFirstPersonViewOwner;
+        if (!harmonica.TryGetPlayPose(_headBone, firstPersonView, out Vector3 playPos, out Quaternion playRot))
+            return;
+
+        float w = harmonica.PlayPoseWeight;
+        Transform item = harmonica.transform;
+        Vector3 itemPos = Vector3.Lerp(item.position, playPos, w);
+        Quaternion itemRot = Quaternion.Slerp(item.rotation, playRot, w);
+        Vector3 gripLocal = harmonica.HeldGripLocalOffset;
+
+        // Fist orientation at the mouth: the tunnel runs along the harmonica with the index side OUTWARD (toward its
+        // right end), which with a straight wrist and the forearm hanging down turns the palm toward the face —
+        // the right hand cupping the end. Index side toward the mouth would face the palm out instead.
+        Vector3 along = playRot * Vector3.back;
+        Vector3 forearm = harmonica.PlayForearmDirection(playRot);
+        Vector3 forearmPerp = forearm - Vector3.Dot(forearm, along) * along;
+        if (forearmPerp.sqrMagnitude < 1e-6f)
+            forearmPerp = -(playRot * Vector3.up);
+        forearmPerp.Normalize();
+        Quaternion handPlay = Quaternion.LookRotation(along, forearmPerp)
+            * Quaternion.Inverse(Quaternion.LookRotation(_fistTunnelInHand, _forearmInHand));
+
+        Quaternion handRot = Quaternion.Slerp(_handBone.rotation, handPlay, w);
+        Vector3 seatFromWrist = Quaternion.Inverse(_handBone.rotation) * (seat.position - _handBone.position);
+        Vector3 wristTarget = itemPos + itemRot * gripLocal - handRot * seatFromWrist;
+
+        // Bend the elbow down the forearm line, starting from the animated elbow so the lift has no jump.
+        Vector3 elbowPlay = wristTarget + forearm.normalized * 0.25f;
+        Vector3 elbowHint = Vector3.Lerp(_lowerArmR.position, elbowPlay, w);
+
+        SolveTwoBoneIK(_upperArmR, _lowerArmR, _handBone, wristTarget, elbowHint);
+        _handBone.rotation = handRot;
+
+        // Seat on the real hand: identical to the target when it was in reach, still in the fist when it was not.
+        item.SetPositionAndRotation(seat.position - itemRot * gripLocal, itemRot);
+    }
+
+    bool CacheFistAxes(Transform seat)
+    {
+        if (_fistAxesCached)
+            return true;
+
+        Transform index = animator.GetBoneTransform(HumanBodyBones.RightIndexProximal);
+        Transform little = animator.GetBoneTransform(HumanBodyBones.RightLittleProximal);
+        Transform middle = animator.GetBoneTransform(HumanBodyBones.RightMiddleProximal);
+        if (index == null || little == null || middle == null)
+            return false;
+
+        // Knuckle joints are fixed in the hand bone's frame (finger muscles only rotate bones about them), so
+        // these are constants of the rig, whatever the fingers are doing.
+        Quaternion toHand = Quaternion.Inverse(_handBone.rotation);
+        Vector3 tunnel = (toHand * (index.position - little.position)).normalized;
+        // A straight wrist continues the hand's own wrist->knuckles line back down the forearm.
+        Vector3 forearm = toHand * (_handBone.position - middle.position);
+        forearm = (forearm - Vector3.Dot(forearm, tunnel) * tunnel).normalized;
+        if (tunnel.sqrMagnitude < 0.5f || forearm.sqrMagnitude < 0.5f)
+            return false;
+
+        _fistTunnelInHand = tunnel;
+        _forearmInHand = forearm;
+        _fistAxesCached = true;
+        return true;
+    }
+
+    /// <summary>Analytic two-bone IK: puts <paramref name="end"/> on the target, elbow bent toward the hint.</summary>
+    static void SolveTwoBoneIK(Transform upper, Transform lower, Transform end, Vector3 target, Vector3 hint)
+    {
+        Vector3 a = upper.position;
+        Vector3 b = lower.position;
+        Vector3 c = end.position;
+        float ab = (b - a).magnitude;
+        float bc = (c - b).magnitude;
+        Vector3 toTarget = target - a;
+        float len = toTarget.magnitude;
+        if (ab < 1e-4f || bc < 1e-4f || len < 1e-4f)
+            return;
+
+        len = Mathf.Clamp(len, Mathf.Abs(ab - bc) + 1e-4f, ab + bc - 1e-4f);
+        Vector3 dir = toTarget / toTarget.magnitude;
+
+        Vector3 toHint = hint - a;
+        Vector3 bend = toHint - Vector3.Dot(toHint, dir) * dir;
+        if (bend.sqrMagnitude < 1e-8f)
+        {
+            Vector3 toElbow = b - a;
+            bend = toElbow - Vector3.Dot(toElbow, dir) * dir;
+        }
+        if (bend.sqrMagnitude < 1e-8f)
+            return;
+        bend.Normalize();
+
+        float along = (ab * ab - bc * bc + len * len) / (2f * len);
+        float height = Mathf.Sqrt(Mathf.Max(0f, ab * ab - along * along));
+        Vector3 elbow = a + dir * along + bend * height;
+
+        upper.rotation = Quaternion.FromToRotation(b - a, elbow - a) * upper.rotation;
+        Vector3 b2 = lower.position;
+        lower.rotation = Quaternion.FromToRotation(end.position - b2, a + dir * len - b2) * lower.rotation;
+    }
 
     void CaptureGrip(Transform seat)
     {
