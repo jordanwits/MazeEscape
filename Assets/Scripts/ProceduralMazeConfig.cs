@@ -93,6 +93,11 @@ public class ProceduralMazeConfig : ScriptableObject
         + "Capped prefabs place first, in list order, until each cap is met (e.g. caps [1, 2] with Interior Room Count 3 "
         + "places exactly one of prefab 0, then up to two of prefab 1).")]
     [SerializeField] int[] interiorRoomPrefabCounts;
+    [Tooltip("Optional guaranteed minimums parallel to Interior Room Prefabs indices; 0 or missing entries = the prefab's cap "
+        + "is also its guarantee (the original behaviour). A minimum below the cap lets the prefab place that many first, "
+        + "then compete for the leftover Interior Room Count up to its cap (e.g. two variants with minimum 1, cap 2 and "
+        + "one leftover slot = one of each plus a random third).")]
+    [SerializeField] int[] interiorRoomPrefabMinimums;
 
     [Header("Exit Hall")]
     [Tooltip("Optional multi-cell finish piece (MazePieceDefinition with an Interior Grid Footprint of 1×N or N×1, "
@@ -333,6 +338,20 @@ public class ProceduralMazeConfig : ScriptableObject
             return 0;
 
         return Mathf.Max(0, caps[poolIndex]);
+    }
+    /// <summary>
+    /// How many of <see cref="InteriorRoomPrefabs"/> index <paramref name="poolIndex"/> place in the guaranteed
+    /// first pass. An explicit minimum wins (clamped to the cap when capped); otherwise the cap itself, so
+    /// configs without minimums behave exactly as before.
+    /// </summary>
+    public int ResolveInteriorRoomPrefabGuaranteed(int poolIndex)
+    {
+        int cap = ResolveInteriorRoomPrefabCap(poolIndex);
+        int[] mins = interiorRoomPrefabMinimums;
+        if (mins == null || poolIndex < 0 || poolIndex >= mins.Length || mins[poolIndex] <= 0)
+            return cap;
+
+        return cap > 0 ? Mathf.Min(mins[poolIndex], cap) : mins[poolIndex];
     }
     public GameObject ExitHallPiecePrefab => exitHallPiecePrefab;
     public GameObject FinalBossPrefab => finalBossPrefab;

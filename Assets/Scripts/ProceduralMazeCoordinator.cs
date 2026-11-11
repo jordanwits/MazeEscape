@@ -2054,9 +2054,10 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
 
     /// <summary>
     /// Pool indices allowed for the next interior room placement. Prefabs with a positive
-    /// <see cref="ProceduralMazeConfig.ResolveInteriorRoomPrefabCap"/> place first, one pool slot at a
-    /// time in list order, until each cap is met; afterwards every uncapped prefab competes as before.
-    /// <paramref name="singleCapped"/> reports that mode so a nowhere-fitting capped prefab can be
+    /// <see cref="ProceduralMazeConfig.ResolveInteriorRoomPrefabGuaranteed"/> (an explicit minimum, else the
+    /// cap) place first, one pool slot at a time in list order, until each guarantee is met; afterwards
+    /// every prefab still under its cap (uncapped ones always) competes for the remaining slots.
+    /// <paramref name="singleCapped"/> reports the guaranteed pass so a nowhere-fitting prefab can be
     /// skipped instead of ending placement for the whole pool.
     /// </summary>
     List<int> SelectEligibleInteriorRoomPrefabIndices(
@@ -2072,11 +2073,11 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             if (pool[i] == null || prefabFailedEverywhere[i])
                 continue;
 
-            int cap = _config.ResolveInteriorRoomPrefabCap(i);
-            if (cap <= 0)
+            int guaranteed = _config.ResolveInteriorRoomPrefabGuaranteed(i);
+            if (guaranteed <= 0)
                 continue;
 
-            if (placedPerPrefab[i] < cap)
+            if (placedPerPrefab[i] < guaranteed)
             {
                 eligible.Add(i);
                 singleCapped = true;
@@ -2089,7 +2090,8 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
             if (pool[i] == null || prefabFailedEverywhere[i])
                 continue;
 
-            if (_config.ResolveInteriorRoomPrefabCap(i) <= 0)
+            int cap = _config.ResolveInteriorRoomPrefabCap(i);
+            if (cap <= 0 || placedPerPrefab[i] < cap)
                 eligible.Add(i);
         }
 
