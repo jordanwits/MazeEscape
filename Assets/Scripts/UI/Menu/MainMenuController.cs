@@ -11,8 +11,8 @@ using UnityEngine.UI;
 /// Joining someone else's game is invite-only — there is no id to type in anywhere.
 ///
 /// Each screen is a <see cref="UiNavScope"/> while it shows. A pad lands on PLAY OFFLINE, the first setting, or
-/// the lobby's READY / START plate; B / Esc goes back from settings, and in the lobby asks to leave (the lobby has
-/// no BACK on purpose).
+/// the lobby's READY / START plate; B / Esc goes back from settings (to the lobby, when its gear opened them), and
+/// in the lobby asks to leave (the lobby has no BACK on purpose).
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class MainMenuController : MonoBehaviour
@@ -51,6 +51,11 @@ public sealed class MainMenuController : MonoBehaviour
     const float LeaveWidth = 240f;
     const float LeaveHeight = 56f;
 
+    /// <summary>The lobby's settings gear: a bare glyph in the top-right corner, centred on the CREW heading's line.</summary>
+    const float LobbySettingsSize = 40f;
+    /// <summary>Room between the gear and the host's level picker to its left.</summary>
+    const float LobbySettingsGap = 22f;
+
     [Tooltip("Wordmark shown at the top of the menu. Assets/Branding is outside Resources, so this is a direct scene reference.")]
     [SerializeField] Sprite logoSprite;
 
@@ -68,7 +73,11 @@ public sealed class MainMenuController : MonoBehaviour
     UiNavScope _lobbyNavScope;
     Button _playOfflineButton;
     MenuScreen _current = MenuScreen.Root;
+    /// <summary>Where SETTINGS goes back to: the rail, or the lobby when the gear opened it.</summary>
+    MenuScreen _settingsReturn = MenuScreen.Root;
     LobbyCharacterPreview _characterPreview;
+    /// <summary>The lobby's voice chat (nobody has an avatar here to carry proximity voice).</summary>
+    LobbyVoiceChat _lobbyVoice;
 
     /// <summary>The lobby screen opens itself once per session; after that BACK stays respected.</summary>
     bool _lobbyAutoShown;
@@ -112,6 +121,10 @@ public sealed class MainMenuController : MonoBehaviour
     {
         public Image ReadyChip;
         public TextMeshProUGUI Name;
+        /// <summary>Another player's voice mix; its mic glyph also lights while they talk.</summary>
+        public MenuCrewVoiceRow Voice;
+        /// <summary>Your own row: a mic glyph that lights while your voice goes out.</summary>
+        public Image SelfMic;
     }
 
     readonly List<ulong> _crewRowIds = new();
@@ -147,6 +160,12 @@ public sealed class MainMenuController : MonoBehaviour
         var previewGo = new GameObject(nameof(LobbyCharacterPreview));
         previewGo.transform.SetParent(transform, false);
         _characterPreview = previewGo.AddComponent<LobbyCharacterPreview>();
+
+        // Runs itself whenever a lobby session is connected; goes away with this scene, before the level's avatars
+        // take the microphone over.
+        _lobbyVoice = GetComponent<LobbyVoiceChat>();
+        if (_lobbyVoice == null)
+            _lobbyVoice = gameObject.AddComponent<LobbyVoiceChat>();
 
         if (_session != null)
         {
@@ -201,7 +220,7 @@ public sealed class MainMenuController : MonoBehaviour
         _modal = MenuModal.Create(root);
 
         _rootNavScope = new UiNavScope(_rootFader.transform, () => _playOfflineButton);
-        _settingsNavScope = new UiNavScope(_settingsFader.transform, null, () => ShowScreen(MenuScreen.Root));
+        _settingsNavScope = new UiNavScope(_settingsFader.transform, null, CloseSettings);
         // The action plate, not a survivor plate: your own plate is not clickable, and ready is the one thing everyone does.
         _lobbyNavScope = new UiNavScope(_lobbyFader.transform, () => _lobbyActionButton, ConfirmLeaveLobby);
     }
@@ -276,7 +295,7 @@ public sealed class MainMenuController : MonoBehaviour
 
         _playOfflineButton = MenuWidgets.CreateNavButton(nav, "PLAY OFFLINE", OnPlayOfflineClicked, out _, true, true, NavHeight, NavFontSize);
         MenuWidgets.CreateNavButton(nav, "HOST GAME", OnHostGameClicked, out _, true, true, NavHeight, NavFontSize);
-        MenuWidgets.CreateNavButton(nav, "SETTINGS", () => ShowScreen(MenuScreen.Settings), out _, true, true, NavHeight, NavFontSize);
+        MenuWidgets.CreateNavButton(nav, "SETTINGS", () => OpenSettings(MenuScreen.Root), out _, true, true, NavHeight, NavFontSize);
 
         MenuWidgets.CreateNavButton(nav, "EXIT", () =>
         {
@@ -309,11 +328,11 @@ public sealed class MainMenuController : MonoBehaviour
         return screen;
     }
 
-    /// <summary>Bottom-of-card control that returns a dedicated screen to the button rail.</summary>
+    /// <summary>Bottom-of-card control that closes the settings screen (back to the rail, or to the lobby).</summary>
     void CreateBackButton(Transform card)
     {
         MenuWidgets.CreateSpacer(card, 6f);
-        MenuWidgets.CreateGhostButton(card, "BACK", () => ShowScreen(MenuScreen.Root), false, 50f);
+        MenuWidgets.CreateGhostButton(card, "BACK", CloseSettings, false, 50f);
     }
 
     // ---------------------------------------------------------------- settings screen
@@ -329,6 +348,22 @@ public sealed class MainMenuController : MonoBehaviour
         MenuSettingsPanel.Build(card);
         CreateBackButton(card);
         return fader;
+    }
+
+    /// <summary>Opens SETTINGS; BACK (and B / Esc) then returns to <paramref name="returnTo"/>.</summary>
+    void OpenSettings(MenuScreen returnTo)
+    {
+        _settingsReturn = returnTo;
+        ShowScreen(MenuScreen.Settings);
+    }
+
+    /// <summary>
+    /// Back out of SETTINGS to wherever it was opened from, unless that was the lobby and the session has
+    /// ended meanwhile, which leaves the rail.
+    /// </summary>
+    void CloseSettings()
+    {
+        ShowScreen(_settingsReturn == MenuScreen.Lobby && HasLobbySession ? MenuScreen.Lobby : MenuScreen.Root);
     }
 
     // ---------------------------------------------------------------- lobby screen
@@ -348,6 +383,7 @@ public sealed class MainMenuController : MonoBehaviour
         BuildLobbyDock(screen);
         BuildLobbyCrewPanel(screen);
         BuildLobbyExitControls(screen);
+        BuildLobbySettingsButton(screen);
         BuildLevelSelect(screen);
 
         return fader;
@@ -438,9 +474,44 @@ public sealed class MainMenuController : MonoBehaviour
     }
 
     /// <summary>
+    /// The settings gear in the top-right corner, level with the CREW heading: the same SETTINGS screen as
+    /// the rail's, and BACK returns here (the lobby session keeps running underneath, voice included). A bare
+    /// glyph like the crew roster's mic toggles, with no plate, since nothing else in the lobby sits on one.
+    /// </summary>
+    void BuildLobbySettingsButton(Transform screen)
+    {
+        Image gear = MenuWidgets.CreateImage(screen, "Settings", MenuTheme.GearIcon(), MenuTheme.Bone, true);
+        gear.preserveAspect = true;
+        RectTransform gearRt = gear.rectTransform;
+        gearRt.anchorMin = new Vector2(1f, 1f);
+        gearRt.anchorMax = new Vector2(1f, 1f);
+        gearRt.pivot = new Vector2(1f, 1f);
+        // The CREW heading row is 34 tall at the margin; centre the glyph on it.
+        gearRt.anchoredPosition = new Vector2(-LobbyMargin, -LobbyMargin + (LobbySettingsSize - 34f) * 0.5f);
+        gearRt.sizeDelta = new Vector2(LobbySettingsSize, LobbySettingsSize);
+
+        var button = gear.gameObject.AddComponent<Button>();
+        button.targetGraphic = gear;
+        button.transition = Selectable.Transition.ColorTint;
+        ColorBlock colors = button.colors;
+        colors.normalColor = MenuTheme.WithAlpha(MenuTheme.Bone, 0.85f);
+        colors.highlightedColor = MenuTheme.AmberBright;
+        colors.pressedColor = MenuTheme.Amber;
+        colors.selectedColor = colors.highlightedColor;   // pad focus reads as hover
+        colors.disabledColor = MenuTheme.Faint;
+        button.colors = colors;
+        button.navigation = new Navigation { mode = Navigation.Mode.Automatic };
+        button.onClick.AddListener(() =>
+        {
+            MenuUiAudio.PlayClick();
+            OpenSettings(MenuScreen.Lobby);
+        });
+    }
+
+    /// <summary>
     /// Which maze section the run starts on: a small LEVEL picker in the top-right corner, level with
-    /// the CREW heading. Temporary — it will not ship in the final game, so it stands alone and
-    /// nothing else is laid out around it. Host-only: only the host has a START, and only the host's
+    /// the CREW heading, just left of the settings gear. Temporary — it will not ship in the final game,
+    /// so it stands alone and nothing else is laid out around it (dropping it leaves the gear in its corner). Host-only: only the host has a START, and only the host's
     /// <see cref="_selectedScene"/> is read (see <see cref="StartGameFromLobby"/>), so showing the
     /// picker to a joiner would be a control that does nothing.
     /// </summary>
@@ -459,7 +530,7 @@ public sealed class MainMenuController : MonoBehaviour
         holder.anchorMin = new Vector2(1f, 1f);
         holder.anchorMax = new Vector2(1f, 1f);
         holder.pivot = new Vector2(1f, 1f);
-        holder.anchoredPosition = new Vector2(-LobbyMargin, -LobbyMargin);
+        holder.anchoredPosition = new Vector2(-(LobbyMargin + LobbySettingsSize + LobbySettingsGap), -LobbyMargin);
         holder.sizeDelta = new Vector2(headWidth + gap + segmentsWidth, height);
         _levelSelectSection = holder.gameObject;
 
@@ -563,7 +634,8 @@ public sealed class MainMenuController : MonoBehaviour
     /// <summary>
     /// One roster row: ready pip, name, and — for everyone but you — the local voice controls. The
     /// slider and MUTE are listener-side only (<see cref="VoicePlayerMixSettings"/>): nothing about
-    /// them is replicated, so the person you turn down is never told.
+    /// them is replicated, so the person you turn down is never told. Your own row gets a plain mic
+    /// glyph in the same spot instead, showing your own voice going out (see <see cref="RefreshVoiceActivity"/>).
     /// </summary>
     void CreateCrewRow(ulong clientId, bool isLocal)
     {
@@ -589,11 +661,53 @@ public sealed class MainMenuController : MonoBehaviour
         nameRt.anchorMax = new Vector2(1f, 1f);
         nameRt.pivot = new Vector2(0.5f, 1f);
         nameRt.offsetMin = new Vector2(20f, -25f);
-        nameRt.offsetMax = new Vector2(isLocal ? 0f : -(MenuCrewVoiceRow.MicSize + 8f), 0f);
+        nameRt.offsetMax = new Vector2(-(MenuCrewVoiceRow.MicSize + 8f), 0f);
 
-        _crewRows[clientId] = new CrewRow { ReadyChip = chip, Name = name };
-        if (!isLocal)
-            new MenuCrewVoiceRow(root, clientId, 20f);
+        var row = new CrewRow { ReadyChip = chip, Name = name };
+        if (isLocal)
+        {
+            // Not a control: you cannot mute yourself here, and the voice mode lives in SETTINGS.
+            Image mic = MenuWidgets.CreateImage(root, "SelfMic", MenuTheme.MicIcon(false), MenuTheme.Faint);
+            mic.preserveAspect = true;
+            RectTransform micRt = mic.rectTransform;
+            micRt.anchorMin = new Vector2(1f, 1f);
+            micRt.anchorMax = new Vector2(1f, 1f);
+            micRt.pivot = new Vector2(1f, 1f);
+            micRt.anchoredPosition = new Vector2(0f, -1f);
+            micRt.sizeDelta = new Vector2(MenuCrewVoiceRow.MicSize, MenuCrewVoiceRow.MicSize);
+            row.SelfMic = mic;
+        }
+        else
+        {
+            row.Voice = new MenuCrewVoiceRow(root, clientId, 20f);
+        }
+        _crewRows[clientId] = row;
+    }
+
+    /// <summary>
+    /// Lobby voice activity on the roster, every frame: another player's mic glyph lights amber while they talk,
+    /// and your own lights while your voice goes out. Yours is dim at rest (or with push-to-talk up), and struck
+    /// through when no microphone could be opened.
+    /// </summary>
+    void RefreshVoiceActivity()
+    {
+        if (_crewRows.Count == 0)
+            return;
+
+        bool running = _lobbyVoice != null && _lobbyVoice.IsRunning;
+        foreach (KeyValuePair<ulong, CrewRow> pair in _crewRows)
+        {
+            CrewRow row = pair.Value;
+            row.Voice?.SetSpeaking(running && _lobbyVoice.IsSpeaking(pair.Key));
+
+            if (row.SelfMic == null)
+                continue;
+            bool noMic = running && !_lobbyVoice.HasMicrophone;
+            row.SelfMic.sprite = MenuTheme.MicIcon(noMic);
+            row.SelfMic.color = !running || noMic ? MenuTheme.Faint
+                : _lobbyVoice.IsLocalSpeaking ? MenuTheme.AmberBright
+                : MenuTheme.WithAlpha(MenuTheme.Bone, 0.45f);
+        }
     }
 
     void BuildLobbyExitControls(Transform screen)
@@ -1012,6 +1126,8 @@ public sealed class MainMenuController : MonoBehaviour
         // Kept visible but dimmed when there is nothing to invite into, so the row doesn't pop in and out.
         if (_inviteButton != null)
             _inviteButton.interactable = _session.CanInviteFriends;
+
+        RefreshVoiceActivity();
     }
 
     void RefreshLobby()

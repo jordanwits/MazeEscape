@@ -1,10 +1,12 @@
 using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Registers custom messages: clients send <see cref="VoiceUpMessageName"/>, the server relays
-/// <see cref="VoiceDownMessageName"/> to other clients.
+/// <see cref="VoiceDownMessageName"/> to other clients. Carries both the level's proximity voice
+/// (<see cref="NetworkPlayerVoice"/>) and the menu lobby's flat voice chat (<see cref="LobbyVoiceChat"/>).
 /// </summary>
 [DisallowMultipleComponent]
 public class ProximityVoiceSession : MonoBehaviour
@@ -123,9 +125,10 @@ public class ProximityVoiceSession : MonoBehaviour
         if (nm == null || !nm.IsServer)
             return;
         // Sender authentication: only relay frames from clients that actually own a registered voice
-        // object on this server. Without this, the host would fan out arbitrary bytes from any
-        // connected client (or a malicious one) to every peer.
-        if (!VoiceClientRegistry.TryGet(senderId, out _))
+        // object on this server, or — in the menu lobby, where nobody has an avatar yet — from an
+        // approved, connected client. Without this, the host would fan out arbitrary bytes from any
+        // connection (or a malicious one) to every peer.
+        if (!VoiceClientRegistry.TryGet(senderId, out _) && !IsLobbySpeaker(nm, senderId))
             return;
         reader.ReadValueSafe(out ushort seq);
         reader.ReadValueSafe(out ushort count);
@@ -215,6 +218,18 @@ public class ProximityVoiceSession : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Server-side: lobby voice (see <see cref="LobbyVoiceChat"/>). The host is in the Menu scene, so this is the
+    /// lobby phase and nobody has a <see cref="NetworkPlayerVoice"/>; any approved client may talk.
+    /// </summary>
+    static bool IsLobbySpeaker(NetworkManager nm, ulong senderId)
+    {
+        if (!nm.ConnectedClients.ContainsKey(senderId))
+            return false;
+        Scene active = SceneManager.GetActiveScene();
+        return active.IsValid() && active.name == MultiplayerSceneFlow.MenuSceneName;
+    }
+
     /// <summary>Server-side: the client's player is spawned and dead (permanent until the next section).</summary>
     static bool IsClientDead(NetworkManager nm, ulong clientId)
     {
@@ -261,13 +276,19 @@ public class ProximityVoiceSession : MonoBehaviour
         reader.ReadValueSafe(out ushort count);
         if (count == 0 || count > NetworkPlayerVoice.FrameSamples)
             return;
-        if (!VoiceClientRegistry.TryGet(originalSpeaker, out NetworkPlayerVoice target))
+        // The speaker's avatar plays it in a level; in the menu lobby nobody has one, and the lobby plays it flat.
+        bool toAvatar = VoiceClientRegistry.TryGet(originalSpeaker, out NetworkPlayerVoice target);
+        LobbyVoiceChat lobby = toAvatar ? null : LobbyVoiceChat.Active;
+        if (!toAvatar && lobby == null)
             return;
         for (int i = 0; i < count; i++)
         {
             reader.ReadValueSafe(out short s);
             s_ClientVoicePcmScratch[i] = s;
         }
-        target.EnqueuePcm16Frame(seq, s_ClientVoicePcmScratch, count);
+        if (toAvatar)
+            target.EnqueuePcm16Frame(seq, s_ClientVoicePcmScratch, count);
+        else
+            lobby.EnqueueRemoteFrame(originalSpeaker, seq, s_ClientVoicePcmScratch, count);
     }
 }

@@ -24,6 +24,7 @@ public sealed class MenuCrewVoiceRow
     readonly TextMeshProUGUI _volumeValue;
     readonly Button _micButton;
     readonly Image _micIcon;
+    bool _speaking;
 
     /// <summary>
     /// Adds the voice controls to <paramref name="row"/> (a <see cref="RowHeight"/>-tall rect); the caption and
@@ -104,6 +105,18 @@ public sealed class MenuCrewVoiceRow
         ApplyMuteVisual();
     }
 
+    /// <summary>
+    /// Lights the mic glyph amber while this player is talking (the lobby's voice chat drives it); a player you
+    /// muted stays struck through in red whatever they do.
+    /// </summary>
+    public void SetSpeaking(bool speaking)
+    {
+        if (_speaking == speaking)
+            return;
+        _speaking = speaking;
+        ApplyMuteVisual();
+    }
+
     /// <summary>Pushes the stored mute state onto the row — rows are not rebuilt on a mute click.</summary>
     void ApplyMuteVisual()
     {
@@ -114,7 +127,9 @@ public sealed class MenuCrewVoiceRow
         // ColorTint overwrites the Image colour every state change, so the mute state has to live in
         // the button's palette rather than on the Image itself.
         ColorBlock colors = _micButton.colors;
-        colors.normalColor = muted ? MenuTheme.BloodBright : MenuTheme.WithAlpha(MenuTheme.Bone, 0.85f);
+        colors.normalColor = muted ? MenuTheme.BloodBright
+            : _speaking ? MenuTheme.AmberBright
+            : MenuTheme.WithAlpha(MenuTheme.Bone, 0.85f);
         colors.highlightedColor = muted ? MenuTheme.Bone : MenuTheme.AmberBright;
         colors.pressedColor = muted ? MenuTheme.Blood : MenuTheme.Amber;
         colors.selectedColor = colors.highlightedColor;   // pad focus reads as hover

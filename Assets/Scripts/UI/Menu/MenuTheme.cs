@@ -541,6 +541,64 @@ public static class MenuTheme
     }
 
     /// <summary>
+    /// Settings glyph: an eight-toothed gear with an open hub, for the lobby's settings button. A body disc
+    /// with rounded-box teeth around it and the hub knocked out of the middle, drawn from signed distances
+    /// (same 1.25px AA edge as <see cref="Circle"/>); tint via Image.color.
+    /// </summary>
+    public static Sprite GearIcon()
+    {
+        return CacheSprite("gear", () =>
+        {
+            const int size = 128;
+            const int teeth = 8;
+            const float bodyRadius = 38f;
+            const float hubRadius = 16f;
+            // Each tooth: a rounded box centred on this radius, sticking out past the body.
+            const float toothCentre = 45f;
+            const float toothHalfLength = 10f;
+            const float toothHalfWidth = 8.5f;
+            const float toothRounding = 3f;
+            float half = size * 0.5f;
+
+            Texture2D tex = NewTexture(size, size);
+            var px = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    Vector2 rel = new(x + 0.5f - half, y + 0.5f - half);
+                    float r = rel.magnitude;
+
+                    float d = r - bodyRadius;
+                    for (int t = 0; t < teeth; t++)
+                    {
+                        // Into the tooth's own frame: x along its spoke, y across it.
+                        float angle = t * (2f * Mathf.PI / teeth) + Mathf.PI / teeth;
+                        float c = Mathf.Cos(angle);
+                        float s = Mathf.Sin(angle);
+                        Vector2 local = new(rel.x * c + rel.y * s - toothCentre, -rel.x * s + rel.y * c);
+                        Vector2 q = new(
+                            Mathf.Abs(local.x) - toothHalfLength + toothRounding,
+                            Mathf.Abs(local.y) - toothHalfWidth + toothRounding);
+                        float box = new Vector2(Mathf.Max(q.x, 0f), Mathf.Max(q.y, 0f)).magnitude
+                            + Mathf.Min(Mathf.Max(q.x, q.y), 0f) - toothRounding;
+                        d = Mathf.Min(d, box);
+                    }
+
+                    d = Mathf.Max(d, -(r - hubRadius));   // knock the hub out
+
+                    float a = Mathf.Clamp01(0.5f - d / 1.25f);
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+
+            tex.SetPixels32(px);
+            tex.Apply(false, false);
+            return ToSprite(tex, Vector4.zero);
+        });
+    }
+
+    /// <summary>
     /// Teleporter glyph: a portal swirl, two turns of a spiral winding in to the centre — the in-game orb is a
     /// swirling energy shell, and a spiral still reads as "portal" at map-marker sizes. Distance is taken
     /// radially to the nearest turn (the turns are far apart relative to their curvature), with round caps at
