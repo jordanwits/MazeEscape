@@ -184,4 +184,81 @@ public partial class PlayerController
 
         PlaySelfOrBodyOneShot(swordHitClip != null ? swordHitClip : PickRandomMeleeHitClip(), meleeHitPunchVolume);
     }
+
+    // ----- Durability (see MeleeWeaponItem) -----
+
+    /// <summary>
+    /// A swing with <paramref name="weaponTypeId"/> just connected: spend one hit of that weapon's durability.
+    /// Online this is the server's copy of the attacker and the inventory does the wear (it self-gates to the
+    /// server); offline the local hotbar is the authority.
+    /// </summary>
+    void WearMeleeWeaponAfterHit(byte weaponTypeId)
+    {
+        if (weaponTypeId == GrabbableInventoryItem.TypeIdNone)
+            return;   // bare fists never wear out
+
+        if (IsUsingNetworkedInventory)
+        {
+            _networkPlayerInventory.ServerWearSelectedMeleeWeapon(weaponTypeId);
+            return;
+        }
+
+        WearSelectedMeleeWeaponLocal(weaponTypeId);
+    }
+
+    /// <summary>
+    /// Offline wear. Mirrors <see cref="NetworkPlayerInventory.ServerWearSelectedMeleeWeapon"/>, including keeping
+    /// the selection on the emptied slot so the next Attack is a punch rather than whatever sits in another slot.
+    /// </summary>
+    void WearSelectedMeleeWeaponLocal(byte weaponTypeId)
+    {
+        int slot = _localSelectedSlot;
+        if (slot < 0 || slot >= InventorySlotCapacity)
+            return;
+
+        if (_localInventorySlots[slot] is not MeleeWeaponItem weapon || weapon.ItemTypeId != weaponTypeId)
+            return;
+
+        if (!weapon.ApplyHitWear())
+            return;
+
+        _localInventorySlots[slot] = null;
+        _localSlotStacks[slot] = 0;
+        Object.Destroy(weapon.gameObject);
+        PlayMeleeWeaponBreakSfx();
+        RefreshLocalInventoryView();
+    }
+
+    /// <summary>A sword or crowbar just broke in this player's hand. Played on every peer.</summary>
+    public void PlayMeleeWeaponBreakSfx()
+    {
+        PlaySelfOrBodyOneShot(meleeWeaponBreakClip, meleeWeaponBreakVolume);
+    }
+
+    /// <summary>
+    /// Durability left on the sword or crowbar in hand, for the vitals-cluster gauge the flashlight battery and
+    /// the flare gun's rounds already share (a slot holds only one of them). Online it reads the server's count
+    /// from the per-slot charge variable — this peer's own copy of the weapon is never worn.
+    /// </summary>
+    bool TryGetHeldMeleeWeaponDurabilityForHud(out float normalized)
+    {
+        normalized = 0f;
+
+        // Already answers "nothing swung" while the hotbar is pocketed for a heavy throwable carry.
+        if (SelectedMeleeWeaponTypeId == GrabbableInventoryItem.TypeIdNone)
+            return false;
+
+        if (IsUsingNetworkedInventory)
+        {
+            normalized = Mathf.Clamp01(
+                _networkPlayerInventory.GetSlotFlashlightBatteryNormalizedForHud(_networkPlayerInventory.SelectedSlotIndex));
+            return true;
+        }
+
+        if (_localInventorySlots[_localSelectedSlot] is not MeleeWeaponItem weapon)
+            return false;
+
+        normalized = weapon.DurabilityNormalized;
+        return true;
+    }
 }

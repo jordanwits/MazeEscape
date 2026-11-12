@@ -216,6 +216,12 @@ public partial class PlayerController : MonoBehaviour
     [SerializeField] AudioClip zombieHitClip;
     [SerializeField, Range(0f, 1f)] float zombieHitVolume = 0.75f;
 
+    [Header("Melee Weapon Durability")]
+    [Tooltip("Played on every peer when a sword or crowbar takes its last hit and breaks. The hit counts are "
+        + "SwordItem.DurabilityHits and CrowbarItem.DurabilityHits; only swings that connect wear a weapon.")]
+    [SerializeField] AudioClip meleeWeaponBreakClip;
+    [SerializeField, Range(0f, 1f)] float meleeWeaponBreakVolume = 0.16f;
+
     [Header("Animator")]
     [SerializeField] bool driveAnimator = true;
     [SerializeField] string speedParameter = "Speed";
@@ -1900,8 +1906,16 @@ public partial class PlayerController : MonoBehaviour
             // The flare gun re-uses the flashlight's charge gauge to show rounds (a slot holds one or the other).
             float flareRounds01 = 0f;
             bool heldFlareGun = !heldFlashlight && TryGetHeldFlareGunRoundsForHud(out flareRounds01);
+            // ...and a sword or crowbar uses it for durability left.
+            float meleeDurability01 = 0f;
+            bool heldMeleeWeapon = !heldFlashlight && !heldFlareGun
+                && TryGetHeldMeleeWeaponDurabilityForHud(out meleeDurability01);
             if (_vitalsHud != null)
-                _vitalsHud.SetFlashlightCharge(heldFlashlight || heldFlareGun, heldFlashlight ? charge : flareRounds01);
+            {
+                _vitalsHud.SetFlashlightCharge(
+                    heldFlashlight || heldFlareGun || heldMeleeWeapon,
+                    heldFlashlight ? charge : heldFlareGun ? flareRounds01 : meleeDurability01);
+            }
             // Dying-light flicker on the held flashlight, driven with the peer-correct (synced) battery fraction.
             if (heldFlashlight && heldFlashlightItem != null)
                 heldFlashlightItem.TickLowBatteryFlicker(charge);
@@ -3215,8 +3229,14 @@ public partial class PlayerController : MonoBehaviour
             return;
         }
 
-        if (ApplyMeleeDamageLocally())
-            PlayMeleeImpactSfxForThisSwing();
+        byte weapon = SelectedMeleeWeaponTypeId;
+        if (!ApplyMeleeDamageLocally())
+            return;
+
+        // Impact first, wear second: the impact sound is picked from the weapon still in hand, and the hit
+        // that breaks it would otherwise play as a bare-fisted punch.
+        PlayMeleeImpactSfxForThisSwing();
+        WearMeleeWeaponAfterHit(weapon);
     }
 
     public void ApplyServerAuthoritativeMeleeDamage()
@@ -3243,6 +3263,10 @@ public partial class PlayerController : MonoBehaviour
         {
             PlayMeleeImpactSfxForThisSwing();
         }
+
+        // After the impact, for the same reason as the offline path: the breaking hit still sounds like the
+        // weapon it was struck with.
+        WearMeleeWeaponAfterHit(weapon);
     }
 
     /// <summary>

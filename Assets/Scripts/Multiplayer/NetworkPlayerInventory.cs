@@ -112,7 +112,10 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
-    /// <summary>Replicated 0…1 for HUD; only meaningful when the slot holds a flashlight. Server-writes from the world object each frame.</summary>
+    /// <summary>
+    /// Replicated 0…1 for HUD, server-written from the world object each frame. Shared by every item with a
+    /// gauge: battery for a flashlight, rounds for the flare gun, durability for a melee weapon.
+    /// </summary>
     readonly NetworkVariable<float> _slot0FlashlightBattery = new NetworkVariable<float>(
         0f,
         NetworkVariableReadPermission.Everyone,
@@ -489,6 +492,12 @@ public partial class NetworkPlayerInventory : NetworkBehaviour
                 // The per-slot charge NetworkVariable is shared: battery fraction for flashlights,
                 // loaded rounds / capacity for the flare gun (a slot only ever holds one of the two).
                 SetSlotFlashlightBatteryNormalized(i, flareGun.LoadedRounds / (float)FlareGunItem.MaxRounds);
+                continue;
+            }
+            if (g is MeleeWeaponItem meleeWeapon)
+            {
+                // ...and hits of durability left / capacity for the sword and crowbar.
+                SetSlotFlashlightBatteryNormalized(i, meleeWeapon.DurabilityNormalized);
                 continue;
             }
             if (g is not FlashlightItem f)

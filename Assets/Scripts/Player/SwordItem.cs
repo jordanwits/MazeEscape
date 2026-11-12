@@ -11,10 +11,16 @@ using UnityEngine;
 /// This item carries only what is genuinely per-item: the held pose it selects, and the fact that a sword
 /// has to ride the hand's rotation instead of the fixed forward aim every other socket item uses (a blade
 /// locked to a world direction would stay pointing forward through the whole swing).
+/// It also wears out: see <see cref="MeleeWeaponItem"/>.
 /// </summary>
-public class SwordItem : GrabbableInventoryItem
+public class SwordItem : MeleeWeaponItem
 {
     public static Sprite SharedHudSlotIcon { get; private set; }
+
+    /// <summary>The rusty blade survives six connecting swings; the sixth snaps it.</summary>
+    public const int DurabilityHits = 6;
+
+    public override int MaxDurabilityHits => DurabilityHits;
 
     /// <summary>
     /// Where the blade actually connects in the AUTHORED clip, in clip seconds. Measured, not guessed: the

@@ -9,11 +9,16 @@ using UnityEngine;
 /// <see cref="PlayerController"/> under the "Crowbar Melee" header, because the server adjudicates the swing
 /// from its own copy of the attacker and answers "which weapon?" from the replicated slot type, never from
 /// this instance. This class only carries what is genuinely per-item: the held pose and the hand-following
-/// rotation a swung weapon needs.
+/// rotation a swung weapon needs. It also wears out: see <see cref="MeleeWeaponItem"/>.
 /// </summary>
-public class CrowbarItem : GrabbableInventoryItem
+public class CrowbarItem : MeleeWeaponItem
 {
     public static Sprite SharedHudSlotIcon { get; private set; }
+
+    /// <summary>The bar outlasts the sword: eight connecting swings, and the eighth breaks it.</summary>
+    public const int DurabilityHits = 8;
+
+    public override int MaxDurabilityHits => DurabilityHits;
 
     /// <summary>
     /// Window of the Mixamo source clip ("Standing Melee Attack Downward", 2.27s at 30fps) that becomes
