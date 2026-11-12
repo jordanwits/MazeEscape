@@ -99,6 +99,7 @@ public class NetworkPlayerVoice : NetworkBehaviour
         if (!IsOwner)
         {
             UpdateGhostVoice();
+            _remoteOutput?.Tick();
             return;
         }
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)

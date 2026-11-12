@@ -85,6 +85,8 @@ public sealed class LobbyVoiceChat : MonoBehaviour
             return;
 
         _transmitter.Tick();
+        foreach (Speaker speaker in _speakers.Values)
+            speaker.Stream?.Tick();
 
         if (Time.unscaledTime >= _nextPruneTime)
         {
