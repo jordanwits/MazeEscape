@@ -246,6 +246,40 @@ public partial class PlayerController
     }
 
     /// <summary>
+    /// The gate panel's buttons sit side by side, closer together than the interact sphere is wide, so from point
+    /// blank the cast can start inside two of them at distance 0. Pick the one nearest the aim ray instead of the
+    /// nearest hit.
+    /// </summary>
+    bool TryFindInteractableGateButton(Transform cam, out CarnivalGateButton button)
+    {
+        button = null;
+        if (cam == null)
+            return false;
+
+        int mask = interactMask.value == 0 ? Physics.DefaultRaycastLayers : interactMask.value;
+        int count = TryInteractCastNonAlloc(cam, mask);
+        if (count <= 0)
+            return false;
+
+        Ray aim = new Ray(cam.position, cam.forward);
+        float best = float.MaxValue;
+        for (int i = 0; i < count; i++)
+        {
+            CarnivalGateButton found = _interactCastHitBuffer[i].collider.GetComponentInParent<CarnivalGateButton>();
+            if (found == null)
+                continue;
+
+            float offAxis = Vector3.Cross(aim.direction, found.transform.position - aim.origin).sqrMagnitude;
+            if (offAxis < best)
+            {
+                best = offAxis;
+                button = found;
+            }
+        }
+        return button != null;
+    }
+
+    /// <summary>
     /// The prize counter is a wide booth, so the aim cast alone would offer the shop from across the room —
     /// <see cref="CarnivalStore.CanOfferShop"/> gates it on the counter's own interact radius.
     /// </summary>
@@ -337,6 +371,12 @@ public partial class PlayerController
             }
         }
 
+        if (TryFindInteractableGateButton(cam, out CarnivalGateButton gateButton) && gateButton != null)
+        {
+            gateButton.Press(this);
+            return true;
+        }
+
         if (TryFindInteractableRadio(cam, out CarnivalRadio radio) && radio != null)
         {
             radio.RequestToggle();
@@ -376,6 +416,12 @@ public partial class PlayerController
         {
             message = button.CanStart ? button.StartPromptMessage : button.InProgressPromptMessage;
             return true;
+        }
+
+        if (TryFindInteractableGateButton(cam, out CarnivalGateButton gateButton) && gateButton != null)
+        {
+            message = gateButton.GetPrompt(this);
+            return !string.IsNullOrEmpty(message);
         }
 
         if (TryFindInteractableRadio(cam, out CarnivalRadio radio) && radio != null)

@@ -232,6 +232,10 @@ public partial class ProceduralMazeCoordinator
                 _hunterRespawnInteriorPlan,
                 _hunterRespawnTrapRoots);
 
+            // Never inside the carnival room while its gates are down — sealing it is the point.
+            if (CarnivalGateSystem.IsPointInsideSealedRoom(candidatePosition))
+                continue;
+
             if (!hasFallback)
             {
                 position = candidatePosition;

@@ -1271,13 +1271,14 @@ public partial class ProceduralMazeCoordinator : MonoBehaviour
         }
 
         DoorNetworkStateStore.ServerClear();
-        // ConsumedItemNetworkStore, CarnivalRadioNetworkStore and CarnivalStoreNetworkStore ride the same
+        // ConsumedItemNetworkStore, CarnivalRadioNetworkStore, CarnivalStoreNetworkStore and CarnivalGateNetworkStore ride the same
         // infrastructure NetworkObject as the door store, so they are already spawned by the block above; just
         // scope their per-level state to this level.
         ConsumedItemNetworkStore.ServerClear();
         StackedDropNetworkStore.ServerClear();
         CarnivalRadioNetworkStore.ServerClear();
         CarnivalStoreNetworkStore.ServerClear();
+        CarnivalGateNetworkStore.ServerClear();
     }
 
     GameObject FindRegisteredNetworkPrefabWithComponent<T>() where T : Component
