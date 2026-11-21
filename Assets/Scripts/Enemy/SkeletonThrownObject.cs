@@ -83,6 +83,11 @@ public class SkeletonThrownObject : NetworkBehaviour
     void Awake()
     {
         InitializeOnce();
+
+        // The nested FlamingSkull's fire loop is authored with no mixer group, so without this it ignored every
+        // volume slider.
+        foreach (AudioSource source in GetComponentsInChildren<AudioSource>(true))
+            GameAudioManager.RouteSfxSource(source);
     }
 
     public override void OnNetworkSpawn()

@@ -77,6 +77,7 @@ public class WindupMonkeyAI : NetworkBehaviour
         if (animator == null) animator = GetComponentInChildren<Animator>(true);
         if (characterController == null) characterController = GetComponent<CharacterController>();
         if (clapAudioSource == null) clapAudioSource = GetComponent<AudioSource>();
+        GameAudioManager.RouteSfxSource(clapAudioSource); // authored with no mixer group: ignored every volume slider
         EnsureAnimationSync();
     }
 

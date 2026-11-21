@@ -108,6 +108,10 @@ public class FlareBurnEffect : NetworkBehaviour
     {
         if (burnLight != null)
             _baseLightIntensity = burnLight.intensity;
+
+        // The fire loop is authored with no mixer group, so without this it ignored every volume slider.
+        foreach (AudioSource source in GetComponentsInChildren<AudioSource>(true))
+            GameAudioManager.RouteSfxSource(source);
     }
 
     void Update()

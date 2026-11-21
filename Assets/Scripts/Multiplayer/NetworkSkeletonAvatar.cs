@@ -57,6 +57,14 @@ public class NetworkSkeletonAvatar : NetworkBehaviour
         if (characterController == null)
             characterController = GetComponent<CharacterController>();
 
+        // The held FlamingSkull's fire loop is authored with no mixer group, so without this it ignored every
+        // volume slider. Routed once here; the source keeps its group after DropHeldSkull detaches it.
+        if (heldSkull != null)
+        {
+            foreach (AudioSource source in heldSkull.GetComponentsInChildren<AudioSource>(true))
+                GameAudioManager.RouteSfxSource(source);
+        }
+
         EnsureAnimationSync();
     }
 

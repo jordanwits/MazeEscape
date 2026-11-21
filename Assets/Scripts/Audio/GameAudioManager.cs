@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.Audio;
 using UnityEngine.SceneManagement;
@@ -17,13 +18,6 @@ public sealed class GameAudioManager : MonoBehaviour
     public const string ExposedSfxVolume = "SfxVolume";
     public const string ExposedVoiceVolume = "VoiceVolume";
     public const string ExposedUiVolume = "UiVolume";
-
-    /// <summary>
-    /// Conventional name of the per-level ambient bed object (cave drips / carnival ambience). It's a plain
-    /// scene AudioSource authored with no mixer group, so it output straight to the AudioListener and ignored
-    /// every volume slider (not even Master touched it). We route it on scene load — see <see cref="RouteSceneAmbientBed"/>.
-    /// </summary>
-    const string AmbientBedObjectName = "AmbientAudio";
 
     /// <summary>Round-robin pool behind <see cref="PlaySfxAtPoint"/>.</summary>
     const int PointSfxPoolSize = 8;
@@ -99,7 +93,11 @@ public sealed class GameAudioManager : MonoBehaviour
         LoadPrefs();
 
         SceneManager.sceneLoaded += HandleSceneLoaded;
-        RouteSceneAmbientBed(); // in case a level scene is already active when the manager comes up
+        ProceduralMazeCoordinator.LocalMazeBuilt += HandleLocalMazeBuilt;
+
+        // In case a level scene is already loaded when the manager comes up.
+        for (int i = 0; i < SceneManager.sceneCount; i++)
+            RouteUnroutedSceneSources(SceneManager.GetSceneAt(i));
     }
 
     /// <summary>
@@ -123,6 +121,7 @@ public sealed class GameAudioManager : MonoBehaviour
     void OnDestroy()
     {
         SceneManager.sceneLoaded -= HandleSceneLoaded;
+        ProceduralMazeCoordinator.LocalMazeBuilt -= HandleLocalMazeBuilt;
 
         if (Instance == this)
             Instance = null;
@@ -130,7 +129,7 @@ public sealed class GameAudioManager : MonoBehaviour
 
     void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        RouteSceneAmbientBed();
+        RouteUnroutedSceneSources(scene);
 
         // Cheap insurance that the saved levels are what's playing in every scene. The first scene's load fires
         // before Start, where SetFloat isn't safe yet — Start covers that one.
@@ -138,23 +137,36 @@ public sealed class GameAudioManager : MonoBehaviour
             ApplyAllToMixer();
     }
 
-    /// <summary>
-    /// Sends each level's ambient bed through the Sfx bus so the SFX slider governs it. Without this the bed
-    /// bypassed the mixer entirely (authored with no output group). Keyed by the conventional object name
-    /// (<see cref="AmbientBedObjectName"/>); a scene without that object is simply left alone. Idempotent — a
-    /// bed already carrying a mixer group is skipped, so an authored per-scene group override still wins.
-    /// </summary>
-    void RouteSceneAmbientBed()
+    /// <summary>The maze pieces (torches, flaming skulls, ...) are instantiated after the scene load, so sweep again.</summary>
+    void HandleLocalMazeBuilt(string sceneName)
     {
-        GameObject go = GameObject.Find(AmbientBedObjectName);
-        if (go == null)
+        RouteUnroutedSceneSources(SceneManager.GetSceneByName(sceneName));
+    }
+
+    /// <summary>
+    /// Sends every authored AudioSource in <paramref name="scene"/> that has no mixer group through the Sfx bus.
+    /// A source with no group outputs straight to the AudioListener and ignores every volume slider, Master
+    /// included — that was the level ambient beds and the Level01 torch / flaming-skull fire loops, which are
+    /// asset-pack props with no script of ours to route them. Runs on scene load and again after each local maze
+    /// build. Idempotent: a source that already has a group (authored, or routed by its own script) is left alone.
+    /// Sources under a NetworkObject are skipped too — players, enemies and items route their own sources (some to
+    /// Voice or Music) and would only be pre-empted here.
+    /// </summary>
+    void RouteUnroutedSceneSources(Scene scene)
+    {
+        if (_sfxGroup == null || !scene.IsValid() || !scene.isLoaded)
             return;
 
-        AudioSource source = go.GetComponent<AudioSource>();
-        if (source == null || source.outputAudioMixerGroup != null)
-            return;
+        foreach (GameObject root in scene.GetRootGameObjects())
+        {
+            foreach (AudioSource source in root.GetComponentsInChildren<AudioSource>(true))
+            {
+                if (source.outputAudioMixerGroup != null || source.GetComponentInParent<NetworkObject>(true) != null)
+                    continue;
 
-        RouteSfxSource(source); // occlusion registration is inert for the 2D bed (forced transparent by spatialBlend)
+                RouteSfxSource(source); // occlusion registration is inert for 2D sources like the ambient bed
+            }
+        }
     }
 
     void CacheGroups()
