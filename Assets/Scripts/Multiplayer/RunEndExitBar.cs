@@ -8,9 +8,9 @@ using UnityEngine.UI;
 /// <list type="bullet">
 /// <item>Host of an online session: BACK TO LOBBY (everyone returns to the lobby still connected, see
 /// <see cref="MultiplayerSceneFlow.ReturnToLobby"/>) and LEAVE (ends the session, as LEAVE always has).</item>
-/// <item>Anyone else in the session: WAITING FOR HOST and LEAVE (quits this player's session alone). The host's return
-/// takes this card down with the scene; if the host quits instead, the line reads HOST LEFT and LEAVE goes to the
-/// menu.</item>
+/// <item>Anyone else in the session: an inactive WAITING FOR HOST plate where the host's BACK TO LOBBY sits, and LEAVE
+/// (quits this player's session alone). The host's return takes this card down with the scene; if the host quits
+/// instead, the plate reads HOST LEFT and LEAVE goes to the menu.</item>
 /// <item>A solo run, or no session at all: MAIN MENU.</item>
 /// </list>
 /// LEAVE asks first (a danger confirm, <see cref="MenuModal"/>) while there is still a group to leave; MAIN MENU and a
@@ -30,8 +30,9 @@ public sealed class RunEndExitBar : MonoBehaviour
     const float Gap = 26f;
     const float PrimaryWidth = 340f;
     const float LeaveWidth = 220f;
-    const float StatusWidth = 330f;
     const float FontSize = 24f;
+    /// <summary>The waiting plate is a status, not a greyed-out action: dimmed enough to read as inactive, still legible.</summary>
+    const float WaitingPlateAlpha = 0.6f;
     const string LeaveConfirmTitle = "LEAVE GROUP";
     const string LeaveConfirmMessage = "Are you sure you want to leave the group and return to the menu?";
     const string HostLeaveConfirmMessage = LeaveConfirmMessage + " This ends the session for everyone.";
@@ -40,7 +41,7 @@ public sealed class RunEndExitBar : MonoBehaviour
     MenuModal _leaveConfirm;
     Button _primary;
     Button _leave;
-    TextMeshProUGUI _status;
+    TMP_Text _waitingLabel;
     bool _hostGone;
 
     /// <summary>The bar's height on the 1920x1080 reference canvas, for laying out what sits above it.</summary>
@@ -68,13 +69,13 @@ public sealed class RunEndExitBar : MonoBehaviour
         layout.childForceExpandHeight = false;
 
         var bar = row.gameObject.AddComponent<RunEndExitBar>();
-        bar.Build(row);
+        bar.Build(row, ResolveMode());
         return bar;
     }
 
-    void Build(RectTransform row)
+    void Build(RectTransform row, Mode mode)
     {
-        _mode = ResolveMode();
+        _mode = mode;
         switch (_mode)
         {
             case Mode.Host:
@@ -84,13 +85,21 @@ public sealed class RunEndExitBar : MonoBehaviour
                 break;
 
             case Mode.Guest:
-                _status = MenuWidgets.CreateText(row, "Status", "WAITING FOR HOST", 18f, MenuTheme.Mist,
-                    MenuWidgets.FontKind.Display, TextAlignmentOptions.MidlineRight, 6f);
-                _status.textWrappingMode = TextWrappingModes.NoWrap;
-                MenuWidgets.SetLayout(_status, minWidth: StatusWidth, preferredWidth: StatusWidth, minHeight: Height,
-                    preferredHeight: Height);
+            {
+                // Same plate, same spot as the host's BACK TO LOBBY, but only the host can press it.
+                Button waiting = CreatePlate(row, "Btn_WAITING", "WAITING FOR HOST", null, MenuWidgets.PlateStyle.Primary,
+                    PrimaryWidth);
+                waiting.interactable = false;
+                MenuButtonFx waitingFx = waiting.GetComponent<MenuButtonFx>();
+                if (waitingFx != null)
+                {
+                    waitingFx.disabledAlpha = WaitingPlateAlpha;
+                    _waitingLabel = waitingFx.label;
+                }
+
                 _leave = CreatePlate(row, "Btn_LEAVE", "LEAVE", Leave, MenuWidgets.PlateStyle.Danger, LeaveWidth);
                 break;
+            }
 
             default:
                 _primary = CreatePlate(row, "Btn_MAINMENU", "MAIN MENU", LeaveNow, MenuWidgets.PlateStyle.Primary, PrimaryWidth);
@@ -110,8 +119,8 @@ public sealed class RunEndExitBar : MonoBehaviour
             return;
 
         _hostGone = true;
-        if (_status != null)
-            _status.text = "HOST LEFT";
+        if (_waitingLabel != null)
+            _waitingLabel.text = "HOST LEFT";
     }
 
     static Mode ResolveMode()

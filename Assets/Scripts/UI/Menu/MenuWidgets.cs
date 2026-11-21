@@ -474,8 +474,12 @@ public static class MenuWidgets
     static Button AddButton(GameObject go, Graphic target, Action onClick)
     {
         var button = go.AddComponent<Button>();
-        button.targetGraphic = target;
+        // Transition off BEFORE the target is assigned: assigning it runs the current transition at once, and a plate
+        // built under a non-interactable CanvasGroup (a run-end card mid fade-in) would be stamped with the default
+        // ColorTint's disabled colour (half alpha) that nothing ever clears once the transition is None.
+        // MenuButtonFx owns every state's look.
         button.transition = Selectable.Transition.None;
+        button.targetGraphic = target;
         // Navigable for pads and the keyboard; UiEventSystem narrows it to the screen on top and drops any
         // selection a mouse click makes, so clicks still never leave a plate selected.
         button.navigation = new Navigation { mode = Navigation.Mode.Automatic };

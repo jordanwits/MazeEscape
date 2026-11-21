@@ -45,6 +45,12 @@ public sealed class MenuButtonFx : MonoBehaviour,
     /// <summary>Ledge shows permanently (primary CTAs) instead of only while selected.</summary>
     public bool ledgeAlways;
 
+    /// <summary>
+    /// The whole plate's alpha while its button is not interactable. Raise it for a plate that is a status rather
+    /// than a greyed-out action (e.g. a run-end card's WAITING FOR HOST), so it stays readable.
+    /// </summary>
+    public float disabledAlpha = 0.35f;
+
     /// <summary>The tilted plate under this button; when set, hover straightens and lifts it like a nudged sign.</summary>
     public RectTransform plate;
     public float plateBaseTilt;
@@ -174,7 +180,7 @@ public sealed class MenuButtonFx : MonoBehaviour,
         transform.localScale = new Vector3(scale, scale, 1f);
 
         if (_group != null)
-            _group.alpha = Interactable ? 1f : 0.35f;
+            _group.alpha = Interactable ? 1f : disabledAlpha;
     }
 
     Color Blend(Color normal, Color hover, Color selected)
