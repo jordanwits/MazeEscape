@@ -28,15 +28,11 @@ public sealed class AchievementRoomZone : MonoBehaviour
             return;
 
         _nextPollTime = Time.time + PollSeconds;
-        if (Achievements.IsUnlocked(achievement))
-        {
-            _done = true;
-            return;
-        }
-
         if (!TryGetLocalLivingPlayer(out PlayerHealth player) || !Contains(player.transform.position))
             return;
 
+        // Unlock even when this machine already has it on record: Unlock re-sends it to Steam (a find recorded while
+        // Steam could not take it never arrives otherwise) and only shows the toast the first time.
         _done = true;
         Achievements.Unlock(achievement);
     }

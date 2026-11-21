@@ -2,10 +2,16 @@
 
 40 achievements, defined in code in `Assets/Scripts/Achievements/AchievementCatalog.cs`. Every unlock is saved
 in PlayerPrefs (`achievement.<API name>`), so LAN games and the Editor keep a record. It is also sent to Steam when
-Steamworks is running. Steam only accepts an unlock whose API name exists on the app, so **each row below has to
-be created on the Steamworks partner site** (App Admin → Stats & Achievements). Use the same API name, and publish.
-Until then (on the Spacewar placeholder, app 480) Steam rejects the names, and the game shows its own
-"ACHIEVEMENT UNLOCKED" card instead of Steam's popup.
+Steamworks is running. Steam only accepts an unlock whose API name exists on the app, so each row below is defined
+on the Steamworks partner site (App Admin → Stats & Achievements; created and published for app 5042850 on
+2026-11-20, icons from `SteamPipe/AchievementIcons/`). When Steam rejects an unlock (no Steam, or a name the app does
+not define) the game shows its own "ACHIEVEMENT UNLOCKED" card instead of Steam's popup.
+
+**The local record is re-sent to Steam.** `Achievements.Unlock` tells Steam every time, even when PlayerPrefs already
+has the unlock, so callers must never skip it on the local record. And once per launch of a build (not the Editor,
+whose PlayerPrefs are play-test data) `SteamworksBootstrap` runs `Achievements.TrySyncLocalRecordToSteam`, which
+sends Steam every recorded unlock and lifetime count it does not have yet. That repairs unlocks earned while Steam
+could not take them, such as everything earned before the achievements existed on Steam.
 
 ## How it is wired
 

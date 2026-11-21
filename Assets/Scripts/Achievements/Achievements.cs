@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Steamworks;
 using UnityEngine;
 
@@ -71,6 +72,62 @@ public static class Achievements
 
         if (count >= entry.ProgressTarget)
             Unlock(id);
+    }
+
+    /// <summary>
+    /// Sends Steam whatever this machine has on record that Steam does not have yet: unlocks (and lifetime counts)
+    /// earned while Steam could not take them — before the app defined its achievements, or in a session without
+    /// Steam. Without this they only reach Steam if the player earns them again, and some never come up twice.
+    /// Returns false while Steam cannot report achievement state yet, so the caller can retry.
+    /// </summary>
+    public static bool TrySyncLocalRecordToSteam()
+    {
+        if (!SteamworksBootstrap.IsReady)
+            return false;
+
+        bool readable = false;
+        int unlocksSent = 0;
+        int countsSent = 0;
+        try
+        {
+            IReadOnlyList<AchievementCatalog.Entry> entries = AchievementCatalog.All;
+            for (int i = 0; i < entries.Count; i++)
+            {
+                AchievementCatalog.Entry entry = entries[i];
+                // False until Steam has this user's stats, or when the app does not define the name.
+                if (!SteamUserStats.GetAchievement(entry.ApiName, out bool achievedOnSteam))
+                    continue;
+
+                readable = true;
+                if (!achievedOnSteam
+                    && PlayerPrefs.GetInt(UnlockKeyPrefix + entry.ApiName, 0) == 1
+                    && SteamUserStats.SetAchievement(entry.ApiName))
+                    unlocksSent++;
+
+                if (entry.StatName == null)
+                    continue;
+
+                int localCount = PlayerPrefs.GetInt(ProgressKeyPrefix + entry.StatName, 0);
+                if (localCount > 0
+                    && SteamUserStats.GetStat(entry.StatName, out int steamCount)
+                    && localCount > steamCount
+                    && SteamUserStats.SetStat(entry.StatName, localCount))
+                    countsSent++;
+            }
+
+            if (unlocksSent > 0 || countsSent > 0)
+                SteamUserStats.StoreStats();
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[Achievements] Could not sync earlier unlocks to Steam: {ex.Message}");
+            return true;
+        }
+
+        if (unlocksSent > 0 || countsSent > 0)
+            Debug.Log($"[Achievements] Sent Steam {unlocksSent} earlier unlock(s) and {countsSent} lifetime count(s) it did not have.");
+
+        return readable;
     }
 
     static bool TryPushToSteam(AchievementCatalog.Entry entry)

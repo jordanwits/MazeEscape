@@ -38,6 +38,15 @@ public class SteamworksBootstrap : MonoBehaviour
     public static ulong LocalSteamId => s_LocalSteamId;
     public static string LocalPersonaName => s_LocalPersonaName;
 
+    // Once per launch, unlocks this machine recorded while Steam could not take them are re-sent
+    // (Achievements.TrySyncLocalRecordToSteam), retrying until Steam can report achievement state. Not in the
+    // Editor: its PlayerPrefs are a separate record full of play-test unlocks.
+    const float AchievementSyncRetrySeconds = 2f;
+    const int AchievementSyncMaxAttempts = 15;
+    bool _achievementSyncDone;
+    int _achievementSyncAttempts;
+    float _nextAchievementSyncTime;
+
     void Awake()
     {
         if (s_Instance != null && s_Instance != this)
@@ -47,13 +56,28 @@ public class SteamworksBootstrap : MonoBehaviour
         }
 
         s_Instance = this;
+        _achievementSyncDone = Application.isEditor;
         InitializeSteamworks();
     }
 
     void Update()
     {
-        if (s_IsReady)
-            SteamAPI.RunCallbacks();
+        if (!s_IsReady)
+            return;
+
+        SteamAPI.RunCallbacks();
+        TrySyncAchievementRecord();
+    }
+
+    void TrySyncAchievementRecord()
+    {
+        if (_achievementSyncDone || Time.unscaledTime < _nextAchievementSyncTime)
+            return;
+
+        _nextAchievementSyncTime = Time.unscaledTime + AchievementSyncRetrySeconds;
+        _achievementSyncAttempts++;
+        if (Achievements.TrySyncLocalRecordToSteam() || _achievementSyncAttempts >= AchievementSyncMaxAttempts)
+            _achievementSyncDone = true;
     }
 
     void OnDestroy()
