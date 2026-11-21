@@ -635,11 +635,12 @@ MonoBehaviour:
   leafB: {fileID: 8894725327008688196}
   openFraction: 0.94
   retractIntoJamb: 1
-  openDuration: 1.15
-  closeDuration: 0.95
-  doorOpenClip: {fileID: 8300000, guid: d2001904030da154d896ad3c35a0b36f, type: 3}
-  doorCloseClip: {fileID: 8300000, guid: 93ab024c3d4814c45a77a59f14feabac, type: 3}
+  openDuration: 2.1
+  closeDuration: 2.05
+  doorOpenClip: {fileID: 8300000, guid: 0f2ee1342e5264a40a163802f64072c8, type: 3}
+  doorCloseClip: {fileID: 8300000, guid: 89f0d087d1bca1047af46fdbf9a5fd6f, type: 3}
   doorVolume: 0.8
+  openOnArrivalDelay: 0
 --- !u!1 &8306995228735694382
 GameObject:
   m_ObjectHideFlags: 0
