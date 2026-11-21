@@ -8,9 +8,10 @@ using UnityEngine;
 /// independent rounds in parallel.
 /// <para>
 /// Lifecycle: a player presses E on <see cref="CarnivalGameStartButton"/> while <see cref="IsActive"/>
-/// is false. The server spawns one ball per <see cref="ballSpawns"/> anchor. There is no countdown —
-/// the round ends once <b>every</b> spawned ball has been thrown (picked up and released at least
-/// once). After the last ball is thrown the server waits <see cref="resolveDelaySeconds"/> to let any
+/// is false. The server spawns one ball per <see cref="ballSpawns"/> anchor. There is no visible
+/// countdown — the round ends once <b>every</b> spawned ball has been thrown (picked up and released
+/// at least once), or once <see cref="roundTimeoutSeconds"/> have passed since Start, whichever comes
+/// first. After either the server waits <see cref="resolveDelaySeconds"/> to let any
 /// in-flight ball finish passing through, then pays out and despawns the balls.
 /// </para>
 /// Scoring: each <see cref="HoleBoardHoleTrigger"/> reports the ball passing cleanly through it and
@@ -33,6 +34,9 @@ public sealed class HoleBoardGameController : NetworkBehaviour, ICarnivalGameSta
 
     [Tooltip("Seconds to wait after the last ball is thrown before scoring + paying out, so the last in-flight ball can finish passing through a hole.")]
     [SerializeField, Min(0f)] float resolveDelaySeconds = 2f;
+
+    [Tooltip("Seconds after Start before the round resolves even though not every ball has been thrown (it then settles for resolveDelaySeconds and pays out the points sunk so far). 0 disables the timeout.")]
+    [SerializeField, Min(0f)] float roundTimeoutSeconds = 30f;
 
     [Header("Scoring")]
     [Tooltip("Tickets awarded per point scored.")]
@@ -86,6 +90,7 @@ public sealed class HoleBoardGameController : NetworkBehaviour, ICarnivalGameSta
     readonly List<TrackedBall> _balls = new List<TrackedBall>();
     bool _resolving;
     float _resolveTimer;
+    float _roundElapsed; // server-only; seconds since Start, drives roundTimeoutSeconds
 
     public bool IsActive => _isActive.Value;
     public int Score => _score.Value; // Live: points sunk so far this round.
@@ -254,6 +259,7 @@ public sealed class HoleBoardGameController : NetworkBehaviour, ICarnivalGameSta
         _score.Value = 0;
         _resolving = false;
         _resolveTimer = 0f;
+        _roundElapsed = 0f;
         _isActive.Value = true;
     }
 
@@ -295,7 +301,11 @@ public sealed class HoleBoardGameController : NetworkBehaviour, ICarnivalGameSta
 
         if (!_resolving)
         {
-            if (AllBallsThrown())
+            // Second way out: a player who walks off with balls unthrown would otherwise leave the booth
+            // reading "in progress" until someone came back and threw them all.
+            _roundElapsed += Time.fixedDeltaTime;
+            bool timedOut = roundTimeoutSeconds > 0f && _roundElapsed >= roundTimeoutSeconds;
+            if (timedOut || AllBallsThrown())
             {
                 _resolving = true;
                 _resolveTimer = resolveDelaySeconds;

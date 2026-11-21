@@ -8,8 +8,9 @@ using UnityEngine;
 /// <para>
 /// Lifecycle: a player presses E on <see cref="CarnivalGameStartButton"/> while <see cref="IsActive"/>
 /// is false. The server spawns one ring per <see cref="ringSpawns"/> slot (one colour each) at its
-/// anchor and watches them. There is no countdown — the round ends once <b>every</b> ring has been
-/// thrown (picked up and released at least once). After all rings are thrown the server waits
+/// anchor and watches them. There is no visible countdown — the round ends once <b>every</b> ring has
+/// been thrown (picked up and released at least once), or once <see cref="roundTimeoutSeconds"/> have
+/// passed since Start, whichever comes first. After either of those the server waits
 /// <see cref="resolveDelaySeconds"/> to let the last ring settle, then scores each ring against the
 /// <see cref="RingTossPeg"/>s (a ring threaded onto a peg awards that peg's points), despawns the
 /// rings, and — if the total is positive — pops a single <see cref="CarnivalTicketBundle"/> out of
@@ -38,6 +39,9 @@ public sealed class RingTossGameController : NetworkBehaviour, ICarnivalGameStar
 
     [Tooltip("Seconds to wait after the last ring is thrown before scoring + paying out, so the ring can settle on a peg.")]
     [SerializeField, Min(0f)] float resolveDelaySeconds = 2f;
+
+    [Tooltip("Seconds after Start before the round resolves even though not every ring has been thrown (it then settles for resolveDelaySeconds and pays out what is on the pegs). 0 disables the timeout.")]
+    [SerializeField, Min(0f)] float roundTimeoutSeconds = 30f;
 
     [Tooltip("Tickets awarded per point scored.")]
     [SerializeField, Min(0)] int ticketsPerPoint = 1;
@@ -91,6 +95,7 @@ public sealed class RingTossGameController : NetworkBehaviour, ICarnivalGameStar
     readonly List<TrackedRing> _rings = new List<TrackedRing>();
     bool _resolving;
     float _resolveTimer;
+    float _roundElapsed; // server-only; seconds since Start, drives roundTimeoutSeconds
 
     public bool IsActive => _isActive.Value;
     public int Score => _score.Value; // Live: pegs the rings are currently resting on, recomputed each server tick.
@@ -249,6 +254,7 @@ public sealed class RingTossGameController : NetworkBehaviour, ICarnivalGameStar
         _score.Value = 0;
         _resolving = false;
         _resolveTimer = 0f;
+        _roundElapsed = 0f;
         _isActive.Value = true;
     }
 
@@ -266,7 +272,11 @@ public sealed class RingTossGameController : NetworkBehaviour, ICarnivalGameStar
 
         if (!_resolving)
         {
-            if (AllRingsThrown())
+            // Second way out: a player who walks off with rings unthrown would otherwise leave the booth
+            // reading "in progress" until someone came back and threw them all.
+            _roundElapsed += Time.fixedDeltaTime;
+            bool timedOut = roundTimeoutSeconds > 0f && _roundElapsed >= roundTimeoutSeconds;
+            if (timedOut || AllRingsThrown())
             {
                 _resolving = true;
                 _resolveTimer = resolveDelaySeconds;

@@ -9,8 +9,9 @@ using UnityEngine;
 /// <para>
 /// Lifecycle: a player presses E on <see cref="CarnivalGameStartButton"/> while <see cref="IsActive"/>
 /// is false. The server spawns one bottle per <see cref="bottleSpawns"/> anchor and one ball per
-/// <see cref="ballSpawns"/> anchor. There is no countdown — the round ends once <b>every</b> spawned
-/// ball has been thrown (picked up and released at least once). After the last ball is thrown the
+/// <see cref="ballSpawns"/> anchor. There is no visible countdown — the round ends once <b>every</b>
+/// spawned ball has been thrown (picked up and released at least once), or once
+/// <see cref="roundTimeoutSeconds"/> have passed since Start, whichever comes first. After either the
 /// server waits <see cref="resolveDelaySeconds"/> to let the last knocked bottle finish falling, then
 /// pays out and despawns the props.
 /// </para>
@@ -39,6 +40,9 @@ public sealed class BottleBoothGameController : NetworkBehaviour, ICarnivalGameS
 
     [Tooltip("Seconds to wait after the last ball is thrown before scoring + paying out, so the last knocked bottle can finish falling.")]
     [SerializeField, Min(0f)] float resolveDelaySeconds = 2f;
+
+    [Tooltip("Seconds after Start before the round resolves even though not every ball has been thrown (it then settles for resolveDelaySeconds and pays out the bottles knocked so far). 0 disables the timeout.")]
+    [SerializeField, Min(0f)] float roundTimeoutSeconds = 30f;
 
     [Header("Scoring")]
     [Tooltip("Points awarded for each bottle knocked off the shelf.")]
@@ -99,6 +103,7 @@ public sealed class BottleBoothGameController : NetworkBehaviour, ICarnivalGameS
     int _spawnedBottleCount;
     bool _resolving;
     float _resolveTimer;
+    float _roundElapsed; // server-only; seconds since Start, drives roundTimeoutSeconds
 
     public bool IsActive => _isActive.Value;
     public int Score => _score.Value; // Live: knocked-off bottles tallied so far this round.
@@ -287,6 +292,7 @@ public sealed class BottleBoothGameController : NetworkBehaviour, ICarnivalGameS
         _score.Value = 0;
         _resolving = false;
         _resolveTimer = 0f;
+        _roundElapsed = 0f;
         _isActive.Value = true;
     }
 
@@ -327,7 +333,11 @@ public sealed class BottleBoothGameController : NetworkBehaviour, ICarnivalGameS
 
         if (!_resolving)
         {
-            if (AllBallsThrown())
+            // Second way out: a player who walks off with balls unthrown would otherwise leave the booth
+            // reading "in progress" until someone came back and threw them all.
+            _roundElapsed += Time.fixedDeltaTime;
+            bool timedOut = roundTimeoutSeconds > 0f && _roundElapsed >= roundTimeoutSeconds;
+            if (timedOut || AllBallsThrown())
             {
                 _resolving = true;
                 _resolveTimer = resolveDelaySeconds;
