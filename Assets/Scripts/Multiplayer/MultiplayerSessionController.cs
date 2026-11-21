@@ -686,6 +686,71 @@ public class MultiplayerSessionController : MonoBehaviour
         UpdateStatus($"Could not start game scene load: {status}.");
     }
 
+    /// <summary>
+    /// Host, once a run has ended (escaped or wiped): takes the whole session back to the menu lobby, everyone still
+    /// connected, instead of tearing it down. The Menu scene opens on the lobby screen whenever a session is live, so
+    /// all that is left is the cleanup a section switch does — minus the carry-over, because the next run starts
+    /// fresh — and un-readying everyone. Returns false when the load could not start (the caller falls back to
+    /// leaving).
+    /// </summary>
+    public bool ReturnSessionToLobby()
+    {
+        if (_networkManager == null || !_networkManager.IsHost || _isOfflineSession || _networkManager.SceneManager == null)
+            return false;
+
+        CancelPendingGameLoad();
+        CancelAllPendingSpawnMoves();
+
+        // Nothing from this run follows anyone into the next one.
+        LevelCarryOverStore.ClearAll();
+
+        // Dynamically spawned level objects survive a Single load (they would migrate into the menu), so they go
+        // first, exactly as at a section switch.
+        if (_networkManager.TryGetComponent(out ProceduralMazeCoordinator mazeCoordinator))
+            mazeCoordinator.ServerDespawnAllLevelNetworkObjects();
+
+        // The load despawns every avatar; bracketed so those despawns are not treated as disconnects (which would
+        // scatter each player's hotbar into the menu).
+        NetworkPlayerInventory.BeginServerLevelSceneSwitch();
+        SceneEventProgressStatus status;
+        try
+        {
+            status = _networkManager.SceneManager.LoadScene(MultiplayerSceneFlow.MenuSceneName, LoadSceneMode.Single);
+        }
+        finally
+        {
+            NetworkPlayerInventory.EndServerLevelSceneSwitch();
+        }
+
+        if (status != SceneEventProgressStatus.Started)
+        {
+            UpdateStatus($"Could not return to the lobby: {status}.");
+            return false;
+        }
+
+        ServerResetLobbyForNextRun();
+        UpdateStatus("Back in the lobby.");
+        return true;
+    }
+
+    /// <summary>
+    /// Everyone stays, keeps their survivor and name; only the ready flags and the start latch clear, so the crew
+    /// readies up again for the next run. Not <see cref="ResetServerLobbyState"/>: that reseeds names, and a client
+    /// only sends its name once, on connect.
+    /// </summary>
+    void ServerResetLobbyForNextRun()
+    {
+        if (_networkManager == null || !_networkManager.IsServer)
+            return;
+
+        foreach (ulong clientId in new List<ulong>(_serverLobbyReadyByClient.Keys))
+            _serverLobbyReadyByClient[clientId] = false;
+
+        _localReady = false;
+        _gameStartRequested = false;
+        PublishServerLobbyState();
+    }
+
     void CancelAllPendingSpawnMoves()
     {
         foreach (ulong clientId in new List<ulong>(_pendingSpawnMoves.Keys))

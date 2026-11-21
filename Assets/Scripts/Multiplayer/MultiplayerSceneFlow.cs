@@ -6,7 +6,8 @@ using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Keeps host/client connections in the menu lobby, then lets the host start a synchronized NGO scene load.
-/// Returning to the menu shuts down the session and loads the menu scene (bootstrap stays alive).
+/// Returning to the menu shuts down the session and loads the menu scene (bootstrap stays alive); returning to the
+/// lobby after a run (<see cref="ReturnToLobby"/>) keeps the session and brings everyone back together.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(MultiplayerSessionController))]
@@ -171,6 +172,23 @@ public class MultiplayerSceneFlow : MonoBehaviour
             return;
 
         session.StartGameFromLobby(sceneName);
+    }
+
+    /// <summary>
+    /// Host, from a finished run's card: everyone goes back to the lobby together, still connected, so the next run
+    /// needs no re-invites. Anywhere this cannot work (not the host, a solo run, no session, the load refused) it
+    /// falls back to <see cref="ReturnToMainMenu"/>.
+    /// </summary>
+    public void ReturnToLobby()
+    {
+        if (_sceneOpInProgress)
+            return;
+
+        StopAllCoroutines();
+        if (session != null && session.IsSessionActive && session.ReturnSessionToLobby())
+            return;
+
+        ReturnToMainMenu();
     }
 
     public void ReturnToMainMenu()

@@ -16,11 +16,12 @@ using UnityEngine.UI;
 /// The counterpart of <see cref="TeamWipeSequence"/> and built the same way: it owns input while it runs
 /// (<see cref="PauseMenuController.BlocksGameplayInput"/> reads <see cref="IsRunning"/>), a client whose host leaves
 /// first keeps its card (<see cref="MultiplayerSceneFlow"/> and <see cref="MultiplayerSessionController"/> skip their
-/// disconnect handling while this runs), and MAIN MENU ends this player's session the same way the wipe card's LEAVE
-/// does. Lives in the gameplay scene, so <see cref="IsRunning"/> clears by itself when the menu load tears it down.
+/// disconnect handling while this runs), and it shares the wipe card's exit row (<see cref="RunEndExitBar"/>): the
+/// host can take everyone back to the lobby still connected, anyone can LEAVE, a solo run gets MAIN MENU. Lives in
+/// the gameplay scene, so <see cref="IsRunning"/> clears by itself when the lobby or menu load tears it down.
 ///
 /// Awards need two or more players who stayed to the end; a solo run shows only its own row.
-/// On a pad the card is a navigation scope with MAIN MENU as its only stop; it has no back.
+/// On a pad the card is a navigation scope over the exit row, starting on its main action; it has no back.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class RunCompleteSequence : MonoBehaviour
@@ -34,11 +35,11 @@ public sealed class RunCompleteSequence : MonoBehaviour
     /// </summary>
     const int CardSortingOrder = 800;
 
-    // Layout on the 1920x1080 reference canvas: title and clock on top, awards, then the table, MAIN MENU underneath.
+    // Layout on the 1920x1080 reference canvas: title and clock on top, awards, then the table, the exit row underneath.
     const float TitleTop = 36f;
     const float TitleHeight = 120f;
     const float ClockTop = TitleTop + TitleHeight + 4f;
-    /// <summary>Awards and table share the band between the clock and MAIN MENU, centred in it.</summary>
+    /// <summary>Awards and table share the band between the clock and the exit row, centred in it.</summary>
     const float ContentTop = 222f;
     const float ContentBottomMargin = 40f;
     const float ReferenceHeight = 1080f;
@@ -51,8 +52,7 @@ public sealed class RunCompleteSequence : MonoBehaviour
     const float HeaderHeight = 28f;
     const float RowHeight = 52f;
     const float RowGap = 6f;
-    const float MenuButtonBottom = 40f;
-    static readonly Vector2 MenuButtonSize = new(340f, 62f);
+    const float ExitBarBottom = 40f;
 
     readonly struct Column
     {
@@ -93,7 +93,7 @@ public sealed class RunCompleteSequence : MonoBehaviour
 
     RunSummary _summary;
     CanvasGroup _cardGroup;
-    Button _menuButton;
+    RunEndExitBar _exitBar;
     UiNavScope _navScope;
     Camera _fallbackCamera;
 
@@ -134,10 +134,10 @@ public sealed class RunCompleteSequence : MonoBehaviour
         }
         _cardGroup.alpha = 1f;
 
-        // Clickable only once fully shown, so the press that closed the doors can't land on MAIN MENU unseen.
+        // Clickable only once fully shown, so the press that closed the doors can't land on an exit unseen.
         _cardGroup.blocksRaycasts = true;
         _cardGroup.interactable = true;
-        _navScope = new UiNavScope(_cardGroup.transform, () => _menuButton);
+        _navScope = new UiNavScope(_cardGroup.transform, () => _exitBar != null ? _exitBar.DefaultButton : null);
         UiEventSystem.Open(_navScope);
     }
 
@@ -154,12 +154,6 @@ public sealed class RunCompleteSequence : MonoBehaviour
             _fallbackCamera.backgroundColor = MenuTheme.Ink;
             _fallbackCamera.cullingMask = 0;
         }
-    }
-
-    void ReturnToMenu()
-    {
-        _menuButton.interactable = false; // one press: the menu load takes a frame or more
-        ElevatorFinishController.RequestReturnToMainMenuLocal();
     }
 
     // ---- building ---------------------------------------------------------------------------------------
@@ -196,13 +190,13 @@ public sealed class RunCompleteSequence : MonoBehaviour
             : 0f;
         float tableHeight = TableHeight(players.Length);
 
-        float bandBottom = ReferenceHeight - (MenuButtonBottom + MenuButtonSize.y + ContentBottomMargin);
+        float bandBottom = ReferenceHeight - (ExitBarBottom + RunEndExitBar.BarHeight + ContentBottomMargin);
         float top = ContentTop + Mathf.Max(0f, (bandBottom - ContentTop - awardsHeight - tableHeight) * 0.5f);
         if (awardRows > 0)
             BuildAwards(canvas.transform, awards, top);
 
         BuildTable(canvas.transform, players, top + awardsHeight);
-        BuildMenuButton(canvas.transform);
+        _exitBar = RunEndExitBar.Create(canvas.transform, ExitBarBottom);
     }
 
     void BuildTitle(Transform parent)
@@ -496,19 +490,6 @@ public sealed class RunCompleteSequence : MonoBehaviour
                 color = MenuTheme.Faint;
                 return;
         }
-    }
-
-    void BuildMenuButton(Transform parent)
-    {
-        MenuButtonFx fx = MenuWidgets.CreatePlate(parent, "Btn_MAINMENU", "MAIN MENU", ReturnToMenu,
-            MenuWidgets.PlateStyle.Primary, MenuButtonSize.y, 24f);
-        RectTransform rt = (RectTransform)fx.transform;
-        rt.anchorMin = new Vector2(0.5f, 0f);
-        rt.anchorMax = new Vector2(0.5f, 0f);
-        rt.pivot = new Vector2(0.5f, 0f);
-        rt.anchoredPosition = new Vector2(0f, MenuButtonBottom);
-        rt.sizeDelta = MenuButtonSize;
-        _menuButton = fx.button;
     }
 
     // ---- helpers ----------------------------------------------------------------------------------------

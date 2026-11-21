@@ -9,9 +9,9 @@ using UnityEngine.UI;
 /// Peer-local end of a lost run (see <see cref="TeamWipeDirector"/>): a short beat for the last body to land,
 /// an "ALL DEAD" card over everything ("NO WAY OUT" when someone is left alive but locked in the jail for good)
 /// — with a map of the section that replays where every player walked
-/// (<see cref="RunTrailMap"/>). The card stays until this player presses LEAVE, which ends their session and
-/// returns them to the main menu, the same exit <see cref="ElevatorFinishController"/> takes after the final
-/// section.
+/// (<see cref="RunTrailMap"/>). The card stays until it is left through its exit row (<see cref="RunEndExitBar"/>):
+/// the host can take everyone back to the lobby still connected, and anyone can LEAVE the session — the same
+/// choices as the run-complete card after the final section.
 ///
 /// While it runs it owns input: <see cref="PauseMenuController.BlocksGameplayInput"/> reads
 /// <see cref="IsRunning"/>, so the view no longer turns with the mouse behind the card, nothing re-locks the
@@ -23,8 +23,8 @@ using UnityEngine.UI;
 ///
 /// Lives in the gameplay scene, so <see cref="IsRunning"/> clears by itself when the menu load tears it down.
 ///
-/// On a pad the card is a navigation scope with LEAVE as its only stop (<see cref="UiNavScope"/>), so A presses it.
-/// It has no back: B / Esc do nothing here.
+/// On a pad the card is a navigation scope over its exit row (<see cref="UiNavScope"/>), starting on the main
+/// action. It has no back: B / Esc do nothing here.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class TeamWipeSequence : MonoBehaviour
@@ -41,14 +41,13 @@ public sealed class TeamWipeSequence : MonoBehaviour
     static readonly Vector2 MapMaxSize = new(1280f, 640f);
     const float MapCenterY = -20f;
     const float LegendBottom = 128f;
-    const float LeaveBottom = 40f;
-    static readonly Vector2 LeaveSize = new(300f, 62f);
+    const float ExitBarBottom = 40f;
 
     static TeamWipeSequence s_instance;
 
     CanvasGroup _cardGroup;
     RunTrailMap _map;
-    Button _leaveButton;
+    RunEndExitBar _exitBar;
     UiNavScope _navScope;
     Camera _fallbackCamera;
     bool _everyoneDead = true;
@@ -94,11 +93,11 @@ public sealed class TeamWipeSequence : MonoBehaviour
         _cardGroup.alpha = 1f;
 
         // Clickable only once fully shown, so a click already in flight when the last player went down (a punch,
-        // a spectator switch) can't land on LEAVE before the card has even been seen. The same goes for a pad:
-        // LEAVE takes focus only now.
+        // a spectator switch) can't land on an exit before the card has even been seen. The same goes for a pad:
+        // the exit row takes focus only now.
         _cardGroup.blocksRaycasts = true;
         _cardGroup.interactable = true;
-        _navScope = new UiNavScope(_cardGroup.transform, () => _leaveButton);
+        _navScope = new UiNavScope(_cardGroup.transform, () => _exitBar != null ? _exitBar.DefaultButton : null);
         UiEventSystem.Open(_navScope);
 
         if (_map != null && _map.HasTrails)
@@ -118,12 +117,6 @@ public sealed class TeamWipeSequence : MonoBehaviour
             _fallbackCamera.backgroundColor = MenuTheme.Ink;
             _fallbackCamera.cullingMask = 0;
         }
-    }
-
-    void Leave()
-    {
-        _leaveButton.interactable = false; // one press: the menu load takes a frame or more
-        ElevatorFinishController.RequestReturnToMainMenuLocal();
     }
 
     void BuildCard()
@@ -153,7 +146,7 @@ public sealed class TeamWipeSequence : MonoBehaviour
         vignette.rectTransform.SetStretch();
 
         BuildTitle(canvas.transform);
-        BuildLeaveButton(canvas.transform);
+        _exitBar = RunEndExitBar.Create(canvas.transform, ExitBarBottom);
 
         // The recorder froze the moment the wipe began; the footprint is only the right map if this peer's last
         // build was this section.
@@ -181,20 +174,6 @@ public sealed class TeamWipeSequence : MonoBehaviour
         legend.pivot = new Vector2(0.5f, 0f);
         legend.anchoredPosition = new Vector2(0f, LegendBottom);
         legend.sizeDelta = new Vector2(1600f, 30f);
-    }
-
-    void BuildLeaveButton(Transform parent)
-    {
-        // Danger, like every other LEAVE in the game (blackjack table, pause confirm).
-        MenuButtonFx fx = MenuWidgets.CreatePlate(parent, "Btn_LEAVE", "LEAVE", Leave,
-            MenuWidgets.PlateStyle.Danger, LeaveSize.y, 24f);
-        RectTransform rt = (RectTransform)fx.transform;
-        rt.anchorMin = new Vector2(0.5f, 0f);
-        rt.anchorMax = new Vector2(0.5f, 0f);
-        rt.pivot = new Vector2(0.5f, 0f);
-        rt.anchoredPosition = new Vector2(0f, LeaveBottom);
-        rt.sizeDelta = LeaveSize;
-        _leaveButton = fx.button;
     }
 
     void BuildTitle(Transform parent)
