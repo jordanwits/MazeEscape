@@ -55,9 +55,9 @@ public partial class SwingingAxeTrap : NetworkBehaviour
     [SerializeField] float damagePerHit = 25f;
     [Tooltip("Minimum seconds between hits on the same player, so one swing-through deals one hit.")]
     [SerializeField, Min(0.05f)] float perPlayerHitCooldown = 0.6f;
-    [Tooltip("Blade hit volume in each pivot's LOCAL space (covers the axe head). Rotates with the swing.")]
-    [SerializeField] Vector3 bladeHitLocalCenter = new Vector3(0f, -0.4f, 3.3f);
-    [SerializeField] Vector3 bladeHitHalfExtents = new Vector3(0.5f, 0.8f, 1.3f);
+    [Tooltip("Hit volumes in each pivot's LOCAL space at the rest pose; they rotate with the swing. Fitted to the axe " +
+             "mesh so a player is hit only where the visible handle, spike or blade actually reaches them.")]
+    [SerializeField] BladeHitBox[] bladeHitBoxes = DefaultBladeHitBoxes();
     [Tooltip("Layers scanned for players. Defaults to the 'Player' layer when left empty.")]
     [SerializeField] LayerMask playerMask;
 
@@ -76,8 +76,46 @@ public partial class SwingingAxeTrap : NetworkBehaviour
     [SerializeField] AudioClip impactClip;
     [SerializeField, Range(0f, 1f)] float impactVolume = 0.9f;
 
+    /// <summary>One box of the blade's hit shape, in its pivot's local space at the rest pose.</summary>
+    [System.Serializable]
+    public struct BladeHitBox
+    {
+        public Vector3 center;
+        public Vector3 halfExtents;
+
+        public BladeHitBox(Vector3 center, Vector3 halfExtents)
+        {
+            this.center = center;
+            this.halfExtents = halfExtents;
+        }
+    }
+
+    /// <summary>
+    /// The carnival axe mesh as boxes (rest pose: handle along +Z from the hinge, crescent edge toward -Y): the handle,
+    /// the top of the head, the back spike in two steps and the crescent in eight bands. Fitted to the mesh outline,
+    /// every box stays within about 6 cm of visible metal.
+    /// </summary>
+    static BladeHitBox[] DefaultBladeHitBoxes() => new[]
+    {
+        new BladeHitBox(new Vector3(-0.004f, 0.025f, 1.425f), new Vector3(0.082f, 0.105f, 1.595f)), // handle
+        new BladeHitBox(new Vector3(-0.004f, 0.035f, 3.33f), new Vector3(0.12f, 0.115f, 0.31f)),     // head, handle line
+        new BladeHitBox(new Vector3(-0.004f, 0.205f, 3.445f), new Vector3(0.063f, 0.065f, 0.135f)),  // spike base
+        new BladeHitBox(new Vector3(-0.003f, 0.335f, 3.49f), new Vector3(0.025f, 0.065f, 0.05f)),    // spike tip
+        new BladeHitBox(new Vector3(-0.004f, -0.725f, 3.46f), new Vector3(0.008f, 0.015f, 0.14f)),   // crescent edge
+        new BladeHitBox(new Vector3(-0.005f, -0.685f, 3.465f), new Vector3(0.022f, 0.025f, 0.315f)),
+        new BladeHitBox(new Vector3(-0.005f, -0.615f, 3.425f), new Vector3(0.051f, 0.045f, 0.415f)),
+        new BladeHitBox(new Vector3(-0.004f, -0.535f, 3.36f), new Vector3(0.063f, 0.035f, 0.43f)),
+        new BladeHitBox(new Vector3(-0.004f, -0.455f, 3.295f), new Vector3(0.058f, 0.045f, 0.435f)),
+        new BladeHitBox(new Vector3(-0.004f, -0.34f, 3.225f), new Vector3(0.047f, 0.07f, 0.455f)),
+        new BladeHitBox(new Vector3(-0.004f, -0.23f, 3.425f), new Vector3(0.039f, 0.04f, 0.205f)),   // neck
+        new BladeHitBox(new Vector3(-0.004f, -0.135f, 3.455f), new Vector3(0.063f, 0.055f, 0.155f)),
+    };
+
     const float TwoPi = Mathf.PI * 2f;
     const int OverlapBufferSize = 32;
+    /// <summary>Furthest the blade tip may travel between two hit tests; a frame that sweeps further is split up.</summary>
+    const float MaxHitSweepStep = 0.1f;
+    const int MaxHitSubsteps = 8;
 
     // Server writes the live swing angle every frame while moving; clients read and apply it so every peer
     // shows the blades in the same place (and the server's own blade colliders drive authoritative damage).
@@ -85,8 +123,14 @@ public partial class SwingingAxeTrap : NetworkBehaviour
         0f, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
     Quaternion[] _baseLocalRot;
-    Vector3[] _prevBladeWorld;
-    bool _hasPrevBlade;
+    float _prevHitAngleDeg;
+    bool _hasPrevHitAngle;
+    // Pivot-local bounds of every hit box (a cheap first test before the per-box ones), the furthest any box corner
+    // reaches from the pivot (sizes the sub-steps) and the furthest along the handle (the Close Shave arc).
+    Vector3 _bladeBoundsCenter;
+    Vector3 _bladeBoundsHalfExtents;
+    float _bladeTipReach;
+    float _bladeLengthReach;
     float _phase;                 // 0..2π drives one full back-and-forth cycle (authority/offline only)
     float _currentAngleDeg;
     float _prevDisplayAngleDeg;
@@ -95,6 +139,7 @@ public partial class SwingingAxeTrap : NetworkBehaviour
     readonly Dictionary<PlayerHealth, float> _nextHitTime = new();
     readonly Collider[] _overlap = new Collider[OverlapBufferSize];
     readonly List<PlayerHealth> _standInHits = new();
+    readonly List<PlayerHealth> _standInNearBlade = new();
     AudioSource _audio;
 
     // Client-side interpolation of the server-replicated swing angle. The server writes _netAngleDeg every frame but
@@ -122,6 +167,7 @@ public partial class SwingingAxeTrap : NetworkBehaviour
             tripwireOrigin = transform;
 
         CachePivots();
+        CacheBladeHitBounds();
 
         if (playerMask.value == 0)
         {
@@ -141,11 +187,33 @@ public partial class SwingingAxeTrap : NetworkBehaviour
     {
         int count = pivots != null ? pivots.Length : 0;
         _baseLocalRot = new Quaternion[count];
-        _prevBladeWorld = new Vector3[count];
         for (int i = 0; i < count; i++)
             if (pivots[i] != null)
                 _baseLocalRot[i] = pivots[i].localRotation;
     }
+
+    void CacheBladeHitBounds()
+    {
+        _bladeBoundsCenter = _bladeBoundsHalfExtents = Vector3.zero;
+        _bladeTipReach = _bladeLengthReach = 0f;
+        if (bladeHitBoxes == null || bladeHitBoxes.Length == 0)
+            return;
+
+        Vector3 min = Vector3.positiveInfinity;
+        Vector3 max = Vector3.negativeInfinity;
+        foreach (BladeHitBox box in bladeHitBoxes)
+        {
+            Vector3 half = Abs(box.halfExtents);
+            min = Vector3.Min(min, box.center - half);
+            max = Vector3.Max(max, box.center + half);
+            _bladeTipReach = Mathf.Max(_bladeTipReach, (Abs(box.center) + half).magnitude);
+            _bladeLengthReach = Mathf.Max(_bladeLengthReach, Mathf.Abs(box.center.z) + half.z);
+        }
+        _bladeBoundsCenter = (min + max) * 0.5f;
+        _bladeBoundsHalfExtents = (max - min) * 0.5f;
+    }
+
+    static Vector3 Abs(Vector3 v) => new(Mathf.Abs(v.x), Mathf.Abs(v.y), Mathf.Abs(v.z));
 
     void EnsureTripwireZone()
     {
@@ -183,6 +251,7 @@ public partial class SwingingAxeTrap : NetworkBehaviour
     void OnValidate()
     {
         AutoAssignClipInEditor();
+        CacheBladeHitBounds();
     }
 
     void AutoAssignClipInEditor()
@@ -222,7 +291,7 @@ public partial class SwingingAxeTrap : NetworkBehaviour
             if (_phase > 0.0001f)
                 DetectAndDamage(dt);
             else
-                _hasPrevBlade = false;
+                _hasPrevHitAngle = false;
 
             UpdateCloseShaveCrossings(_phase > 0.0001f);
         }
@@ -355,53 +424,96 @@ public partial class SwingingAxeTrap : NetworkBehaviour
         return false;
     }
 
+    /// <summary>
+    /// Tests the blade's hit boxes against players. The boxes hug the axe mesh, so a fast frame could carry the blade
+    /// clean past a player between two tests; the angle swept since the last test is split into steps short enough
+    /// that the tip never jumps more than <see cref="MaxHitSweepStep"/>, and every step is tested in order.
+    /// </summary>
     void DetectAndDamage(float dt)
     {
-        if (pivots == null)
+        if (pivots == null || bladeHitBoxes == null || bladeHitBoxes.Length == 0)
             return;
 
         int mask = playerMask.value != 0 ? playerMask.value : Physics.DefaultRaycastLayers;
-        float invDt = dt > 1e-5f ? 1f / dt : 0f;
+        float toAngle = _currentAngleDeg;
+        float fromAngle = _hasPrevHitAngle ? _prevHitAngleDeg : toAngle;
+        _prevHitAngleDeg = toAngle;
+        _hasPrevHitAngle = true;
 
-        for (int i = 0; i < pivots.Length; i++)
+        float sweptTip = Mathf.Abs(toAngle - fromAngle) * Mathf.Deg2Rad * _bladeTipReach;
+        int steps = Mathf.Clamp(Mathf.CeilToInt(sweptTip / MaxHitSweepStep), 1, MaxHitSubsteps);
+        float invStepDt = dt > 1e-5f ? steps / dt : 0f;
+        Vector3 axis = localSwingAxis.sqrMagnitude > 1e-6f ? localSwingAxis.normalized : Vector3.right;
+
+        for (int s = 1; s <= steps; s++)
         {
-            Transform pivot = pivots[i];
-            if (pivot == null)
-                continue;
+            float angle = Mathf.Lerp(fromAngle, toAngle, s / (float)steps);
+            float prevAngle = Mathf.Lerp(fromAngle, toAngle, (s - 1) / (float)steps);
 
-            Vector3 center = pivot.TransformPoint(bladeHitLocalCenter);
-
-            // Blade travel direction this frame (horizontal) — the way we shove the player.
-            Vector3 bladeVel = _hasPrevBlade ? (center - _prevBladeWorld[i]) * invDt : Vector3.zero;
-            _prevBladeWorld[i] = center;
-
-            int count = Physics.OverlapBoxNonAlloc(
-                center, bladeHitHalfExtents, _overlap, pivot.rotation, mask, QueryTriggerInteraction.Ignore);
-
-            for (int h = 0; h < count; h++)
+            for (int i = 0; i < pivots.Length; i++)
             {
-                Collider col = _overlap[h];
-                if (col == null)
+                Transform pivot = pivots[i];
+                if (pivot == null)
                     continue;
 
-                // A joined client knocked down moments ago is, on the server, a presentation-only launch sim that is
-                // not where their real body is (see NetworkPlayerRagdoll); those bones must not take blade hits.
-                PlayerHealth hitPlayer = col.GetComponentInParent<PlayerHealth>();
-                if (hitPlayer != null && hitPlayer.TryGetComponent(out PlayerRagdollController hitRagdoll)
-                    && hitRagdoll.IsObserverLocalSimActive)
+                // The pivot only rotates, so its position holds for every step; only the rotation is re-derived.
+                Vector3 origin = pivot.position;
+                Quaternion parentRot = pivot.parent != null ? pivot.parent.rotation : Quaternion.identity;
+                Quaternion rot = parentRot * _baseLocalRot[i] * Quaternion.AngleAxis(angle, axis);
+                Quaternion prevRot = parentRot * _baseLocalRot[i] * Quaternion.AngleAxis(prevAngle, axis);
+
+                // Cheap first pass over the whole axe; most frames nobody is near it.
+                Vector3 boundsCenter = origin + rot * _bladeBoundsCenter;
+                bool colliderNear = Physics.CheckBox(
+                    boundsCenter, _bladeBoundsHalfExtents, rot, mask, QueryTriggerInteraction.Ignore);
+                _standInNearBlade.Clear();
+                PlayerHealthRegistry.CollectStandInHitsInBox(
+                    boundsCenter, _bladeBoundsHalfExtents, rot, _standInNearBlade);
+                if (!colliderNear && _standInNearBlade.Count == 0)
                     continue;
 
-                TryBladeHit(hitPlayer, pivot, center, bladeVel);
+                foreach (BladeHitBox box in bladeHitBoxes)
+                {
+                    Vector3 center = origin + rot * box.center;
+                    Vector3 halfExtents = Abs(box.halfExtents);
+                    // This box's travel over the step (horizontal part) is the way we shove the player.
+                    Vector3 boxVel = (center - (origin + prevRot * box.center)) * invStepDt;
+
+                    if (colliderNear)
+                    {
+                        int count = Physics.OverlapBoxNonAlloc(
+                            center, halfExtents, _overlap, rot, mask, QueryTriggerInteraction.Ignore);
+                        for (int h = 0; h < count; h++)
+                        {
+                            Collider col = _overlap[h];
+                            if (col == null)
+                                continue;
+
+                            // A joined client knocked down moments ago is, on the server, a presentation-only launch
+                            // sim that is not where their real body is (see NetworkPlayerRagdoll); those bones must not
+                            // take blade hits.
+                            PlayerHealth hitPlayer = col.GetComponentInParent<PlayerHealth>();
+                            if (hitPlayer != null && hitPlayer.TryGetComponent(out PlayerRagdollController hitRagdoll)
+                                && hitRagdoll.IsObserverLocalSimActive)
+                                continue;
+
+                            TryBladeHit(hitPlayer, pivot, center, boxVel);
+                        }
+                    }
+
+                    // Joined clients have no collider the overlap above can find on the server; test their stand-in
+                    // capsule.
+                    if (_standInNearBlade.Count > 0)
+                    {
+                        _standInHits.Clear();
+                        PlayerHealthRegistry.CollectStandInHitsInBox(center, halfExtents, rot, _standInHits);
+                        for (int h = 0; h < _standInHits.Count; h++)
+                            TryBladeHit(_standInHits[h], pivot, center, boxVel);
+                    }
+                }
             }
-
-            // Joined clients have no collider the overlap above can find on the server; test their stand-in capsule.
-            _standInHits.Clear();
-            PlayerHealthRegistry.CollectStandInHitsInBox(center, bladeHitHalfExtents, pivot.rotation, _standInHits);
-            for (int h = 0; h < _standInHits.Count; h++)
-                TryBladeHit(_standInHits[h], pivot, center, bladeVel);
         }
 
-        _hasPrevBlade = true;
         PruneHitCooldowns();
     }
 
@@ -540,20 +652,22 @@ public partial class SwingingAxeTrap : NetworkBehaviour
 #if UNITY_EDITOR
     void OnDrawGizmosSelected()
     {
-        if (pivots == null)
+        if (pivots == null || bladeHitBoxes == null)
             return;
 
         Gizmos.color = new Color(1f, 0.3f, 0.2f, 0.7f);
+        Matrix4x4 prev = Gizmos.matrix;
         foreach (Transform pivot in pivots)
         {
             if (pivot == null)
                 continue;
-            Matrix4x4 prev = Gizmos.matrix;
-            Gizmos.matrix = Matrix4x4.TRS(
-                pivot.TransformPoint(bladeHitLocalCenter), pivot.rotation, Vector3.one);
-            Gizmos.DrawWireCube(Vector3.zero, bladeHitHalfExtents * 2f);
-            Gizmos.matrix = prev;
+            foreach (BladeHitBox box in bladeHitBoxes)
+            {
+                Gizmos.matrix = Matrix4x4.TRS(pivot.position + pivot.rotation * box.center, pivot.rotation, Vector3.one);
+                Gizmos.DrawWireCube(Vector3.zero, Abs(box.halfExtents) * 2f);
+            }
         }
+        Gizmos.matrix = prev;
     }
 #endif
 }

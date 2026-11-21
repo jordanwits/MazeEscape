@@ -28,7 +28,7 @@ public partial class SwingingAxeTrap
         }
 
         Vector3 axisLocal = localSwingAxis.sqrMagnitude > 1e-6f ? localSwingAxis.normalized : Vector3.right;
-        float reach = Mathf.Abs(bladeHitLocalCenter.z) + bladeHitHalfExtents.z + CloseShaveClearOfArc;
+        float reach = _bladeLengthReach + CloseShaveClearOfArc;
         var players = PlayerHealthRegistry.All;
         for (int p = 0; p < players.Count; p++)
         {
