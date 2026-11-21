@@ -3,7 +3,7 @@ using UnityEngine.AI;
 
 /// <summary>
 /// One portcullis of the carnival main room (<see cref="CarnivalGateSystem"/> drives both). The leaf drops from
-/// above the doorway to the floor when closed and winches back up when opened. Purely local presentation: every
+/// above the doorway to the floor when closed and slides back up when opened. Purely local presentation: every
 /// peer moves its own copy from the replicated gate state, so it needs no NetworkObject of its own.
 ///
 /// <para><b>Blocking.</b> The leaf carries a solid BoxCollider that moves with it, so it stops players and enemy
@@ -22,8 +22,8 @@ public sealed class CarnivalGate : MonoBehaviour
     [SerializeField] Vector3 closedLocalPosition;
     [Tooltip("Seconds for a full drop. The drop accelerates like a falling portcullis.")]
     [SerializeField, Min(0.05f)] float closeSeconds = 1.3f;
-    [Tooltip("Seconds for a full lift.")]
-    [SerializeField, Min(0.05f)] float openSeconds = 3f;
+    [Tooltip("Seconds for a full lift. Matched to the open clip's length so the sound covers the whole lift.")]
+    [SerializeField, Min(0.05f)] float openSeconds = 1.35f;
 
     [Header("Enemy pathing")]
     [Tooltip("Carving obstacle covering the doorway; enabled while the gate blocks it.")]
@@ -32,12 +32,15 @@ public sealed class CarnivalGate : MonoBehaviour
     [SerializeField, Range(0f, 1f)] float pathReopenFraction = 0.5f;
 
     [Header("Audio")]
+    [Tooltip("Plays the close or open clip once per move.")]
     [SerializeField] AudioSource audioSource;
-    [SerializeField] AudioClip slamClip;
-    [Tooltip("Seconds before landing to start the slam clip, so its peak lines up with the impact.")]
-    [SerializeField, Min(0f)] float slamLeadSeconds = 0.25f;
-    [SerializeField] AudioClip liftClip;
-    [SerializeField, Range(0f, 1f)] float volume = 0.9f;
+    [Tooltip("Played as the grate slides down. Cut to exactly closeSeconds, loudness following the drop's speed.")]
+    [SerializeField] AudioClip closeClip;
+    [Tooltip("Played as the grate slides up (the close sound reversed). Cut to exactly openSeconds.")]
+    [SerializeField] AudioClip openClip;
+    [SerializeField, Range(0f, 1f)] float volume = 0.5f;
+    [Tooltip("If a move ends before its clip does (e.g. reversed mid-travel), the clip fades out over this long.")]
+    [SerializeField, Min(0.01f)] float fadeOutSeconds = 0.1f;
 
     // 0 = fully open (up), 1 = fully closed (down).
     float _closedness;
@@ -46,7 +49,7 @@ public sealed class CarnivalGate : MonoBehaviour
     float _moveElapsed;
     float _moveDuration;
     bool _moving;
-    bool _slamPlayed;
+    float _fadeLeft;
 
     void Awake()
     {
@@ -63,6 +66,7 @@ public sealed class CarnivalGate : MonoBehaviour
 
         audioSource.playOnAwake = false;
         audioSource.loop = false;
+        audioSource.pitch = 1f;
         audioSource.spatialBlend = 1f;
         audioSource.dopplerLevel = 0f;
         audioSource.rolloffMode = AudioRolloffMode.Linear;
@@ -80,6 +84,9 @@ public sealed class CarnivalGate : MonoBehaviour
             _closedness = target;
             _moveTo = target;
             _moving = false;
+            _fadeLeft = 0f;
+            if (audioSource != null)
+                audioSource.Stop();
             ApplyPose();
             return;
         }
@@ -93,14 +100,40 @@ public sealed class CarnivalGate : MonoBehaviour
         // A reversal mid-travel only has the remaining distance to cover.
         _moveDuration = Mathf.Max(0.05f, Mathf.Abs(target - _closedness) * (closed ? closeSeconds : openSeconds));
         _moving = true;
-        _slamPlayed = false;
 
-        if (!closed)
-            PlayClip(liftClip);
+        StartMoveSound(closed ? closeClip : openClip, closed ? closeSeconds : openSeconds);
+    }
+
+    void StartMoveSound(AudioClip clip, float fullTravelSeconds)
+    {
+        _fadeLeft = 0f;
+        if (audioSource == null || clip == null || !audioSource.isActiveAndEnabled)
+            return;
+
+        audioSource.Stop();
+        audioSource.clip = clip;
+        audioSource.volume = volume;
+        // The clips are cut to the full travel time, so this is 1 as shipped; it keeps sound and motion in step
+        // if closeSeconds/openSeconds are retuned. A shorter (reversed mid-travel) move fades out on arrival instead.
+        audioSource.pitch = Mathf.Clamp(clip.length / Mathf.Max(0.05f, fullTravelSeconds), 0.5f, 2f);
+        audioSource.Play();
+    }
+
+    void TickSlideFade()
+    {
+        if (_fadeLeft <= 0f || audioSource == null)
+            return;
+
+        _fadeLeft = Mathf.Max(0f, _fadeLeft - Time.deltaTime);
+        audioSource.volume = volume * (_fadeLeft / fadeOutSeconds);
+        if (_fadeLeft <= 0f)
+            audioSource.Stop();
     }
 
     void Update()
     {
+        TickSlideFade();
+
         if (!_moving)
             return;
 
@@ -112,16 +145,11 @@ public sealed class CarnivalGate : MonoBehaviour
         float eased = closing ? u * u : Mathf.SmoothStep(0f, 1f, u);
         _closedness = Mathf.Lerp(_moveFrom, _moveTo, eased);
 
-        if (closing && !_slamPlayed && _moveDuration - _moveElapsed <= slamLeadSeconds)
-        {
-            _slamPlayed = true;
-            PlayClip(slamClip);
-        }
-
         if (u >= 1f)
         {
             _closedness = _moveTo;
             _moving = false;
+            _fadeLeft = fadeOutSeconds;   // arrived: fade out whatever is left of the clip
         }
 
         ApplyPose();
@@ -139,12 +167,5 @@ public sealed class CarnivalGate : MonoBehaviour
             if (navBlocker.enabled != block)
                 navBlocker.enabled = block;
         }
-    }
-
-    void PlayClip(AudioClip clip)
-    {
-        if (clip == null || audioSource == null || !audioSource.isActiveAndEnabled)
-            return;
-        audioSource.PlayOneShot(clip, volume);
     }
 }

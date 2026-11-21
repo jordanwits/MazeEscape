@@ -2444,14 +2444,14 @@ MonoBehaviour:
   openLocalPosition: {x: 0, y: 6.02, z: 0}
   closedLocalPosition: {x: 0, y: 0.98, z: 0}
   closeSeconds: 1.3
-  openSeconds: 3
+  openSeconds: 1.35
   navBlocker: {fileID: 3781459841608467403}
   pathReopenFraction: 0.5
   audioSource: {fileID: 7876622444224230219}
-  slamClip: {fileID: 8300000, guid: 68de18b99784efd448841521552e4175, type: 3}
-  slamLeadSeconds: 0.25
-  liftClip: {fileID: 8300000, guid: 68ab1f988c6dae647b26909369b4ccc5, type: 3}
-  volume: 0.9
+  closeClip: {fileID: 8300000, guid: 9043653b1e1d6034288f451102167876, type: 3}
+  openClip: {fileID: 8300000, guid: 5ff4007fe4a43114db0de967294621ac, type: 3}
+  volume: 0.5
+  fadeOutSeconds: 0.1
 --- !u!1 &680414421976154625
 GameObject:
   m_ObjectHideFlags: 0
@@ -6740,10 +6740,9 @@ MonoBehaviour:
   serverPanelReach: 4
   roomInteriorCenter: {x: 0, y: 6, z: 0}
   roomInteriorSize: {x: 22, y: 12, z: 22}
-  buttonClip: {fileID: 8300000, guid: f479bc07a5549754f81b83db43ea35a8, type: 3}
-  deniedClip: {fileID: 8300000, guid: 5385312606cdc0044bf28f2b30b61bb3, type: 3}
-  buttonVolume: 0.8
-  beepVolume: 0.55
+  buttonClip: {fileID: 8300000, guid: 3f542a15f4ac39b419bd022f201e8c06, type: 3}
+  buttonVolume: 0.4
+  beepVolume: 0.275
   lowBatteryBeepBars: 1
   urgentBeepSeconds: 10
 --- !u!1 &1610073188825829845
@@ -12072,14 +12071,14 @@ MonoBehaviour:
   openLocalPosition: {x: 0, y: 6.02, z: 0}
   closedLocalPosition: {x: 0, y: 0.98, z: 0}
   closeSeconds: 1.3
-  openSeconds: 3
+  openSeconds: 1.35
   navBlocker: {fileID: 19258105810043156}
   pathReopenFraction: 0.5
   audioSource: {fileID: 4012201359955317498}
-  slamClip: {fileID: 8300000, guid: 68de18b99784efd448841521552e4175, type: 3}
-  slamLeadSeconds: 0.25
-  liftClip: {fileID: 8300000, guid: 68ab1f988c6dae647b26909369b4ccc5, type: 3}
-  volume: 0.9
+  closeClip: {fileID: 8300000, guid: 9043653b1e1d6034288f451102167876, type: 3}
+  openClip: {fileID: 8300000, guid: 5ff4007fe4a43114db0de967294621ac, type: 3}
+  volume: 0.5
+  fadeOutSeconds: 0.1
 --- !u!1 &3069447467837218678
 GameObject:
   m_ObjectHideFlags: 0

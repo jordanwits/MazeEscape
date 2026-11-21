@@ -70,10 +70,10 @@ public sealed class CarnivalGateSystem : MonoBehaviour
     [SerializeField] Vector3 roomInteriorSize = new Vector3(22f, 12f, 22f);
 
     [Header("Audio")]
+    [Tooltip("Plain click for every panel button press, whether or not the press does anything.")]
     [SerializeField] AudioClip buttonClip;
-    [SerializeField] AudioClip deniedClip;
-    [SerializeField, Range(0f, 1f)] float buttonVolume = 0.8f;
-    [SerializeField, Range(0f, 1f)] float beepVolume = 0.55f;
+    [SerializeField, Range(0f, 1f)] float buttonVolume = 0.4f;
+    [SerializeField, Range(0f, 1f)] float beepVolume = 0.275f;
     [Tooltip("Remaining bars at which the indicators start beeping while the gates are closed.")]
     [SerializeField, Min(0f)] float lowBatteryBeepBars = 1f;
     [Tooltip("Remaining seconds at which the beeping speeds up.")]
@@ -81,12 +81,10 @@ public sealed class CarnivalGateSystem : MonoBehaviour
 
     static readonly List<CarnivalGateSystem> s_active = new List<CarnivalGateSystem>();
     static AudioClip s_beepClip;
-    static AudioClip s_chargeClip;
 
     CarnivalGateNetworkStore.GateState _offlineState = CarnivalGateNetworkStore.GateState.Initial;
     bool _hasApplied;
     bool _appliedClosed;
-    float _lastCharge = -1f;
     double _nextBeepTime;
 
     // ---- Public read side --------------------------------------------------------------------------------------
@@ -188,11 +186,6 @@ public sealed class CarnivalGateSystem : MonoBehaviour
             _hasApplied = true;
         }
 
-        // A jump UP in charge can only be a recharge; every peer hears it at the panel.
-        if (_lastCharge >= 0f && charge > _lastCharge + 0.02f && controlPanel != null)
-            GameAudioManager.PlaySfxAtPoint(ChargeClip, controlPanel.position, 0.7f, 1.5f, 18f);
-        _lastCharge = charge;
-
         float secondsLeft = charge * BatteryCapacitySeconds;
         bool canClose = Evaluate(GateAction.Close, state, now, int.MaxValue, out _) == PressResult.Ok;
         bool blinkOn = Mathf.Repeat(Time.unscaledTime, 0.5f) < 0.3f;
@@ -232,20 +225,19 @@ public sealed class CarnivalGateSystem : MonoBehaviour
 
     // ---- Local player entry points -----------------------------------------------------------------------------
 
-    /// <summary>Local player pressed E on a panel button. Refusals are answered locally; the prompt says why.</summary>
+    /// <summary>
+    /// Local player pressed E on a panel button. Every press clicks; a press that can't do anything right now
+    /// (the prompt says why) just clicks and has no effect.
+    /// </summary>
     public void LocalPress(GateAction action, PlayerController presser, Vector3 buttonPosition)
     {
         if (presser == null)
             return;
 
-        PressResult preview = Evaluate(action, ReadState(), CurrentTime(), ViewerTickets(presser), out _);
-        if (preview != PressResult.Ok)
-        {
-            GameAudioManager.PlaySfxAtPoint(deniedClip, buttonPosition, buttonVolume * 0.7f, 1f, 10f);
-            return;
-        }
-
         GameAudioManager.PlaySfxAtPoint(buttonClip, buttonPosition, buttonVolume, 1f, 10f);
+
+        if (Evaluate(action, ReadState(), CurrentTime(), ViewerTickets(presser), out _) != PressResult.Ok)
+            return;
 
         if (IsNetworkSession())
         {
@@ -449,7 +441,6 @@ public sealed class CarnivalGateSystem : MonoBehaviour
     // ---- Procedural cues ---------------------------------------------------------------------------------------
 
     static AudioClip BeepClip => s_beepClip != null ? s_beepClip : (s_beepClip = BuildTone("CarnivalGateBeep", 0.11f, 1650f, 1650f));
-    static AudioClip ChargeClip => s_chargeClip != null ? s_chargeClip : (s_chargeClip = BuildTone("CarnivalGateCharge", 0.7f, 320f, 1500f));
 
     /// <summary>A short sine tone sweeping <paramref name="fromHz"/> → <paramref name="toHz"/> with soft edges.</summary>
     static AudioClip BuildTone(string clipName, float seconds, float fromHz, float toHz)
