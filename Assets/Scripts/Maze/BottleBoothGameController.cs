@@ -263,10 +263,15 @@ public sealed class BottleBoothGameController : NetworkBehaviour, ICarnivalGameS
             }
             ballNet.Spawn();
 
+            // Waiting balls are pinned until picked up, or a throw that clips the counter scatters the rest.
+            NetworkHeavyThrowableHold hold = ballGo.GetComponent<NetworkHeavyThrowableHold>();
+            if (hold != null)
+                hold.ServerFreezeUntilPickedUp();
+
             _balls.Add(new TrackedBall
             {
                 net = ballNet,
-                hold = ballGo.GetComponent<NetworkHeavyThrowableHold>(),
+                hold = hold,
                 spawnAnchor = anchor,
             });
         }

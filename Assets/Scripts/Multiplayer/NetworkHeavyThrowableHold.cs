@@ -334,6 +334,100 @@ public sealed class NetworkHeavyThrowableHold : NetworkBehaviour
         _serverSettleAccumulator = 0f;
     }
 
+    /// <summary>
+    /// Server-only. Pins a freshly spawned, never-held body where it sits (kinematic) so a thrown prop or a
+    /// body bump can't scatter it before anyone picks it up — booth balls waiting on the counter.
+    /// <para>
+    /// Nothing needs to undo it: picking up makes the body kinematic on every peer anyway, and the release
+    /// hands it back to normal physics (<see cref="GrabbableInventoryItem"/>'s end-of-hold on the simulating
+    /// peer, NGO's kinematic swap when the server later reclaims a client's throw). NGO itself only rewrites
+    /// the kinematic flag on spawn and on ownership change, and ownership only changes at pickup, so the
+    /// body stays frozen until then. Call AFTER <c>Spawn()</c> — the spawn would make it dynamic again.
+    /// </para>
+    /// </summary>
+    public void ServerFreezeUntilPickedUp()
+    {
+        if (!IsServer || !IsSpawned || _rb == null || _holderNetworkObjectId.Value != 0UL)
+            return;
+
+        if (!_rb.isKinematic)
+        {
+            _rb.linearVelocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
+        }
+
+        // A spawn anchor a few centimetres above the counter would otherwise leave the frozen body hovering
+        // where it used to drop into place.
+        if (TryFindRestingPositionBelow(out Vector3 rest))
+        {
+            transform.position = rest;
+            _rb.position = rest;
+        }
+
+        _rb.isKinematic = true;
+    }
+
+    /// <summary>
+    /// Where this body would come to rest if dropped straight down onto whatever its layer collides with
+    /// (within half a metre). False if nothing is below or it has no solid collider.
+    /// </summary>
+    bool TryFindRestingPositionBelow(out Vector3 rest)
+    {
+        rest = transform.position;
+
+        Collider[] own = GetComponentsInChildren<Collider>(false);
+        bool hasBounds = false;
+        Bounds combined = default;
+        for (int i = 0; i < own.Length; i++)
+        {
+            Collider c = own[i];
+            if (c == null || c.isTrigger || !c.enabled)
+                continue;
+            if (!hasBounds)
+            {
+                combined = c.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                combined.Encapsulate(c.bounds);
+            }
+        }
+        if (!hasBounds)
+            return false;
+
+        int layer = gameObject.layer;
+        int mask = 0;
+        for (int i = 0; i < 32; i++)
+        {
+            if (!Physics.GetIgnoreLayerCollision(layer, i))
+                mask |= 1 << i;
+        }
+
+        const float MaxDrop = 0.5f;
+        const float Skin = 0.002f;
+        Vector3 e = combined.extents;
+        float radius = Mathf.Max(0.005f, Mathf.Min(e.x, e.z));
+        // Start the sphere so its bottom sits at the body's bottom, so the hit distance is the gap below it.
+        Vector3 origin = new Vector3(combined.center.x, combined.min.y + radius, combined.center.z);
+
+        RaycastHit[] hits = Physics.SphereCastAll(origin, radius, Vector3.down, MaxDrop, mask, QueryTriggerInteraction.Ignore);
+        float best = float.PositiveInfinity;
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider hc = hits[i].collider;
+            if (hc == null || System.Array.IndexOf(own, hc) >= 0)
+                continue;
+            if (hits[i].distance < best)
+                best = hits[i].distance;
+        }
+        if (float.IsPositiveInfinity(best))
+            return false;
+
+        rest = transform.position + Vector3.down * Mathf.Max(0f, best - Skin);
+        return true;
+    }
+
     public bool ServerTryPickupFromRelay(ulong playerNetworkObjectId, ulong senderClientId)
     {
         NetworkManager nm = NetworkManager.Singleton;
