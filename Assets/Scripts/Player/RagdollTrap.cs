@@ -55,6 +55,9 @@ public class RagdollTrap : MonoBehaviour
     EntityId _lastMetallicColliderEntity;
     float _nextMetallicSoundTime;
 
+    Collider _hitVolume;
+    readonly List<PlayerHealth> _standInHits = new();
+
     /// <summary>
     /// Player prefabs often have multiple colliders (e.g. CharacterController + body trigger) that can all
     /// fire <see cref="OnTriggerEnter"/> in the same physics step. Without this, one swing applies several hits.
@@ -68,6 +71,7 @@ public class RagdollTrap : MonoBehaviour
         if (swingTrapDamageGate == null)
             swingTrapDamageGate = GetComponentInParent<PivotSwingTrap>();
 
+        _hitVolume = GetComponent<Collider>();
         EnsureHitAudioSource();
 #if UNITY_EDITOR
         AutoAssignTrapHitClipInEditor();
@@ -220,6 +224,84 @@ public class RagdollTrap : MonoBehaviour
         TryHit(other);
     }
 
+    /// <summary>
+    /// Server: hits joined clients, whom the trigger above never reports. On the server a client's copy has its
+    /// CharacterController off, its blocking proxy contacts only the Player layer, and its ragdoll bone colliders
+    /// are off while animated, so nothing on it can raise a trigger event against this Rigidbody-less pad. The
+    /// host's own player is still found by the trigger (its controller is on), and
+    /// <see cref="PlayerHealthRegistry"/> never returns a player the trigger can already see.
+    /// </summary>
+    void FixedUpdate()
+    {
+        NetworkManager nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !nm.IsServer)
+            return;
+
+        if (_hitVolume == null || !_hitVolume.enabled)
+            return;
+
+        if (swingTrapDamageGate != null && !swingTrapDamageGate.CanDealSwingTrapDamage)
+            return;
+
+        GetHitVolumeBox(out Vector3 center, out Vector3 halfExtents, out Quaternion rotation);
+        _standInHits.Clear();
+        PlayerHealthRegistry.CollectStandInHitsInBox(center, halfExtents, rotation, _standInHits);
+        for (int i = 0; i < _standInHits.Count; i++)
+            TryHitStandIn(_standInHits[i]);
+    }
+
+    void GetHitVolumeBox(out Vector3 center, out Vector3 halfExtents, out Quaternion rotation)
+    {
+        if (_hitVolume is BoxCollider box)
+        {
+            Transform t = box.transform;
+            Vector3 scale = t.lossyScale;
+            center = t.TransformPoint(box.center);
+            halfExtents = new Vector3(
+                Mathf.Abs(box.size.x * scale.x),
+                Mathf.Abs(box.size.y * scale.y),
+                Mathf.Abs(box.size.z * scale.z)) * 0.5f;
+            rotation = t.rotation;
+            return;
+        }
+
+        // Any other trigger shape: its world bounds, a slightly generous box.
+        Bounds bounds = _hitVolume.bounds;
+        center = bounds.center;
+        halfExtents = bounds.extents;
+        rotation = Quaternion.identity;
+    }
+
+    void TryHitStandIn(PlayerHealth player)
+    {
+        if (player == null || player.IsDead || IsCarriedByJailor(player))
+            return;
+
+        if (!player.TryGetComponent(out NetworkPlayerAvatar avatar)
+            || !avatar.TryGetHazardStandInCapsule(out Vector3 a, out Vector3 b, out _))
+            return;
+
+        NetworkPlayerRagdoll netRagdoll = player.GetComponentInParent<NetworkPlayerRagdoll>();
+        if (netRagdoll == null)
+            return;
+
+        if (IsDuplicatePlayerTrapHitThisPhysicsStep(player))
+            return;
+
+        // Same hit as a trigger-found player: the capsule's middle stands in for the collider bounds centre.
+        Vector3 hitPoint = (a + b) * 0.5f;
+        netRagdoll.RequestTrapHitFromServer(ComputeKnockbackForce(hitPoint), hitPoint, TrapDamageAmount, forceMode,
+            NetworkPlayerRagdoll.TrapImpactSfxKind.TrapMetallic);
+    }
+
+    Vector3 ComputeKnockbackForce(Vector3 hitCenter)
+    {
+        Vector3 force = ResolveKnockbackDirection(hitCenter) * impulseMagnitude;
+        if (upwardImpulse > 0f)
+            force += Vector3.up * upwardImpulse;
+        return force;
+    }
+
     bool IsDuplicatePlayerTrapHitThisPhysicsStep(PlayerHealth health)
     {
         if (health == null)
@@ -297,12 +379,8 @@ public class RagdollTrap : MonoBehaviour
 
         NetworkPlayerRagdoll netRagdoll = other.GetComponentInParent<NetworkPlayerRagdoll>();
 
-        Vector3 hitCenter = other.bounds.center;
-        Vector3 dir = ResolveKnockbackDirection(hitCenter);
-        Vector3 force = dir * impulseMagnitude;
-        if (upwardImpulse > 0f)
-            force += Vector3.up * upwardImpulse;
-        Vector3 hitPoint = hitCenter;
+        Vector3 hitPoint = other.bounds.center;
+        Vector3 force = ComputeKnockbackForce(hitPoint);
 
         if (networked && netRagdoll != null)
         {
