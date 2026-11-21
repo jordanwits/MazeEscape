@@ -7,8 +7,9 @@ using UnityEngine;
 /// portcullis in each doorway, and one shared battery powers both.
 ///
 /// <para><b>Rules.</b> The battery lasts <see cref="batteryCapacitySeconds"/> of CLOSED time and is shown as
-/// <see cref="batteryBars"/> bars. Every manual press of Close or Open costs <see cref="pressCostBars"/> of a bar.
-/// Closing needs more charge than one press costs (so the gates never drop just to bounce straight back up);
+/// <see cref="batteryBars"/> bars. Every manual press of Close or Open costs <see cref="pressCostBars"/> of a bar,
+/// except the first Close of the level and the first Close after each recharge, which are free.
+/// Closing needs more charge than the press costs (so the gates never drop just to bounce straight back up);
 /// opening is always allowed while closed, even when the press costs more than is left, so nobody can be sealed in.
 /// When the charge reaches zero with the gates closed they open on their own (no press cost). Recharge refills the
 /// battery to full for <see cref="rechargeTicketCost"/> tickets from the presser's own wallet, any time it is not
@@ -163,7 +164,7 @@ public sealed class CarnivalGateSystem : MonoBehaviour
         // The authority opens the gates the moment the battery runs flat. No press cost: the battery is empty.
         if (HasAuthority() && state.IsClosed && ChargeAt(state, now, BatteryCapacitySeconds) <= 0f)
         {
-            state = new CarnivalGateNetworkStore.GateState { Closed = 0, Charge = 0f, Stamp = now };
+            state = new CarnivalGateNetworkStore.GateState { Closed = 0, Charge = 0f, Stamp = now, FreeClose = state.FreeClose };
             WriteState(state);
         }
 
@@ -193,7 +194,7 @@ public sealed class CarnivalGateSystem : MonoBehaviour
         _lastCharge = charge;
 
         float secondsLeft = charge * BatteryCapacitySeconds;
-        bool canClose = !closed && charge > PressCost01 + 0.0001f;
+        bool canClose = Evaluate(GateAction.Close, state, now, int.MaxValue, out _) == PressResult.Ok;
         bool blinkOn = Mathf.Repeat(Time.unscaledTime, 0.5f) < 0.3f;
         if (indicators != null)
         {
@@ -279,7 +280,8 @@ public sealed class CarnivalGateSystem : MonoBehaviour
                 }
             case PressResult.AlreadyClosed: return "The gates are closed";
             case PressResult.AlreadyOpen: return "The gates are open";
-            case PressResult.BatteryTooLow: return "Battery too low to close the gates";
+            case PressResult.BatteryTooLow:
+                return CurrentCharge01 <= 0.0001f ? "The battery is dead" : "Battery too low to close the gates";
             case PressResult.BatteryFull: return "The battery is full";
             case PressResult.NotEnoughTickets:
                 return $"Charging costs {rechargeTicketCost} tickets (you have {Mathf.Max(0, tickets)})";
@@ -366,18 +368,29 @@ public sealed class CarnivalGateSystem : MonoBehaviour
         switch (action)
         {
             case GateAction.Close:
+            {
                 if (state.IsClosed)
                     return PressResult.AlreadyClosed;
-                if (charge <= cost + 0.0001f)
+                // The first close of the level, and the first after each recharge, is free.
+                float closeCost = state.HasFreeClose ? 0f : cost;
+                if (charge <= closeCost + 0.0001f)
                     return PressResult.BatteryTooLow;
-                next = new CarnivalGateNetworkStore.GateState { Closed = 1, Charge = charge - cost, Stamp = now };
+                next = new CarnivalGateNetworkStore.GateState
+                {
+                    Closed = 1, Charge = charge - closeCost, Stamp = now, FreeClose = 0,
+                };
                 return PressResult.Ok;
+            }
 
             case GateAction.Open:
                 if (!state.IsClosed)
                     return PressResult.AlreadyOpen;
-                // Always allowed: an almost-flat battery must never seal anyone in.
-                next = new CarnivalGateNetworkStore.GateState { Closed = 0, Charge = Mathf.Max(0f, charge - cost), Stamp = now };
+                // Always allowed: an almost-flat battery must never seal anyone in. A free close earned by a
+                // recharge made while closed carries over to the next close.
+                next = new CarnivalGateNetworkStore.GateState
+                {
+                    Closed = 0, Charge = Mathf.Max(0f, charge - cost), Stamp = now, FreeClose = state.FreeClose,
+                };
                 return PressResult.Ok;
 
             case GateAction.Recharge:
@@ -385,7 +398,10 @@ public sealed class CarnivalGateSystem : MonoBehaviour
                     return PressResult.BatteryFull;
                 if (tickets < rechargeTicketCost)
                     return PressResult.NotEnoughTickets;
-                next = new CarnivalGateNetworkStore.GateState { Closed = state.Closed, Charge = 1f, Stamp = now };
+                next = new CarnivalGateNetworkStore.GateState
+                {
+                    Closed = state.Closed, Charge = 1f, Stamp = now, FreeClose = 1,
+                };
                 return PressResult.Ok;
         }
 

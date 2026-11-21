@@ -28,17 +28,21 @@ public sealed class CarnivalGateNetworkStore : NetworkBehaviour
         public float Charge;
         /// <summary>Server time (<c>NetworkManager.ServerTime.Time</c>) when <see cref="Charge"/> was recorded.</summary>
         public double Stamp;
+        /// <summary>1 while the next Close press costs nothing: set at level start and by every recharge.</summary>
+        public byte FreeClose;
 
-        /// <summary>Gates open, battery full: the state every level starts in.</summary>
-        public static GateState Initial => new GateState { Closed = 0, Charge = 1f, Stamp = 0d };
+        /// <summary>Gates open, battery full, first close free: the state every level starts in.</summary>
+        public static GateState Initial => new GateState { Closed = 0, Charge = 1f, Stamp = 0d, FreeClose = 1 };
 
         public bool IsClosed => Closed != 0;
+        public bool HasFreeClose => FreeClose != 0;
 
         public bool Equals(GateState other) =>
-            Closed == other.Closed && Charge.Equals(other.Charge) && Stamp.Equals(other.Stamp);
+            Closed == other.Closed && Charge.Equals(other.Charge) && Stamp.Equals(other.Stamp)
+            && FreeClose == other.FreeClose;
 
         public override bool Equals(object obj) => obj is GateState other && Equals(other);
-        public override int GetHashCode() => Closed ^ Charge.GetHashCode() ^ Stamp.GetHashCode();
+        public override int GetHashCode() => Closed ^ (FreeClose << 1) ^ Charge.GetHashCode() ^ Stamp.GetHashCode();
     }
 
     /// <summary>The spawned store instance, or null when no session is running / not yet spawned.</summary>

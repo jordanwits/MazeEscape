@@ -104,8 +104,14 @@ public sealed class CarnivalGateBatteryIndicator : MonoBehaviour
             label = "OPEN";
             labelColor = Color.white;
         }
+        else if (charge01 <= 0.0001f)
+        {
+            label = "BATTERY DEAD";
+            labelColor = blinkOn ? lowColor : Color.white;
+        }
         else
         {
+            // Some charge left, but less than one press costs: still can't close.
             label = "LOW BATTERY";
             labelColor = blinkOn ? lowColor : Color.white;
         }
