@@ -113,8 +113,9 @@ public class MultiplayerSceneFlow : MonoBehaviour
         if (nm == null || clientId != nm.LocalClientId || nm.IsHost)
             return;
 
-        // A lost run's card stays up until this player presses its LEAVE, even when the host leaves first.
-        if (TeamWipeSequence.IsRunning)
+        // A lost or finished run's card stays up until this player presses its exit button, even when the host
+        // leaves first.
+        if (TeamWipeSequence.IsRunning || RunCompleteSequence.IsRunning)
             return;
 
         Scene active = SceneManager.GetActiveScene();

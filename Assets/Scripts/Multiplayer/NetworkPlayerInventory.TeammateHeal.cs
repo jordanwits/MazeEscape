@@ -65,7 +65,9 @@ public partial class NetworkPlayerInventory
         if (!ServerTryResolveSelectedBandage(out int sel, out GrabbableInventoryItem g))
             return;
 
+        float healthBefore = target.CurrentHealth;
         target.Heal(BandageItem.HealthRestoreAmount);
+        RunStatsTracker.ServerNoteTeammateHealed(OwnerClientId, target.CurrentHealth - healthBefore);
         ServerConsumeSelectedBandage(sel, g);
         AchievementAwards.ServerAward(OwnerClientId, AchievementId.FieldMedic);
     }

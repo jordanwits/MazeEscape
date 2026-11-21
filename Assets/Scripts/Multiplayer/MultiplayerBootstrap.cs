@@ -71,6 +71,9 @@ public class MultiplayerBootstrap : MonoBehaviour
         if (!TryGetComponent(out RunTrailRecorder _))
             gameObject.AddComponent<RunTrailRecorder>();
 
+        if (!TryGetComponent(out RunStatsTracker _))
+            gameObject.AddComponent<RunStatsTracker>();
+
         if (!TryGetComponent(out AchievementNetworkRelay _))
             gameObject.AddComponent<AchievementNetworkRelay>();
 

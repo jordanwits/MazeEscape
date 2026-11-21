@@ -26,7 +26,7 @@ public static class TeamWipeDirector
         NetworkManager nm = NetworkManager.Singleton;
         if (nm == null || !nm.IsListening || !nm.IsServer || nm.ShutdownInProgress)
             return;
-        if (!IsInMazeGameplayScene() || TeamWipeSequence.IsRunning)
+        if (!IsInMazeGameplayScene() || TeamWipeSequence.IsRunning || RunCompleteSequence.IsRunning)
             return;
 
         // The group already escaped: the cab doors are shutting (or shut) on whoever made it aboard, and the
@@ -70,7 +70,7 @@ public static class TeamWipeDirector
     /// <summary>A level scene played with no session at all: the only player there just died or is jailed for good.</summary>
     public static void EvaluateWithoutSession()
     {
-        if (!IsInMazeGameplayScene() || TeamWipeSequence.IsRunning)
+        if (!IsInMazeGameplayScene() || TeamWipeSequence.IsRunning || RunCompleteSequence.IsRunning)
             return;
 
         IReadOnlyList<PlayerHealth> players = PlayerHealthRegistry.All;

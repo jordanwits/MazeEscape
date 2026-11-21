@@ -79,6 +79,7 @@ public class PlayerHealth : MonoBehaviour
         if (IsDead || amount <= 0f)
             return;
 
+        RunStatsTracker.ServerNoteDamageTaken(this, Mathf.Min(amount, CurrentHealth));
         CurrentHealth = Mathf.Max(0f, CurrentHealth - amount);
         _displayHealth = CurrentHealth;
         UpdateHealthBar();

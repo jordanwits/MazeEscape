@@ -994,7 +994,7 @@ public class MultiplayerSessionController : MonoBehaviour
 
         if (!string.IsNullOrWhiteSpace(reason))
             Debug.Log($"[Multiplayer] Disconnect reason: {reason}", this);
-        if (chosen || TeamWipeSequence.IsRunning)
+        if (chosen || TeamWipeSequence.IsRunning || RunCompleteSequence.IsRunning)
             return;
 
         RaiseSessionFailure(

@@ -6,7 +6,7 @@ using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Server-spawned sync object for the maze exit elevator: occupancy counts, close gating, synchronized advance to the next maze scene when doors finish closing,
-/// or return to menu when there is no configured next section (e.g. last level).
+/// or the run-complete card (<see cref="RunCompleteSequence"/>) when there is no configured next section (e.g. last level).
 /// Handles both cab styles — the dungeon's pair of <see cref="HingeInteractDoor"/> leaves, and the Severance cab's
 /// <see cref="ElevatorSlidingDoors"/> driven from its two <see cref="ElevatorCallButton"/> pads.
 /// </summary>
@@ -785,22 +785,33 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         string nextScene = null;
         bool hasNextSection =
             !endRunInsteadOfAdvancing && MultiplayerSceneFlow.TryGetNextMazeSectionScene(currentName, out nextScene);
+        RunStatsTracker.ServerSectionCompleted(currentName);
 
         if (!IsSpawned)
         {
-            // No session: this is a play-mode run of a single section.
+            // No session: this is a play-mode run of a single section. The close only ran with the one player
+            // aboard, so they escaped.
             if (hasNextSection)
             {
                 SceneManager.LoadScene(nextScene, LoadSceneMode.Single);
                 LoadingCover.Show(nextScene);
             }
             else
-                RequestReturnToMainMenuLocal();
+                RunCompleteSequence.Begin(RunStatsTracker.ServerBuildSummary(new[] { 0ul }));
             return;
         }
 
         // While the avatars still exist: the despawn sweep and the load below tear them down.
-        AchievementRunTracker.ServerSectionCompleted(currentName, !hasNextSection, ServerCollectPlayersAboard());
+        List<ulong> aboard = ServerCollectPlayersAboard();
+        AchievementRunTracker.ServerSectionCompleted(currentName, !hasNextSection, aboard);
+
+        // The run is over: everyone gets the run-complete card, and each player leaves for the menu from it in
+        // their own time (it is the same exit the team-wipe card takes). The session stays up until then.
+        if (!hasNextSection)
+        {
+            ShowRunCompleteRpc(RunStatsTracker.ServerBuildSummary(aboard));
+            return;
+        }
 
         if (hasNextSection)
         {
@@ -864,6 +875,17 @@ public class ElevatorFinishController : NetworkBehaviour, IHingeCloseValidator
         LevelCarryOverStore.HoldCarriedItemsForLevelSwitch();
     }
 
+    /// <summary>
+    /// The last section is done: every peer, host included, puts up the run-complete card with the server's numbers.
+    /// This cab stays spawned (the run-end path runs no despawn sweep), so the call reaches everyone still connected.
+    /// </summary>
+    [Rpc(SendTo.ClientsAndHost)]
+    void ShowRunCompleteRpc(RunSummary summary)
+    {
+        RunCompleteSequence.Begin(summary);
+    }
+
+    /// <summary>Fallback when a synchronized section load could not start: sends every peer to the menu.</summary>
     void ServerReturnEveryoneToMainMenuAfterElevator()
     {
         ReturnAllPlayersToMainMenuClientRpc();

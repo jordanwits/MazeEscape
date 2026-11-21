@@ -23,10 +23,11 @@ public sealed class PauseMenuController : MonoBehaviour
     static bool s_open;
 
     /// <summary>
-    /// True while a full-screen menu owns the mouse: this pause menu, or the game-over card
-    /// (<see cref="TeamWipeSequence"/>). Player look/move, the spectator orbit and every cursor re-lock check it.
+    /// True while a full-screen menu owns the mouse: this pause menu, the game-over card
+    /// (<see cref="TeamWipeSequence"/>) or the run-complete card (<see cref="RunCompleteSequence"/>). Player look/move,
+    /// the spectator orbit and every cursor re-lock check it.
     /// </summary>
-    public static bool BlocksGameplayInput => s_open || TeamWipeSequence.IsRunning;
+    public static bool BlocksGameplayInput => s_open || TeamWipeSequence.IsRunning || RunCompleteSequence.IsRunning;
 
     MultiplayerSessionController _session;
     MultiplayerSceneFlow _flow;
@@ -106,9 +107,9 @@ public sealed class PauseMenuController : MonoBehaviour
             return;
         }
 
-        // The game-over card owns the screen and the cursor until its own LEAVE; this menu would open underneath
-        // it (lower sort order) and its close would re-lock the cursor.
-        if (TeamWipeSequence.IsRunning)
+        // The game-over and run-complete cards own the screen and the cursor until their own exit button; this
+        // menu would open over or under them and its close would re-lock the cursor.
+        if (TeamWipeSequence.IsRunning || RunCompleteSequence.IsRunning)
         {
             if (_isOpen)
                 Close(true);
@@ -212,6 +213,7 @@ public sealed class PauseMenuController : MonoBehaviour
         // recapture click fell straight through into an unintended punch or throw.
         if (InGameplayScene()
             && !TeamWipeSequence.IsRunning
+            && !RunCompleteSequence.IsRunning
             && !BlackjackOverlayController.IsInteractive
             && !SkeletonRpsOverlayController.IsInteractive
             && !CarnivalStoreOverlayController.IsInteractive)

@@ -35,6 +35,9 @@ public static class AchievementHooks
         if (!AchievementRunTracker.IsAuthority)
             return;
 
+        // The run card credits whoever landed the lethal hit, the boss included (a flare burn credits nobody).
+        RunStatsTracker.ServerNoteEnemyKilled(killer);
+
         // The boss is a team fight: everyone gets him, whoever lands the last hit (or if a flare burn does).
         if (kind == EnemyKind.Mutant)
         {
@@ -81,6 +84,7 @@ public static class AchievementHooks
     /// <summary>An enemy locked onto <paramref name="target"/> to chase or stalk them. Breaks that player's Ghost run.</summary>
     public static void ServerEnemyTargeted(PlayerHealth target)
     {
+        RunStatsTracker.ServerNoteTargeted(target);
         if (AchievementRunTracker.IsAuthority && AchievementAwards.TryGetOwner(target, out ulong clientId))
             AchievementRunTracker.ServerNoteChased(clientId);
     }
@@ -150,7 +154,11 @@ public static class AchievementHooks
 
     // ---- Players -----------------------------------------------------------------------------------------
 
-    public static void ServerPlayerDied(ulong clientId) => AchievementRunTracker.ServerNotePlayerDied(clientId);
+    public static void ServerPlayerDied(ulong clientId)
+    {
+        AchievementRunTracker.ServerNotePlayerDied(clientId);
+        RunStatsTracker.ServerNotePlayerDied(clientId);
+    }
 
     /// <summary>The game-over card is going up on every peer: everyone gets Wipe, or No Way Out for a jail lock-in.</summary>
     public static void ServerTeamWipe(bool everyoneDead)

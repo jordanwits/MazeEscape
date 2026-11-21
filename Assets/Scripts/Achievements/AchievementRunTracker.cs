@@ -151,6 +151,7 @@ public static class AchievementRunTracker
         if (!IsAuthority || amount <= 0)
             return;
 
+        RunStatsTracker.ServerNoteTicketsEarned(clientId, amount);
         s_TicketsEarned.TryGetValue(clientId, out int total);
         total += amount;
         s_TicketsEarned[clientId] = total;
